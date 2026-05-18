@@ -48,6 +48,15 @@ locals {
 
   enable_application_gateway = var.enable_application_gateway
   appgw_endpoint = local.enable_application_gateway ? azurerm_public_ip.appgw[0].ip_address : azurerm_public_ip.lb.ip_address
+
+  # Shared session store: required by HA SAT/ASM. Without a shared
+  # Redis, both VMs fall back to in-memory sessions and the LB
+  # cookie-reshuffle becomes user-visible. Default provisions an
+  # Azure Cache for Redis; customers with an existing cache supply
+  # var.redis_endpoint_override and set enable_managed_redis = false.
+  provision_managed_redis = var.enable_managed_redis && var.redis_endpoint_override == null
+  effective_redis_host    = local.provision_managed_redis ? one(azurerm_redis_cache.main[*].hostname) : var.redis_endpoint_override
+  effective_redis_port    = local.provision_managed_redis ? 6380 : var.redis_endpoint_override_port
 }
 
 resource "azurerm_marketplace_agreement" "hailbytes" {
@@ -242,7 +251,9 @@ resource "azurerm_linux_virtual_machine" "vm" {
 
   boot_diagnostics {}
 
-  # The marketplace image reads instance metadata (tags) to wire itself to the shared DB.
+  # The marketplace image reads instance metadata (tags) to wire itself to the
+  # shared DB and Redis. Redis is required for HA; without it the second VM
+  # cannot share sessions or worker-lock state with the first.
   custom_data = base64encode(jsonencode({
     hailbytes = {
       mode               = "ha"
@@ -252,6 +263,9 @@ resource "azurerm_linux_virtual_machine" "vm" {
       db_fqdn            = local.db_host
       product            = var.product
       cluster_member_idx = count.index
+      redis_host         = local.effective_redis_host
+      redis_port         = local.effective_redis_port
+      redis_tls          = local.provision_managed_redis ? true : var.redis_endpoint_override_tls
     }
   }))
 
@@ -259,6 +273,7 @@ resource "azurerm_linux_virtual_machine" "vm" {
     azurerm_marketplace_agreement.hailbytes,
     azurerm_postgresql_flexible_server.main,
     azurerm_linux_virtual_machine.db_vm,
+    azurerm_redis_cache.main,
   ]
 }
 
@@ -282,6 +297,36 @@ resource "azurerm_virtual_machine_data_disk_attachment" "data" {
   virtual_machine_id = azurerm_linux_virtual_machine.vm[count.index].id
   lun                = 0
   caching            = "ReadWrite"
+}
+
+# ----- Shared session store: Azure Cache for Redis (zone-redundant) -----
+#
+# HA SAT/ASM require a shared Redis endpoint for cross-instance sessions
+# and the worker-lock heartbeat. Without it both VMs fall back to
+# in-memory sessions and the LB's cookie reshuffle becomes a user-
+# visible logout. Equivalent to AWS ElastiCache; the asm-aws-ha and
+# sat-aws-ha modules provision the same shape with the same defaults.
+
+resource "azurerm_redis_cache" "main" {
+  count               = local.provision_managed_redis ? 1 : 0
+  name                = "${local.name_prefix}-redis"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  capacity            = var.redis_capacity
+  family              = var.redis_family
+  sku_name            = var.redis_sku_name
+  non_ssl_port_enabled = false
+  minimum_tls_version  = "1.2"
+  public_network_access_enabled = false
+  # Standard / Premium SKUs deliver a Multi-AZ primary/replica pair;
+  # the Basic SKU is single-node and therefore not a valid HA option
+  # — validated in variables.tf.
+  zones = var.redis_sku_name == "Premium" ? ["1", "2"] : null
+  tags  = local.common_tags
+
+  redis_configuration {
+    maxmemory_policy = "allkeys-lru"
+  }
 }
 
 # ----- Postgres backend (Flexible Server in default mode; self-managed VM in 'vm' mode) -----
@@ -622,7 +667,9 @@ resource "azurerm_virtual_machine_run_command" "pre_patch_backup" {
       if [ -x /opt/hailbytes/bin/ha-pre-patch-backup.sh ]; then
         sudo -E /opt/hailbytes/bin/ha-pre-patch-backup.sh
       else
-        echo "WARN: /opt/hailbytes/bin/ha-pre-patch-backup.sh not present; skipping local bundle."
+        echo "ERROR: /opt/hailbytes/bin/ha-pre-patch-backup.sh not present on this VM image." >&2
+        echo "       Rebuild the marketplace image from main; provision.sh installs the script." >&2
+        exit 1
       fi
       az login --identity --allow-no-subscriptions >/dev/null
       DB_MODE='${var.db_mode}'
@@ -639,6 +686,35 @@ resource "azurerm_virtual_machine_run_command" "pre_patch_backup" {
           --source '${try(azurerm_managed_disk.db_data[0].id, "")}' \
           --incremental true \
           --tags Module=hailbytes-terraform-modules Phase=pre-patch
+      fi
+    EOSH
+  }
+}
+
+# ----- Post-patch verify Run Command -----
+#
+# Mirrors the AWS aws_ssm_document.post_patch_verify in
+# modules/ha-hot-hot/aws/main.tf. Customers run this from Azure Portal
+# under Operations -> Run command -> RunPostPatchVerify after each VM
+# comes back from an image swap, before draining the second VM.
+
+resource "azurerm_virtual_machine_run_command" "post_patch_verify" {
+  count              = var.enable_post_patch_run_command ? local.vm_count : 0
+  name               = "RunPostPatchVerify"
+  location           = var.location
+  virtual_machine_id = azurerm_linux_virtual_machine.vm[count.index].id
+
+  source {
+    script = <<-EOSH
+      #!/bin/bash
+      set -euo pipefail
+      export HAILBYTES_SCHEMA_VERSION_PATH='${var.schema_version_endpoint_path}'
+      if [ -x /opt/hailbytes/bin/ha-post-patch-verify.sh ]; then
+        sudo -E /opt/hailbytes/bin/ha-post-patch-verify.sh
+      else
+        echo "ERROR: /opt/hailbytes/bin/ha-post-patch-verify.sh not present on this VM image." >&2
+        echo "       Rebuild the marketplace image from main; provision.sh installs the script." >&2
+        exit 1
       fi
     EOSH
   }
