@@ -21,5 +21,15 @@ module "this" {
   accept_marketplace_terms    = var.accept_marketplace_terms
   marketplace_sku_override    = var.marketplace_sku_override
   marketplace_image_version   = var.marketplace_image_version
-  tags                        = var.tags
+
+  # Patching and migration safety
+  create_backup_storage_account          = var.create_backup_storage_account
+  backup_storage_account_name            = var.backup_storage_account_name
+  backup_storage_replication             = var.backup_storage_replication
+  backup_immutability_days               = var.backup_immutability_days
+  backup_blob_soft_delete_days           = var.backup_blob_soft_delete_days
+  backup_blob_noncurrent_expiration_days = var.backup_blob_noncurrent_expiration_days
+  enable_pre_patch_run_command           = var.enable_pre_patch_run_command
+
+  tags = var.tags
 }

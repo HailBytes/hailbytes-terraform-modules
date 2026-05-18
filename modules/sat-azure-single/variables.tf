@@ -104,6 +104,50 @@ variable "marketplace_image_version" {
   default     = "latest"
 }
 
+# ----- Patching and migration safety -----
+
+variable "create_backup_storage_account" {
+  description = "Provision a Storage Account + immutable container for pre-patch /api/instance/export bundles."
+  type        = bool
+  default     = true
+}
+
+variable "backup_storage_account_name" {
+  description = "Name of an existing Storage Account to use. If null and create_backup_storage_account is true, the module names one."
+  type        = string
+  default     = null
+}
+
+variable "backup_storage_replication" {
+  description = "Replication type for the backup storage account. ZRS is the procurement-grade default."
+  type        = string
+  default     = "ZRS"
+}
+
+variable "backup_immutability_days" {
+  description = "Days the immutable blob policy keeps backup objects pinned (unlocked mode)."
+  type        = number
+  default     = 30
+}
+
+variable "backup_blob_soft_delete_days" {
+  description = "Soft-delete window for blobs and containers."
+  type        = number
+  default     = 30
+}
+
+variable "backup_blob_noncurrent_expiration_days" {
+  description = "Expire noncurrent blob versions after this many days."
+  type        = number
+  default     = 365
+}
+
+variable "enable_pre_patch_run_command" {
+  description = "Install an Azure Run Command document named RunPrePatchBackup."
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   description = "Additional tags applied to every resource."
   type        = map(string)
