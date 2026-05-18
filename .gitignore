@@ -1,0 +1,36 @@
+# Local .terraform directories
+**/.terraform/*
+
+# .tfstate files
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Crash log files
+crash.log
+crash.*.log
+
+# Exclude all .tfvars files by default; commit *.example only
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# CLI configuration files
+.terraformrc
+terraform.rc
+
+# tflint
+.tflint.hcl.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# OS
+Thumbs.db
+
+# Plan output
+*.tfplan
+plan.out
