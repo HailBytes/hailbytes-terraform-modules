@@ -1026,7 +1026,7 @@ resource "aws_ssm_document" "pre_patch_backup" {
             "export AWS_S3_PREFIX=\"${local.backup_object_prefix}$${TS}\"",
             "export HAILBYTES_DB_SECRET_ARN='${aws_secretsmanager_secret.db.arn}'",
             "export AWS_DEFAULT_REGION='${data.aws_region.current.id}'",
-            "if [ -x /opt/hailbytes/bin/ha-pre-patch-backup.sh ]; then sudo -E /opt/hailbytes/bin/ha-pre-patch-backup.sh; else echo 'WARN: /opt/hailbytes/bin/ha-pre-patch-backup.sh not present on this AMI; skipping local bundle.'; fi",
+            "if [ -x /opt/hailbytes/bin/ha-pre-patch-backup.sh ]; then sudo -E /opt/hailbytes/bin/ha-pre-patch-backup.sh; else echo 'ERROR: /opt/hailbytes/bin/ha-pre-patch-backup.sh not present on this AMI. Rebuild from main; the Packer provision.sh now installs the script.' >&2; exit 1; fi",
             "RDS_ID='{{ rdsSnapshotIdentifier }}'",
             "if [ -z \"$RDS_ID\" ]; then RDS_ID=\"${local.name_prefix}-pre-patch-$${TS}\"; fi",
             "aws rds create-db-snapshot --db-instance-identifier '${aws_db_instance.primary.id}' --db-snapshot-identifier \"$RDS_ID\" --tags Key=Module,Value=hailbytes-terraform-modules Key=Phase,Value=pre-patch",

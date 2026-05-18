@@ -180,6 +180,64 @@ variable "enable_pre_patch_run_command" {
   default     = true
 }
 
+variable "enable_post_patch_run_command" {
+  description = "Install an Azure Run Command document named RunPostPatchVerify on each VM, mirroring the AWS aws_ssm_document.post_patch_verify in the SAT/ASM aws-ha modules. Customers fire it from the Portal after a Run Command-driven image swap."
+  type        = bool
+  default     = true
+}
+
+# ----- Shared session store (Azure Cache for Redis) -----
+
+variable "enable_managed_redis" {
+  description = "Provision an Azure Cache for Redis (Standard or Premium SKU, zone-redundant in Premium). Required for HA; set to false only when supplying redis_endpoint_override."
+  type        = bool
+  default     = true
+}
+
+variable "redis_sku_name" {
+  description = "Redis SKU. Standard delivers a primary/replica pair across two zones; Premium adds persistence and explicit zone selection. Basic is single-node and NOT a valid HA option (validated)."
+  type        = string
+  default     = "Standard"
+  validation {
+    condition     = contains(["Standard", "Premium"], var.redis_sku_name)
+    error_message = "redis_sku_name must be one of: Standard, Premium. Basic is single-node and breaks HA."
+  }
+}
+
+variable "redis_family" {
+  description = "Redis SKU family. 'C' = Standard/Basic, 'P' = Premium. Must match redis_sku_name."
+  type        = string
+  default     = "C"
+  validation {
+    condition     = contains(["C", "P"], var.redis_family)
+    error_message = "redis_family must be one of: C, P."
+  }
+}
+
+variable "redis_capacity" {
+  description = "Redis capacity (size index). For SKU=Standard / family=C, valid values are 0 (250MB) through 6 (53GB). cache.t4g.small-equivalent is 1 (1GB)."
+  type        = number
+  default     = 1
+}
+
+variable "redis_endpoint_override" {
+  description = "Host of an existing customer-managed Redis endpoint (Azure Cache, self-managed Redis Sentinel, etc.). Pair with enable_managed_redis = false."
+  type        = string
+  default     = null
+}
+
+variable "redis_endpoint_override_port" {
+  description = "Port on the customer-managed Redis endpoint. 6380 (TLS) is the Azure default. Ignored unless redis_endpoint_override is set."
+  type        = number
+  default     = 6380
+}
+
+variable "redis_endpoint_override_tls" {
+  description = "Whether the customer-managed Redis endpoint requires in-transit TLS. Ignored unless redis_endpoint_override is set."
+  type        = bool
+  default     = true
+}
+
 variable "enable_application_gateway" {
   description = "Front the LB topology with an Azure Application Gateway. Required if you want WAF parity with the AWS ALB+WAF story; the existing Standard LB is L4-only and cannot host WAF rules."
   type        = bool

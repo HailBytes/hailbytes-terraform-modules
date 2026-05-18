@@ -983,7 +983,7 @@ resource "aws_ssm_document" "pre_patch_backup" {
             "export AWS_S3_PREFIX=\"${local.backup_object_prefix}$${TS}\"",
             "export HAILBYTES_DB_SECRET_ARN='${aws_secretsmanager_secret.db.arn}'",
             "export AWS_DEFAULT_REGION='${data.aws_region.current.id}'",
-            "if [ -x /opt/hailbytes/bin/ha-pre-patch-backup.sh ]; then sudo -E /opt/hailbytes/bin/ha-pre-patch-backup.sh; else echo 'WARN: /opt/hailbytes/bin/ha-pre-patch-backup.sh not present on this AMI; skipping local bundle.'; fi",
+            "if [ -x /opt/hailbytes/bin/ha-pre-patch-backup.sh ]; then sudo -E /opt/hailbytes/bin/ha-pre-patch-backup.sh; else echo 'ERROR: /opt/hailbytes/bin/ha-pre-patch-backup.sh not present on this AMI. Rebuild from main; the Packer provision.sh now installs the script.' >&2; exit 1; fi",
             "SNAP_ID='{{ snapshotIdentifier }}'",
             "if [ -z \"$SNAP_ID\" ]; then SNAP_ID=\"${local.name_prefix}-pre-patch-$${TS}\"; fi",
             "if [ '${var.db_mode}' = 'rds' ]; then aws rds create-db-snapshot --db-instance-identifier '${try(aws_db_instance.main[0].id, "")}' --db-snapshot-identifier \"$SNAP_ID\" --tags Key=Module,Value=hailbytes-terraform-modules Key=Phase,Value=pre-patch; else VOL='${try(aws_ebs_volume.db_data[0].id, "")}'; if [ -n \"$VOL\" ]; then aws ec2 create-snapshot --volume-id \"$VOL\" --description \"hailbytes-${var.product} pre-patch $${TS}\" --tag-specifications \"ResourceType=snapshot,Tags=[{Key=Module,Value=hailbytes-terraform-modules},{Key=Phase,Value=pre-patch},{Key=Name,Value=$$SNAP_ID}]\"; fi; fi",
