@@ -31,9 +31,24 @@ output "pre_patch_ssm_document_name" {
   value       = aws_ssm_document.pre_patch_backup.name
 }
 
+output "post_patch_ssm_document_name" {
+  description = "Name of the AWS Systems Manager Run Command document that runs the on-VM five-probe post-patch verifier (used by the autoscaling instance_refresh hooks)."
+  value       = aws_ssm_document.post_patch_verify.name
+}
+
 output "schema_version_endpoint" {
   description = "HTTPS URL to GET for the running schema version. CI/CD post-patch verify scripts can curl this and compare against the expected version emitted by the AMI build."
   value       = "https://${aws_lb.main.dns_name}${var.schema_version_endpoint_path}"
+}
+
+output "redis_endpoint" {
+  description = "Host:port of the Redis endpoint wired into the ASG launch template. Either the module-provisioned ElastiCache replication group or var.redis_endpoint_override."
+  value       = local.effective_redis_host == null ? "" : "${local.effective_redis_host}:${local.effective_redis_port}"
+}
+
+output "redis_mode" {
+  description = "How Redis is wired: 'managed' (this module provisioned ElastiCache), 'override' (customer-supplied), or 'disabled' (horizontal scaling will not be session-safe)."
+  value       = local.provision_managed_redis ? "managed" : (var.redis_endpoint_override == null ? "disabled" : "override")
 }
 
 output "waf_attached" {

@@ -42,6 +42,46 @@ variable "alert_email" {
   default     = null
 }
 
+# ----- Shared session store (ElastiCache for Redis) -----
+
+variable "enable_managed_redis" {
+  description = "Provision an ElastiCache Multi-AZ replication group. Required for horizontal scaling; set to false only when supplying redis_endpoint_override."
+  type        = bool
+  default     = true
+}
+
+variable "redis_node_type" {
+  description = "ElastiCache node type. Scale up alongside ASG growth — cache.t4g.small handles 3-5 instances, cache.m6g.large handles 10-20+."
+  type        = string
+  default     = "cache.t4g.small"
+}
+
+variable "redis_engine_version" {
+  type    = string
+  default = "7.1"
+}
+
+variable "redis_snapshot_retention_days" {
+  type    = number
+  default = 0
+}
+
+variable "redis_endpoint_override" {
+  description = "Host of an existing customer-managed Redis endpoint. Pair with enable_managed_redis = false."
+  type        = string
+  default     = null
+}
+
+variable "redis_endpoint_override_port" {
+  type    = number
+  default = 6379
+}
+
+variable "redis_endpoint_override_tls" {
+  type    = bool
+  default = true
+}
+
 # ----- ASG sizing -----
 
 variable "asg_min_size" {
