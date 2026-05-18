@@ -17,6 +17,9 @@ All notable changes to this project are documented here. Format follows [Keep a 
 - Optional `marketplace_sku_override` and `marketplace_image_version` variables on Azure modules
 - HTTP→HTTPS 301 redirect listener on `ha-hot-hot/aws` and `unlimited-scale/aws` ALBs (default-on, `enable_http_redirect`)
 - Postgres slow-query logging (`log_min_duration_statement=1000`) on RDS parameter groups
-- Top-level docs: README, ARCHITECTURE, BILLING, SECURITY
-- CI: `terraform validate`, `tflint`, `checkov`, `trivy` IaC scan
-- Apache-2.0 license
+- Product-first wrapper modules (the public API): `asm-aws-{single,ha,autoscale}`, `asm-azure-{single,ha,autoscale}`, `sat-aws-{single,ha,autoscale}`, `sat-azure-{single,ha,autoscale}` — 12 thin wrappers around the 6 internal tier modules with `product` hardcoded
+- SAT auto-scaling tiers (`sat-aws-autoscale`, `sat-azure-autoscale`) for large-population training campaigns and bursty report generation
+- Azure auto-scaling for ASM (`asm-azure-autoscale`) — parity with the AWS side
+- Top-level docs: README, ARCHITECTURE, BILLING, SECURITY (responsible disclosure), SECURITY-DEFAULTS (module-level posture)
+- CI: `terraform validate`, `tflint`, `checkov`, `trivy` IaC scan — matrices expanded to cover all 20 modules
+- MPL-2.0 license
