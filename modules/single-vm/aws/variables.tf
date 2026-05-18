@@ -1,0 +1,99 @@
+# ----- Required -----
+
+variable "product" {
+  description = "HailBytes product to deploy. Must match an active AWS Marketplace subscription on this account."
+  type        = string
+  validation {
+    condition     = contains(["asm", "sat"], var.product)
+    error_message = "product must be one of: asm, sat."
+  }
+}
+
+variable "vpc_id" {
+  description = "VPC to deploy into."
+  type        = string
+}
+
+variable "subnet_id" {
+  description = "Subnet to deploy the instance into. Must be in var.vpc_id."
+  type        = string
+}
+
+variable "allowed_cidrs" {
+  description = "CIDR blocks permitted to reach the VM on port 443. Use private CIDRs unless you also set allow_internet_ingress = true."
+  type        = list(string)
+}
+
+# ----- Optional -----
+
+variable "environment" {
+  description = "Environment tag (e.g. dev, staging, prod). Used in resource names and tags."
+  type        = string
+  default     = "dev"
+}
+
+variable "name_prefix" {
+  description = "Prefix for all resource names. Defaults to 'hailbytes-{product}-{environment}'."
+  type        = string
+  default     = null
+}
+
+variable "instance_type" {
+  description = "EC2 instance type. t3.large is the default for ASM/SAT single-vm tier."
+  type        = string
+  default     = "t3.large"
+}
+
+variable "key_name" {
+  description = "EC2 key pair name. Optional; prefer SSM Session Manager for management access. Pass null to skip."
+  type        = string
+  default     = null
+}
+
+variable "root_volume_size_gb" {
+  description = "Root volume size in GB."
+  type        = number
+  default     = 50
+}
+
+variable "data_volume_size_gb" {
+  description = "Data volume size in GB. Attached as /dev/sdh; the marketplace image mounts and formats on first boot."
+  type        = number
+  default     = 200
+}
+
+variable "enable_customer_managed_key" {
+  description = "Create and use a customer-managed KMS key for EBS encryption. If false, uses the AWS-managed default key."
+  type        = bool
+  default     = false
+}
+
+variable "enable_management_access" {
+  description = "Attach the AmazonSSMManagedInstanceCore policy so the VM is reachable via SSM Session Manager. Strongly recommended."
+  type        = bool
+  default     = true
+}
+
+variable "associate_public_ip" {
+  description = "Attach a public IP to the VM. Disabled by default; deploy into a private subnet behind a NAT or LB."
+  type        = bool
+  default     = false
+}
+
+variable "allow_internet_ingress" {
+  description = "Permit 0.0.0.0/0 in allowed_cidrs. Emits no warning; you take responsibility."
+  type        = bool
+  default     = false
+}
+
+variable "enable_snapshots" {
+  description = "Create a DLM lifecycle policy that snapshots the data volume daily and retains 7 snapshots."
+  type        = bool
+  default     = true
+}
+
+variable "tags" {
+  description = "Additional tags applied to every resource."
+  type        = map(string)
+  default     = {}
+}
