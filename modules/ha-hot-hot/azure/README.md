@@ -1,0 +1,85 @@
+# `ha-hot-hot/azure`
+
+Two HailBytes Marketplace Linux VMs in **active/active** behind a Standard Load Balancer, with shared state in **Azure Database for PostgreSQL Flexible Server** (Zone-Redundant HA).
+
+> [!IMPORTANT]
+> **Marketplace subscription required.** Subscribe to the relevant [HailBytes Azure Marketplace listing](https://azuremarketplace.microsoft.com/marketplace/apps?search=hailbytes) before applying.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    User([Operators]) -->|HTTPS 443| LB[Standard Load Balancer<br/>health: /health]
+    LB --> VM1[(VM #1<br/>Zone 1<br/>Marketplace image)]
+    LB --> VM2[(VM #2<br/>Zone 2<br/>Marketplace image)]
+    VM1 --> KV[(Key Vault<br/>DB password)]
+    VM2 --> KV
+    VM1 -->|TLS, vnet-integrated| PG[(Postgres Flexible Server<br/>ZoneRedundant HA primary)]
+    VM2 -->|TLS, vnet-integrated| PG
+    PG -.replication.-> PGS[(Standby in second zone)]
+```
+
+## Cost estimate (East US, pay-as-you-go)
+
+| Component | Default | ~Monthly |
+|---|---|---|
+| 2× `Standard_D2s_v5` | 24/7 | $140 |
+| 2× Premium SSD OS | 64 GB | $20 |
+| 2× Premium SSD data | 256 GB | $70 |
+| Standard Load Balancer + 1 rule | | $25 |
+| Postgres Flexible Server `GP_Standard_D2ds_v5` Zone-Redundant | 128 GB | $260 |
+| Postgres backups | retained 14d | $15 |
+| Key Vault | secrets ops | $1 |
+| **Total infrastructure** | | **~$530/month** |
+| **HailBytes marketplace software fee** | per VM-hour | **separate, x2 hours** |
+
+## Prerequisites
+
+- Virtual network with:
+  - A subnet for VMs (`vm_subnet_id`)
+  - A subnet **delegated** to `Microsoft.DBforPostgreSQL/flexibleServers` (`db_delegated_subnet_id`)
+  - A private DNS zone `privatelink.postgres.database.azure.com` linked to the vnet (`private_dns_zone_id`)
+- Marketplace subscription accepted (handled by module unless you set `accept_marketplace_terms = false`)
+
+## Usage
+
+```hcl
+module "hailbytes_asm_ha" {
+  source = "github.com/hailbytes/hailbytes-terraform-modules//modules/ha-hot-hot/azure?ref=v1.0.0"
+
+  product                = "asm"
+  environment            = "prod"
+  resource_group_name    = "rg-hailbytes-prod"
+  location               = "eastus"
+  vm_subnet_id           = azurerm_subnet.workload.id
+  lb_subnet_id           = azurerm_subnet.workload.id
+  db_delegated_subnet_id = azurerm_subnet.db.id
+  private_dns_zone_id    = azurerm_private_dns_zone.pg.id
+  allowed_cidrs          = ["10.0.0.0/8"]
+  admin_username         = "hbadmin"
+  ssh_public_key         = file("~/.ssh/id_ed25519.pub")
+}
+```
+
+## Deployment
+
+```bash
+cd examples/basic
+cp terraform.tfvars.example terraform.tfvars
+terraform init && terraform apply
+```
+
+## Post-deploy verification
+
+```bash
+# 1. Public IP serving traffic
+curl https://$(terraform output -raw load_balancer_public_ip)/health
+
+# 2. Postgres reachable from VMs (via SSH bastion + psql)
+# 3. Failover: stop one VM, verify second continues serving
+az vm deallocate -g <rg> -n $(terraform output -json vm_ids | jq -r '.[0] | split("/")[-1]')
+```
+
+## Inputs / Outputs
+
+See [`variables.tf`](variables.tf) and [`outputs.tf`](outputs.tf).
