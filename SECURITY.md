@@ -55,3 +55,9 @@ Out of scope: third-party dependencies (please report those upstream), HailBytes
 
 For sensitive disclosures, our security team PGP key is available at:  
 [hailbytes.com/.well-known/security.txt](https://hailbytes.com/.well-known/security.txt)
+
+---
+
+## Module security defaults
+
+This page covers *how to report* vulnerabilities. For *what defaults the modules ship with* (encryption, IMDSv2, KMS/Key Vault, least-privilege IAM, security group postures), see [SECURITY-DEFAULTS.md](SECURITY-DEFAULTS.md).

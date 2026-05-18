@@ -1,0 +1,9 @@
+resource_group_name    = "rg-hailbytes-prod"
+location               = "eastus"
+vm_subnet_id           = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-prod/providers/Microsoft.Network/virtualNetworks/vnet/subnets/workload"
+db_delegated_subnet_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-prod/providers/Microsoft.Network/virtualNetworks/vnet/subnets/postgres"
+private_dns_zone_id    = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-prod/providers/Microsoft.Network/privateDnsZones/privatelink.postgres.database.azure.com"
+allowed_cidrs          = ["10.0.0.0/8"]
+admin_username         = "hbadmin"
+ssh_public_key         = "ssh-ed25519 AAAA... user@host"
+environment            = "prod"
