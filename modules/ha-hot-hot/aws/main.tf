@@ -4,11 +4,17 @@ locals {
   # AWS Marketplace listings (subscribe before applying):
   #   ASM: https://aws.amazon.com/marketplace/pp/prodview-66d5bswmbtfhs
   #   SAT: https://aws.amazon.com/marketplace/pp/prodview-yyk6iton3ghu4
-  # Set var.marketplace_product_code for stricter AMI validation (recommended in prod).
+  marketplace_product_codes = {
+    asm = "1n57wg1f6735e30vj5fn420bp"
+    sat = "d19hjbz3gakqdlonlf8twdmll"
+  }
+
   ami_name_pattern = {
     asm = "hailbytes-asm-*"
     sat = "hailbytes-sat-*"
   }
+
+  effective_product_code = coalesce(var.marketplace_product_code, local.marketplace_product_codes[var.product])
 
   common_tags = merge(
     {
@@ -30,16 +36,13 @@ data "aws_ami" "hailbytes" {
   owners      = ["aws-marketplace"]
 
   filter {
-    name   = "name"
-    values = [local.ami_name_pattern[var.product]]
+    name   = "product-code"
+    values = [local.effective_product_code]
   }
 
-  dynamic "filter" {
-    for_each = var.marketplace_product_code == null ? [] : [var.marketplace_product_code]
-    content {
-      name   = "product-code"
-      values = [filter.value]
-    }
+  filter {
+    name   = "name"
+    values = [local.ami_name_pattern[var.product]]
   }
 }
 
