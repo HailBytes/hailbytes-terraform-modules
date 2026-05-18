@@ -40,6 +40,14 @@ locals {
   db_port = local.use_rds ? coalesce(one(aws_db_instance.main[*].port), 5432) : 5432
   db_arn  = coalesce(one(aws_db_instance.main[*].arn), one(aws_instance.db_ec2[*].arn))
   db_id   = coalesce(one(aws_db_instance.main[*].id), one(aws_instance.db_ec2[*].id))
+
+  # Redis is required for HA: both app instances must share session state and
+  # the worker-lock heartbeat through the same Redis. The module provisions
+  # ElastiCache by default; customers with an existing Redis can supply an
+  # endpoint via var.redis_endpoint_override and set enable_managed_redis = false.
+  provision_managed_redis = var.enable_managed_redis && var.redis_endpoint_override == null
+  effective_redis_host    = local.provision_managed_redis ? one(aws_elasticache_replication_group.main[*].primary_endpoint_address) : var.redis_endpoint_override
+  effective_redis_port    = local.provision_managed_redis ? 6379 : var.redis_endpoint_override_port
 }
 
 data "aws_caller_identity" "current" {}
@@ -146,6 +154,24 @@ resource "aws_vpc_security_group_ingress_rule" "db_from_vm" {
   to_port                      = 5432
   ip_protocol                  = "tcp"
   description                  = "Postgres from VMs"
+}
+
+resource "aws_security_group" "redis" {
+  count       = local.provision_managed_redis ? 1 : 0
+  name        = "${local.name_prefix}-redis-sg"
+  description = "ElastiCache Redis ingress from VMs"
+  vpc_id      = var.vpc_id
+  tags        = local.common_tags
+}
+
+resource "aws_vpc_security_group_ingress_rule" "redis_from_vm" {
+  count                        = local.provision_managed_redis ? 1 : 0
+  security_group_id            = aws_security_group.redis[0].id
+  referenced_security_group_id = aws_security_group.vm.id
+  from_port                    = 6379
+  to_port                      = 6379
+  ip_protocol                  = "tcp"
+  description                  = "Redis from VMs"
 }
 
 # ----- IAM -----
@@ -502,6 +528,43 @@ resource "aws_volume_attachment" "db_data" {
   instance_id = aws_instance.db_ec2[0].id
 }
 
+# ----- Shared session store: ElastiCache for Redis (Multi-AZ) -----
+#
+# HailBytes SAT / ASM both keep session state in Redis when running in HA. Without
+# a shared Redis endpoint each VM falls back to in-memory sessions, which breaks
+# every cross-instance login and worker-lock claim. This block provisions a
+# Multi-AZ replication group by default; set enable_managed_redis = false and
+# pass redis_endpoint_override to point at a customer-owned cache instead.
+
+resource "aws_elasticache_subnet_group" "main" {
+  count      = local.provision_managed_redis ? 1 : 0
+  name       = "${local.name_prefix}-redis-subnets"
+  subnet_ids = local.vm_subnets
+  tags       = local.common_tags
+}
+
+resource "aws_elasticache_replication_group" "main" {
+  count                      = local.provision_managed_redis ? 1 : 0
+  replication_group_id       = "${local.name_prefix}-redis"
+  description                = "HailBytes ${var.product} session store + worker lock"
+  engine                     = "redis"
+  engine_version             = var.redis_engine_version
+  node_type                  = var.redis_node_type
+  num_cache_clusters         = 2
+  automatic_failover_enabled = true
+  multi_az_enabled           = true
+  port                       = 6379
+  parameter_group_name       = "default.redis7"
+  subnet_group_name          = aws_elasticache_subnet_group.main[0].name
+  security_group_ids         = [aws_security_group.redis[0].id]
+  at_rest_encryption_enabled = true
+  transit_encryption_enabled = true
+  kms_key_id                 = var.enable_customer_managed_key ? aws_kms_key.main[0].arn : null
+  snapshot_retention_limit   = var.redis_snapshot_retention_days
+  apply_immediately          = false
+  tags                       = local.common_tags
+}
+
 # ----- VMs (one per AZ, active/active) -----
 
 resource "aws_instance" "vm" {
@@ -538,8 +601,10 @@ resource "aws_instance" "vm" {
     kms_key_id  = var.enable_customer_managed_key ? aws_kms_key.main[0].arn : null
   }
 
-  # The marketplace image reads these on first boot to wire itself to the shared DB.
-  # Values are not sensitive (they reference the secret ARN, not the password).
+  # The marketplace image reads these on first boot to wire itself to the shared
+  # DB and Redis. Values are not sensitive (they reference the secret ARN, not
+  # the password). Redis is required for HA; without it the second VM cannot
+  # share sessions or worker-lock state with the first.
   user_data = base64encode(jsonencode({
     hailbytes = {
       mode               = "ha"
@@ -548,6 +613,9 @@ resource "aws_instance" "vm" {
       db_secret_region   = data.aws_region.current.id
       product            = var.product
       cluster_member_idx = count.index
+      redis_host         = local.effective_redis_host
+      redis_port         = local.effective_redis_port
+      redis_tls          = local.provision_managed_redis ? true : var.redis_endpoint_override_tls
     }
   }))
 
@@ -560,7 +628,7 @@ resource "aws_instance" "vm" {
     ignore_changes = [ami, user_data]
   }
 
-  depends_on = [aws_db_instance.main, aws_instance.db_ec2]
+  depends_on = [aws_db_instance.main, aws_instance.db_ec2, aws_elasticache_replication_group.main]
 }
 
 data "aws_region" "current" {}
@@ -919,6 +987,48 @@ resource "aws_ssm_document" "pre_patch_backup" {
             "SNAP_ID='{{ snapshotIdentifier }}'",
             "if [ -z \"$SNAP_ID\" ]; then SNAP_ID=\"${local.name_prefix}-pre-patch-$${TS}\"; fi",
             "if [ '${var.db_mode}' = 'rds' ]; then aws rds create-db-snapshot --db-instance-identifier '${try(aws_db_instance.main[0].id, "")}' --db-snapshot-identifier \"$SNAP_ID\" --tags Key=Module,Value=hailbytes-terraform-modules Key=Phase,Value=pre-patch; else VOL='${try(aws_ebs_volume.db_data[0].id, "")}'; if [ -n \"$VOL\" ]; then aws ec2 create-snapshot --volume-id \"$VOL\" --description \"hailbytes-${var.product} pre-patch $${TS}\" --tag-specifications \"ResourceType=snapshot,Tags=[{Key=Module,Value=hailbytes-terraform-modules},{Key=Phase,Value=pre-patch},{Key=Name,Value=$$SNAP_ID}]\"; fi; fi",
+          ]
+        }
+      }
+    ]
+  })
+}
+
+# ----- SSM Run Command document: post-patch verify -----
+
+resource "aws_ssm_document" "post_patch_verify" {
+  name            = "${local.name_prefix}-post-patch-verify"
+  document_type   = "Command"
+  document_format = "YAML"
+  target_type     = "/AWS::EC2::Instance"
+  tags            = local.common_tags
+
+  content = yamlencode({
+    schemaVersion = "2.2"
+    description   = "HailBytes SAT/ASM post-patch verification. Runs the five-probe verifier shipped with the AMI: /api/ready, schema-version regression, encryption-key fingerprint, worker-lock health, sample SMTP/credential decrypt."
+    parameters = {
+      schemaVersionPath = {
+        type        = "String"
+        description = "Path to the schema-version endpoint."
+        default     = var.schema_version_endpoint_path
+      }
+      minSchemaVersion = {
+        type        = "String"
+        description = "Optional integer floor that the running schema version must meet or exceed. Empty string skips the regression check."
+        default     = ""
+      }
+    }
+    mainSteps = [
+      {
+        action = "aws:runShellScript"
+        name   = "postPatchVerify"
+        inputs = {
+          timeoutSeconds = "600"
+          runCommand = [
+            "set -euo pipefail",
+            "export HAILBYTES_SCHEMA_VERSION_PATH='{{ schemaVersionPath }}'",
+            "export HAILBYTES_MIN_SCHEMA_VERSION='{{ minSchemaVersion }}'",
+            "if [ -x /opt/hailbytes/bin/ha-post-patch-verify.sh ]; then sudo -E /opt/hailbytes/bin/ha-post-patch-verify.sh; else echo 'ERROR: /opt/hailbytes/bin/ha-post-patch-verify.sh not present on this AMI.'; exit 1; fi",
           ]
         }
       }
