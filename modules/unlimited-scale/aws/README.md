@@ -31,6 +31,9 @@ per-vCore meter scales with N instances rather than the topology itself.
 Compare against `modules/single-vm/aws` (~$84/mo infra + meter) and
 `modules/ha-hot-hot/aws` (~$435-$515/mo infra + meter) before you quote.
 
+For the three-shape comparison side-by-side and the canonical
+procurement-grade source, see [`COST_SHAPES.md`](../../../COST_SHAPES.md).
+
 | Component | Default | ~Monthly |
 |---|---|---|
 | 3× EC2 `m6i.large` (ASG min) | 24/7 | $225 |
