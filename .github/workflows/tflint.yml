@@ -1,0 +1,58 @@
+name: tflint
+
+on:
+  pull_request:
+    paths:
+      - 'modules/**'
+      - '.tflint.hcl'
+      - '.github/workflows/tflint.yml'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  tflint:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          # Internal tier modules
+          - modules/single-vm/aws
+          - modules/single-vm/azure
+          - modules/ha-hot-hot/aws
+          - modules/ha-hot-hot/azure
+          - modules/unlimited-scale/aws
+          - modules/unlimited-scale/azure
+          # Product-first wrappers
+          - modules/asm-aws-single
+          - modules/asm-aws-ha
+          - modules/asm-aws-autoscale
+          - modules/asm-azure-single
+          - modules/asm-azure-ha
+          - modules/asm-azure-autoscale
+          - modules/sat-aws-single
+          - modules/sat-aws-ha
+          - modules/sat-aws-autoscale
+          - modules/sat-azure-single
+          - modules/sat-azure-ha
+          - modules/sat-azure-autoscale
+          # Supporting
+          - modules/network/aws
+          - modules/network/azure
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.53.0
+
+      - name: tflint --init
+        run: tflint --init
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: tflint
+        run: tflint --chdir=${{ matrix.module }} --recursive --format=compact
