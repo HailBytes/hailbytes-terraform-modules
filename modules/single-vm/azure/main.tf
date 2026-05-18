@@ -13,13 +13,13 @@ locals {
     asm = {
       publisher = "lcmcon1687976613543"
       offer     = "hardened_ubuntu_with_rengine"
-      sku       = coalesce(var.marketplace_sku_override, "hardened_ubuntu_with_rengine")
+      sku       = coalesce(var.marketplace_sku_override, "standard-v2")
       version   = var.marketplace_image_version
     }
     sat = {
       publisher = "lcmcon1687976613543"
       offer     = "gophish-phishing-simulator"
-      sku       = coalesce(var.marketplace_sku_override, "gophish-phishing-simulator")
+      sku       = coalesce(var.marketplace_sku_override, "standard-v2")
       version   = var.marketplace_image_version
     }
   }

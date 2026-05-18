@@ -4,17 +4,21 @@ locals {
   # AWS Marketplace listings (subscribe at these URLs before applying):
   #   ASM: https://aws.amazon.com/marketplace/pp/prodview-66d5bswmbtfhs
   #   SAT: https://aws.amazon.com/marketplace/pp/prodview-yyk6iton3ghu4
-  #
-  # The default AMI lookup filters by marketplace owner alias + name pattern.
-  # For stricter validation (recommended for production), look up the AMI's
-  # product code after subscribing and pass it via var.marketplace_product_code:
+  # Product codes were obtained with:
   #   aws ec2 describe-images --owners aws-marketplace \
-  #     --filters "Name=name,Values=hailbytes-${var.product}-*" \
-  #     --query 'Images[*].ProductCodes' --output json
+  #     --filters 'Name=name,Values=hailbytes-<product>-*' \
+  #     --query 'Images[*].ProductCodes'
+  marketplace_product_codes = {
+    asm = "1n57wg1f6735e30vj5fn420bp"
+    sat = "d19hjbz3gakqdlonlf8twdmll"
+  }
+
   ami_name_pattern = {
     asm = "hailbytes-asm-*"
     sat = "hailbytes-sat-*"
   }
+
+  effective_product_code = coalesce(var.marketplace_product_code, local.marketplace_product_codes[var.product])
 
   common_tags = merge(
     {
@@ -44,6 +48,11 @@ data "aws_ami" "hailbytes" {
   owners      = ["aws-marketplace"]
 
   filter {
+    name   = "product-code"
+    values = [local.effective_product_code]
+  }
+
+  filter {
     name   = "name"
     values = [local.ami_name_pattern[var.product]]
   }
@@ -56,14 +65,6 @@ data "aws_ami" "hailbytes" {
   filter {
     name   = "virtualization-type"
     values = ["hvm"]
-  }
-
-  dynamic "filter" {
-    for_each = var.marketplace_product_code == null ? [] : [var.marketplace_product_code]
-    content {
-      name   = "product-code"
-      values = [filter.value]
-    }
   }
 }
 
