@@ -3,7 +3,7 @@
 Deploys **one HailBytes Marketplace EC2 instance** with an encrypted data volume, IMDSv2 required, SSM Session Manager access, and optional daily snapshots.
 
 > [!IMPORTANT]
-> **Marketplace subscription required.** Subscribe to [HailBytes ASM](https://aws.amazon.com/marketplace/search/results?searchTerms=hailbytes-asm) or [HailBytes SAT](https://aws.amazon.com/marketplace/search/results?searchTerms=hailbytes-sat) on AWS Marketplace **before** running `terraform apply`. Without subscription, the AMI lookup fails.
+> **Marketplace subscription required.** Subscribe to [HailBytes ASM](https://aws.amazon.com/marketplace/pp/prodview-66d5bswmbtfhs) or [HailBytes SAT](https://aws.amazon.com/marketplace/pp/prodview-yyk6iton3ghu4) on AWS Marketplace **before** running `terraform apply`. Without subscription, the AMI lookup fails.
 
 ## Architecture
 

@@ -3,7 +3,7 @@
 Deploys **one HailBytes Marketplace Linux VM** with managed identity, encrypted OS + data disks, and a restrictive NSG.
 
 > [!IMPORTANT]
-> **Marketplace subscription required.** Subscribe to [HailBytes ASM](https://azuremarketplace.microsoft.com/marketplace/apps?search=hailbytes-asm) or [HailBytes SAT](https://azuremarketplace.microsoft.com/marketplace/apps?search=hailbytes-sat) on Azure Marketplace **before** running `terraform apply`. The module accepts marketplace terms automatically via `azurerm_marketplace_agreement` unless you set `accept_marketplace_terms = false`.
+> **Marketplace subscription required.** Subscribe to [HailBytes ASM](https://marketplace.microsoft.com/en-us/product/virtual-machines/lcmcon1687976613543.hardened_ubuntu_with_rengine) or [HailBytes SAT](https://marketplace.microsoft.com/en-us/product/virtual-machines/lcmcon1687976613543.gophish-phishing-simulator?tab=overview) on Azure Marketplace **before** running `terraform apply`. The module accepts marketplace terms automatically via `azurerm_marketplace_agreement` unless you set `accept_marketplace_terms = false`.
 
 ## Architecture
 

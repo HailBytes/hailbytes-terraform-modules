@@ -3,7 +3,7 @@
 Elastic deployment of HailBytes Marketplace VMs: Auto Scaling Group across 3 AZs, ALB, RDS PostgreSQL Multi-AZ + read replicas, CloudWatch alarms wired to SNS, VPC Flow Logs.
 
 > [!IMPORTANT]
-> **Marketplace subscription required.** Subscribe to the relevant [HailBytes Marketplace listing](https://aws.amazon.com/marketplace/search/results?searchTerms=hailbytes) before applying. Every instance the ASG launches is billed against your marketplace subscription.
+> **Marketplace subscription required.** Subscribe to [HailBytes ASM](https://aws.amazon.com/marketplace/pp/prodview-66d5bswmbtfhs) or [HailBytes SAT](https://aws.amazon.com/marketplace/pp/prodview-yyk6iton3ghu4) on AWS Marketplace before applying. Every instance the ASG launches is billed against your marketplace subscription.
 
 ## Architecture
 

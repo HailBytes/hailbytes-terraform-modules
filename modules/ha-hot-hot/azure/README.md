@@ -3,7 +3,7 @@
 Two HailBytes Marketplace Linux VMs in **active/active** behind a Standard Load Balancer, with shared state in **Azure Database for PostgreSQL Flexible Server** (Zone-Redundant HA).
 
 > [!IMPORTANT]
-> **Marketplace subscription required.** Subscribe to the relevant [HailBytes Azure Marketplace listing](https://azuremarketplace.microsoft.com/marketplace/apps?search=hailbytes) before applying.
+> **Marketplace subscription required.** Subscribe to [HailBytes ASM](https://marketplace.microsoft.com/en-us/product/virtual-machines/lcmcon1687976613543.hardened_ubuntu_with_rengine) or [HailBytes SAT](https://marketplace.microsoft.com/en-us/product/virtual-machines/lcmcon1687976613543.gophish-phishing-simulator?tab=overview) on Azure Marketplace before applying.
 
 ## Architecture
 

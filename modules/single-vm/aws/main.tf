@@ -1,14 +1,16 @@
 locals {
   name_prefix = coalesce(var.name_prefix, "hailbytes-${var.product}-${var.environment}")
 
-  # HailBytes Marketplace product codes. These identify the paid listing in AWS Marketplace
-  # and are how `data.aws_ami` finds the latest published image version.
-  # Replace placeholder values once the marketplace listing IDs are assigned.
-  marketplace_product_codes = {
-    asm = "REPLACE_WITH_HAILBYTES_ASM_PRODUCT_CODE"
-    sat = "REPLACE_WITH_HAILBYTES_SAT_PRODUCT_CODE"
-  }
-
+  # AWS Marketplace listings (subscribe at these URLs before applying):
+  #   ASM: https://aws.amazon.com/marketplace/pp/prodview-66d5bswmbtfhs
+  #   SAT: https://aws.amazon.com/marketplace/pp/prodview-yyk6iton3ghu4
+  #
+  # The default AMI lookup filters by marketplace owner alias + name pattern.
+  # For stricter validation (recommended for production), look up the AMI's
+  # product code after subscribing and pass it via var.marketplace_product_code:
+  #   aws ec2 describe-images --owners aws-marketplace \
+  #     --filters "Name=name,Values=hailbytes-${var.product}-*" \
+  #     --query 'Images[*].ProductCodes' --output json
   ami_name_pattern = {
     asm = "hailbytes-asm-*"
     sat = "hailbytes-sat-*"
@@ -42,11 +44,6 @@ data "aws_ami" "hailbytes" {
   owners      = ["aws-marketplace"]
 
   filter {
-    name   = "product-code"
-    values = [local.marketplace_product_codes[var.product]]
-  }
-
-  filter {
     name   = "name"
     values = [local.ami_name_pattern[var.product]]
   }
@@ -59,6 +56,14 @@ data "aws_ami" "hailbytes" {
   filter {
     name   = "virtualization-type"
     values = ["hvm"]
+  }
+
+  dynamic "filter" {
+    for_each = var.marketplace_product_code == null ? [] : [var.marketplace_product_code]
+    content {
+      name   = "product-code"
+      values = [filter.value]
+    }
   }
 }
 

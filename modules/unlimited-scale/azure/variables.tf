@@ -93,6 +93,18 @@ variable "accept_marketplace_terms" {
   default = true
 }
 
+variable "marketplace_sku_override" {
+  description = "Override the marketplace SKU (plan name) if your subscription points at a non-default plan."
+  type        = string
+  default     = null
+}
+
+variable "marketplace_image_version" {
+  description = "Marketplace image version. Pin to an explicit version for reproducible production deploys."
+  type        = string
+  default     = "latest"
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

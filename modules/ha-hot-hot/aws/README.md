@@ -3,7 +3,7 @@
 Two HailBytes Marketplace EC2 instances in **active/active** behind an Application Load Balancer, with shared state in **RDS PostgreSQL Multi-AZ**.
 
 > [!IMPORTANT]
-> **Marketplace subscription required.** Subscribe to the relevant [HailBytes Marketplace listing](https://aws.amazon.com/marketplace/search/results?searchTerms=hailbytes) before applying.
+> **Marketplace subscription required.** Subscribe to [HailBytes ASM](https://aws.amazon.com/marketplace/pp/prodview-66d5bswmbtfhs) or [HailBytes SAT](https://aws.amazon.com/marketplace/pp/prodview-yyk6iton3ghu4) on AWS Marketplace before applying.
 
 ## Architecture
 
