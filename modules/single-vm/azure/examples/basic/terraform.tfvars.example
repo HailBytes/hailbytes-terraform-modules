@@ -1,0 +1,7 @@
+resource_group_name = "rg-hailbytes-dev"
+location            = "eastus"
+subnet_id           = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-dev/providers/Microsoft.Network/virtualNetworks/vnet-hailbytes/subnets/workload"
+allowed_cidrs       = ["10.0.0.0/8"]
+admin_username      = "hbadmin"
+ssh_public_key      = "ssh-ed25519 AAAA... user@host"
+environment         = "dev"
