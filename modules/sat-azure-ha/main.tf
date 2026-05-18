@@ -24,5 +24,27 @@ module "this" {
   accept_marketplace_terms  = var.accept_marketplace_terms
   marketplace_sku_override  = var.marketplace_sku_override
   marketplace_image_version = var.marketplace_image_version
-  tags                      = var.tags
+
+  # Patching and migration safety
+  db_mode                                = var.db_mode
+  db_vm_size                             = var.db_vm_size
+  db_vm_data_disk_size_gb                = var.db_vm_data_disk_size_gb
+  create_backup_storage_account          = var.create_backup_storage_account
+  backup_storage_account_name            = var.backup_storage_account_name
+  backup_storage_replication             = var.backup_storage_replication
+  backup_immutability_days               = var.backup_immutability_days
+  backup_blob_soft_delete_days           = var.backup_blob_soft_delete_days
+  backup_blob_noncurrent_expiration_days = var.backup_blob_noncurrent_expiration_days
+  enable_pre_patch_run_command           = var.enable_pre_patch_run_command
+  enable_application_gateway             = var.enable_application_gateway
+  appgw_subnet_id                        = var.appgw_subnet_id
+  appgw_tls_pfx_base64                   = var.appgw_tls_pfx_base64
+  appgw_tls_pfx_password                 = var.appgw_tls_pfx_password
+  appgw_backend_host_header              = var.appgw_backend_host_header
+  waf_policy_id                          = var.waf_policy_id
+  alert_email                            = var.alert_email
+  refresh_rollback_5xx_count_threshold   = var.refresh_rollback_5xx_count_threshold
+  schema_version_endpoint_path           = var.schema_version_endpoint_path
+
+  tags = var.tags
 }

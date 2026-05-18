@@ -1,10 +1,15 @@
 output "load_balancer_public_ip" {
-  description = "Public IP of the load balancer frontend."
-  value       = azurerm_public_ip.lb.ip_address
+  description = "Public IP of the load balancer frontend (or App Gateway frontend when enable_application_gateway = true)."
+  value       = local.appgw_endpoint
 }
 
 output "load_balancer_id" {
   value = azurerm_lb.main.id
+}
+
+output "application_gateway_id" {
+  description = "ID of the Application Gateway when enable_application_gateway = true; empty otherwise."
+  value       = local.enable_application_gateway ? azurerm_application_gateway.main[0].id : ""
 }
 
 output "vm_ids" {
@@ -17,11 +22,48 @@ output "vm_private_ips" {
 }
 
 output "postgres_fqdn" {
-  description = "FQDN of the Postgres Flexible Server (private, vnet-integrated)."
-  value       = azurerm_postgresql_flexible_server.main.fqdn
+  description = "DB endpoint. Flexible Server FQDN in 'flexible_server' mode; private-IP:5432 of the self-managed Postgres VM in 'vm' mode."
+  value       = local.db_host
+}
+
+output "db_mode" {
+  description = "Active DB mode: 'flexible_server' or 'vm'."
+  value       = var.db_mode
 }
 
 output "key_vault_uri" {
   description = "Key Vault URI; the DB password is at secret name 'hailbytes-db-password'."
   value       = azurerm_key_vault.main.vault_uri
+}
+
+# ----- Patching and migration safety -----
+
+output "backup_storage_account_name" {
+  description = "Name of the Storage Account configured to receive pre-patch bundles. Empty if neither create_backup_storage_account nor backup_storage_account_name is set."
+  value       = local.backup_storage_account_name
+}
+
+output "backup_container_uri" {
+  description = "Fully-qualified URI prefix for backup bundles."
+  value       = local.backup_storage_account_name == null ? "" : "https://${local.backup_storage_account_name}.blob.core.windows.net/${local.backup_container_name}/hailbytes-${var.product}-"
+}
+
+output "pre_patch_run_command_name" {
+  description = "Name of the Azure Run Command document that triggers a pre-patch backup + Flexible Server / disk snapshot."
+  value       = var.enable_pre_patch_run_command ? azurerm_virtual_machine_run_command.pre_patch_backup[0].name : ""
+}
+
+output "schema_version_endpoint" {
+  description = "HTTPS URL that returns the running schema version. CI/CD post-patch verify scripts curl this."
+  value       = "https://${local.appgw_endpoint}${var.schema_version_endpoint_path}"
+}
+
+output "alerts_action_group_id" {
+  description = "Action Group ID for patching tripwire alerts. Empty when alert_email is null."
+  value       = var.alert_email == null ? "" : azurerm_monitor_action_group.alerts[0].id
+}
+
+output "waf_attached" {
+  description = "True when var.waf_policy_id was set on the App Gateway."
+  value       = local.enable_application_gateway && var.waf_policy_id != null
 }

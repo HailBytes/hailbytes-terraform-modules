@@ -49,10 +49,14 @@ These modules ship with security-conservative defaults. You should have to expli
 The HailBytes marketplace image is the source of truth for in-image patches. When HailBytes publishes a new image version, you:
 
 1. Pull the latest module version (or bump the pinned image version in your tfvars).
-2. `terraform plan` shows the launch template / VMSS image reference changing.
-3. `terraform apply` triggers instance refresh (ASG) or rolling upgrade (VMSS) — zero-downtime in `ha-hot-hot` and `unlimited-scale` tiers, ~2 min downtime in `single-vm`.
+2. **Run the pre-patch backup** via the SSM Run Command (AWS) or Azure Run Command document the module provisions. This produces a tamper-evident bundle in the immutable backup bucket / container — DB dump + uploads + manifest with the encryption-key fingerprint stamped in.
+3. `terraform plan` shows the launch template / VMSS image reference changing.
+4. `terraform apply` triggers instance refresh (ASG) or rolling upgrade (VMSS) — zero-downtime in `ha-hot-hot` and `unlimited-scale` tiers, ~2 min downtime in `single-vm`. On AWS autoscale, CloudWatch tripwires (5xx-rate, unhealthy-host count) auto-rollback the refresh. On Azure autoscale, `automatic_instance_repair` + rolling-upgrade `max_unhealthy_*` pauses the upgrade.
+5. Post-patch verify: curl `module.<name>.schema_version_endpoint` (the module emits this output) and confirm the encryption-key fingerprint hasn't drifted.
 
 Do not run `apt`/`yum` updates inside the running VM. The image is immutable; replace it.
+
+Full runbook with audit pointers (no HailBytes admin access, no phone-home, customer-initiated only): [docs/PATCHING_AND_MIGRATION.md](docs/PATCHING_AND_MIGRATION.md).
 
 ## Reporting vulnerabilities
 

@@ -25,5 +25,21 @@ module "this" {
   enable_management_access    = var.enable_management_access
   marketplace_product_code    = var.marketplace_product_code
   enable_http_redirect        = var.enable_http_redirect
-  tags                        = var.tags
+
+  # Patching and migration safety
+  db_mode                                   = var.db_mode
+  db_ec2_instance_type                      = var.db_ec2_instance_type
+  db_ec2_data_volume_size_gb                = var.db_ec2_data_volume_size_gb
+  rds_backup_retention_period               = var.rds_backup_retention_period
+  rds_copy_tags_to_snapshot                 = var.rds_copy_tags_to_snapshot
+  create_backup_bucket                      = var.create_backup_bucket
+  backup_bucket_name                        = var.backup_bucket_name
+  backup_object_lock_retention_days         = var.backup_object_lock_retention_days
+  backup_noncurrent_version_expiration_days = var.backup_noncurrent_version_expiration_days
+  refresh_rollback_5xx_threshold_pct        = var.refresh_rollback_5xx_threshold_pct
+  waf_web_acl_arn                           = var.waf_web_acl_arn
+  alert_email                               = var.alert_email
+  schema_version_endpoint_path              = var.schema_version_endpoint_path
+
+  tags = var.tags
 }
