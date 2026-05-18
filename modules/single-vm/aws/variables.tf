@@ -98,6 +98,32 @@ variable "marketplace_product_code" {
   default     = null
 }
 
+# ----- Patching and migration safety -----
+
+variable "create_backup_bucket" {
+  description = "Provision an S3 bucket (versioning + object-lock governance + lifecycle to IA at 30d and Deep Archive at 90d) for pre-patch /api/instance/export bundles. The instance profile gets least-privilege PutObject on hailbytes-*.tar.gz."
+  type        = bool
+  default     = true
+}
+
+variable "backup_bucket_name" {
+  description = "Name of an existing S3 bucket to use for pre-patch backups. If null and create_backup_bucket is true, the module names one '<name_prefix>-backups-<account_id>'."
+  type        = string
+  default     = null
+}
+
+variable "backup_object_lock_retention_days" {
+  description = "Object Lock (governance mode) retention period for backup objects."
+  type        = number
+  default     = 30
+}
+
+variable "backup_noncurrent_version_expiration_days" {
+  description = "Expire noncurrent versions of backup objects after this many days."
+  type        = number
+  default     = 365
+}
+
 variable "tags" {
   description = "Additional tags applied to every resource."
   type        = map(string)

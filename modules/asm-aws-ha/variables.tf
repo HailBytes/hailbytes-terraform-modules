@@ -83,8 +83,9 @@ variable "db_engine_version" {
 }
 
 variable "db_backup_retention_days" {
-  type    = number
-  default = 14
+  description = "Deprecated alias for rds_backup_retention_period. Kept for backward compatibility."
+  type        = number
+  default     = null
 }
 
 variable "db_deletion_protection" {
@@ -124,6 +125,90 @@ variable "enable_http_redirect" {
   description = "Add an HTTP:80 listener on the ALB that 301-redirects to HTTPS. Convenient when customers hit the bare hostname."
   type        = bool
   default     = true
+}
+
+# ----- Patching and migration safety -----
+
+variable "db_mode" {
+  description = "Database backend. 'rds' (default) provisions a Multi-AZ RDS instance. 'ec2' provisions a third EC2 with self-managed Postgres 16."
+  type        = string
+  default     = "rds"
+  validation {
+    condition     = contains(["rds", "ec2"], var.db_mode)
+    error_message = "db_mode must be one of: rds, ec2."
+  }
+}
+
+variable "db_ec2_instance_type" {
+  description = "EC2 instance type for the self-managed Postgres VM when db_mode = ec2."
+  type        = string
+  default     = "m6i.large"
+}
+
+variable "db_ec2_data_volume_size_gb" {
+  description = "Size of the encrypted gp3 volume backing /var/lib/postgresql on the self-managed Postgres VM."
+  type        = number
+  default     = 200
+}
+
+variable "rds_backup_retention_period" {
+  description = "Days RDS retains automated daily backups."
+  type        = number
+  default     = 7
+}
+
+variable "rds_copy_tags_to_snapshot" {
+  description = "Propagate tags from the RDS instance to automated and on-demand snapshots."
+  type        = bool
+  default     = true
+}
+
+variable "create_backup_bucket" {
+  description = "Provision an S3 bucket with versioning + object-lock + lifecycle for pre-patch /api/instance/export bundles."
+  type        = bool
+  default     = true
+}
+
+variable "backup_bucket_name" {
+  description = "Name of an existing S3 bucket to use for pre-patch backups."
+  type        = string
+  default     = null
+}
+
+variable "backup_object_lock_retention_days" {
+  description = "Object Lock (governance mode) retention period for backup objects."
+  type        = number
+  default     = 30
+}
+
+variable "backup_noncurrent_version_expiration_days" {
+  description = "Expire noncurrent versions of backup objects after this many days."
+  type        = number
+  default     = 365
+}
+
+variable "refresh_rollback_5xx_threshold_pct" {
+  description = "Target-group 5xx rate (percent) that trips the patching alarm."
+  type        = number
+  default     = 1
+}
+
+variable "waf_web_acl_arn" {
+  description = "Optional ARN of an existing WAFv2 web ACL to associate with the ALB. Defaults to null."
+  type        = string
+  default     = null
+}
+
+variable "alert_email" {
+  description = "Email subscribed to the patching alarm SNS topic. Pass null to skip."
+  type        = string
+  default     = null
+}
+
+variable "schema_version_endpoint_path" {
+  description = "Path on the ASM API that returns the running schema version."
+  type        = string
+  default     = "/api/instance/schema-version"
 }
 
 variable "tags" {

@@ -92,8 +92,9 @@ variable "db_engine_version" {
 }
 
 variable "db_backup_retention_days" {
-  type    = number
-  default = 14
+  description = "Deprecated alias for rds_backup_retention_period. If both are set, rds_backup_retention_period wins. Kept for backward compatibility with pre-patching-safety configs."
+  type        = number
+  default     = null
 }
 
 variable "db_deletion_protection" {
@@ -133,6 +134,90 @@ variable "enable_http_redirect" {
   description = "Add an HTTP:80 listener on the ALB that 301-redirects to HTTPS. Convenient when customers hit the bare hostname."
   type        = bool
   default     = true
+}
+
+# ----- Patching and migration safety -----
+
+variable "db_mode" {
+  description = "Database backend. 'rds' (default) provisions a Multi-AZ RDS instance — recommended for production. 'ec2' provisions a third EC2 with self-managed Postgres 16 for customers that must keep data plane on EC2. Matches HAILBYTES_DB_MODE used by the Cloud Shell deploy scripts."
+  type        = string
+  default     = "rds"
+  validation {
+    condition     = contains(["rds", "ec2"], var.db_mode)
+    error_message = "db_mode must be one of: rds, ec2."
+  }
+}
+
+variable "db_ec2_instance_type" {
+  description = "EC2 instance type for the self-managed Postgres VM when db_mode = ec2."
+  type        = string
+  default     = "m6i.large"
+}
+
+variable "db_ec2_data_volume_size_gb" {
+  description = "Size of the encrypted gp3 volume backing /var/lib/postgresql on the self-managed Postgres VM."
+  type        = number
+  default     = 200
+}
+
+variable "rds_backup_retention_period" {
+  description = "Days RDS retains automated daily backups. 7 satisfies the procurement-grade baseline; raise for longer point-in-time-restore windows."
+  type        = number
+  default     = 7
+}
+
+variable "rds_copy_tags_to_snapshot" {
+  description = "Propagate tags from the RDS instance to automated and on-demand snapshots."
+  type        = bool
+  default     = true
+}
+
+variable "create_backup_bucket" {
+  description = "Provision an S3 bucket (versioning + object-lock governance + lifecycle to IA at 30d and Deep Archive at 90d) for pre-patch /api/instance/export bundles. The SAT instance profile gets least-privilege PutObject on hailbytes-*.tar.gz."
+  type        = bool
+  default     = true
+}
+
+variable "backup_bucket_name" {
+  description = "Name of an existing S3 bucket to use for pre-patch backups. If null and create_backup_bucket is true, the module names one '<name_prefix>-backups-<account_id>'. If non-null and create_backup_bucket is false, the module only attaches the IAM PutObject policy."
+  type        = string
+  default     = null
+}
+
+variable "backup_object_lock_retention_days" {
+  description = "Object Lock (governance mode) retention period for backup objects."
+  type        = number
+  default     = 30
+}
+
+variable "backup_noncurrent_version_expiration_days" {
+  description = "Expire noncurrent versions of backup objects after this many days."
+  type        = number
+  default     = 365
+}
+
+variable "refresh_rollback_5xx_threshold_pct" {
+  description = "Target-group 5xx rate (percent) that trips the patching alarm. Default 1% over 2 evaluation periods of 1 minute."
+  type        = number
+  default     = 1
+}
+
+variable "waf_web_acl_arn" {
+  description = "Optional ARN of an existing WAFv2 web ACL to associate with the ALB. Defaults to null (not attached). HailBytes does not bundle a managed ruleset."
+  type        = string
+  default     = null
+}
+
+variable "alert_email" {
+  description = "Email subscribed to the patching alarm SNS topic. Pass null to skip."
+  type        = string
+  default     = null
+}
+
+variable "schema_version_endpoint_path" {
+  description = "Path on the SAT/ASM API that returns the running schema version."
+  type        = string
+  default     = "/api/instance/schema-version"
 }
 
 variable "tags" {

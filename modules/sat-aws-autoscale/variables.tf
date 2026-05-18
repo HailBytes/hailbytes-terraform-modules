@@ -143,6 +143,68 @@ variable "enable_http_redirect" {
   default     = true
 }
 
+# ----- Patching and migration safety -----
+
+variable "create_backup_bucket" {
+  description = "Provision an S3 bucket with versioning + object-lock + lifecycle for pre-patch /api/instance/export bundles."
+  type        = bool
+  default     = true
+}
+
+variable "backup_bucket_name" {
+  description = "Name of an existing S3 bucket to use for pre-patch backups."
+  type        = string
+  default     = null
+}
+
+variable "backup_object_lock_retention_days" {
+  description = "Object Lock (governance mode) retention period for backup objects."
+  type        = number
+  default     = 30
+}
+
+variable "backup_noncurrent_version_expiration_days" {
+  description = "Expire noncurrent versions of backup objects after this many days."
+  type        = number
+  default     = 365
+}
+
+variable "instance_refresh_min_healthy_percentage" {
+  description = "Minimum percentage of the ASG that must remain healthy during an instance refresh."
+  type        = number
+  default     = 50
+}
+
+variable "instance_refresh_instance_warmup_seconds" {
+  description = "Seconds the ASG considers a new instance 'warming up' before counting toward healthy_percentage."
+  type        = number
+  default     = 120
+}
+
+variable "refresh_rollback_5xx_threshold_pct" {
+  description = "Target-group 5xx rate (percent) that triggers instance-refresh auto-rollback."
+  type        = number
+  default     = 1
+}
+
+variable "waf_web_acl_arn" {
+  description = "Optional ARN of an existing WAFv2 web ACL to associate with the ALB."
+  type        = string
+  default     = null
+}
+
+variable "rds_copy_tags_to_snapshot" {
+  description = "Propagate tags from the RDS instance to automated and on-demand snapshots."
+  type        = bool
+  default     = true
+}
+
+variable "schema_version_endpoint_path" {
+  description = "Path on the SAT API that returns the running schema version."
+  type        = string
+  default     = "/api/instance/schema-version"
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

@@ -59,3 +59,30 @@ output "alb_access_logs_bucket" {
   value     = module.this.alb_access_logs_bucket
   sensitive = false
 }
+
+# ----- Patching and migration safety -----
+
+output "backup_bucket_name" {
+  value     = module.this.backup_bucket_name
+  sensitive = false
+}
+
+output "backup_s3_uri_prefix" {
+  value     = module.this.backup_s3_uri_prefix
+  sensitive = false
+}
+
+output "pre_patch_ssm_document_name" {
+  value     = module.this.pre_patch_ssm_document_name
+  sensitive = false
+}
+
+output "schema_version_endpoint" {
+  value     = module.this.schema_version_endpoint
+  sensitive = false
+}
+
+output "waf_attached" {
+  value     = module.this.waf_attached
+  sensitive = false
+}

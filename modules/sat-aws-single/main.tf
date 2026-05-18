@@ -18,5 +18,12 @@ module "this" {
   allow_internet_ingress      = var.allow_internet_ingress
   enable_snapshots            = var.enable_snapshots
   marketplace_product_code    = var.marketplace_product_code
-  tags                        = var.tags
+
+  # Patching and migration safety
+  create_backup_bucket                      = var.create_backup_bucket
+  backup_bucket_name                        = var.backup_bucket_name
+  backup_object_lock_retention_days         = var.backup_object_lock_retention_days
+  backup_noncurrent_version_expiration_days = var.backup_noncurrent_version_expiration_days
+
+  tags = var.tags
 }

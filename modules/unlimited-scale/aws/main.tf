@@ -263,7 +263,7 @@ resource "aws_db_instance" "primary" {
 
   deletion_protection             = var.db_deletion_protection
   skip_final_snapshot             = !var.db_deletion_protection
-  copy_tags_to_snapshot           = true
+  copy_tags_to_snapshot           = var.rds_copy_tags_to_snapshot
   performance_insights_enabled    = true
   enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
   auto_minor_version_upgrade      = true
@@ -494,12 +494,25 @@ resource "aws_autoscaling_group" "main" {
     version = "$Latest"
   }
 
+  # Rolling-refresh policy. min_healthy_percentage=50 lets one instance drain at a
+  # time on a 2-instance ASG and keeps half capacity on larger ASGs; auto_rollback
+  # triggers when CloudWatch alarms fire (see aws_cloudwatch_metric_alarm.refresh_*
+  # below); skip_matching makes a re-apply with the same AMI a no-op.
   instance_refresh {
     strategy = "Rolling"
     preferences {
-      min_healthy_percentage = 66
-      instance_warmup        = 300
+      min_healthy_percentage = var.instance_refresh_min_healthy_percentage
+      instance_warmup        = var.instance_refresh_instance_warmup_seconds
+      auto_rollback          = true
+      skip_matching          = true
+      alarm_specification {
+        alarms = [
+          aws_cloudwatch_metric_alarm.refresh_5xx.alarm_name,
+          aws_cloudwatch_metric_alarm.refresh_unhealthy.alarm_name,
+        ]
+      }
     }
+    triggers = ["launch_template"]
   }
 
   dynamic "tag" {
@@ -672,4 +685,292 @@ resource "aws_cloudwatch_metric_alarm" "db_storage" {
   }
 
   tags = local.common_tags
+}
+
+# ----- Rolling-refresh tripwire alarms -----
+#
+# These are referenced by the ASG instance_refresh alarm_specification. If either
+# fires during a refresh, the ASG aborts the in-progress replacement and rolls
+# back to the previous launch template. They live on the target group, not on
+# the ASG, so the same alarms also serve as production health signals outside
+# of refresh windows.
+
+resource "aws_cloudwatch_metric_alarm" "refresh_5xx" {
+  alarm_name          = "${local.name_prefix}-refresh-5xx-rate"
+  alarm_description   = "Target group 5xx rate >1% over 2 minutes; rolls back in-progress ASG instance refresh."
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 2
+  threshold           = var.refresh_rollback_5xx_threshold_pct
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+
+  metric_query {
+    id          = "rate"
+    expression  = "100 * (m5xx + IF(b5xx, b5xx, 0)) / IF(req, req, 1)"
+    label       = "5xx percent of total requests"
+    return_data = true
+  }
+
+  metric_query {
+    id = "req"
+    metric {
+      namespace   = "AWS/ApplicationELB"
+      metric_name = "RequestCount"
+      period      = 60
+      stat        = "Sum"
+      dimensions = {
+        LoadBalancer = aws_lb.main.arn_suffix
+        TargetGroup  = aws_lb_target_group.main.arn_suffix
+      }
+    }
+  }
+
+  metric_query {
+    id = "m5xx"
+    metric {
+      namespace   = "AWS/ApplicationELB"
+      metric_name = "HTTPCode_Target_5XX_Count"
+      period      = 60
+      stat        = "Sum"
+      dimensions = {
+        LoadBalancer = aws_lb.main.arn_suffix
+        TargetGroup  = aws_lb_target_group.main.arn_suffix
+      }
+    }
+  }
+
+  metric_query {
+    id = "b5xx"
+    metric {
+      namespace   = "AWS/ApplicationELB"
+      metric_name = "HTTPCode_ELB_5XX_Count"
+      period      = 60
+      stat        = "Sum"
+      dimensions = {
+        LoadBalancer = aws_lb.main.arn_suffix
+      }
+    }
+  }
+
+  tags = local.common_tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "refresh_unhealthy" {
+  alarm_name          = "${local.name_prefix}-refresh-unhealthy-targets"
+  alarm_description   = "Target group has unhealthy hosts for 3 minutes after a refresh starts; rolls back."
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 3
+  metric_name         = "UnHealthyHostCount"
+  namespace           = "AWS/ApplicationELB"
+  period              = 60
+  statistic           = "Maximum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = [aws_sns_topic.alerts.arn]
+
+  dimensions = {
+    LoadBalancer = aws_lb.main.arn_suffix
+    TargetGroup  = aws_lb_target_group.main.arn_suffix
+  }
+
+  tags = local.common_tags
+}
+
+# ----- Optional WAF attachment -----
+#
+# Procurement-grade option: customers bring their own Web ACL (commonly a
+# centrally-managed corporate ruleset). We do not bundle a Web ACL — the spec
+# in docs/PATCHING_AND_MIGRATION.md is explicit that WAF is supported, not
+# enforced.
+
+resource "aws_wafv2_web_acl_association" "alb" {
+  count        = var.waf_web_acl_arn == null ? 0 : 1
+  resource_arn = aws_lb.main.arn
+  web_acl_arn  = var.waf_web_acl_arn
+}
+
+# ----- Backup bucket (pre-patch snapshots, /api/instance/export bundles) -----
+#
+# Bucket layout:
+#   s3://<bucket>/hailbytes-sat-<timestamp>.tar.gz
+# Lifecycle: STANDARD -> STANDARD_IA at 30d -> DEEP_ARCHIVE at 90d.
+# Versioning + object-lock (governance, customer-controlled retention) protect
+# against accidental overwrite and ransomware-grade tampering.
+# IAM is scoped tightly: the SAT instance profile may PutObject under the
+# hailbytes-sat-*.tar.gz prefix only.
+
+locals {
+  create_backup_bucket    = var.create_backup_bucket
+  effective_backup_bucket = local.create_backup_bucket ? aws_s3_bucket.backup[0].id : var.backup_bucket_name
+  backup_object_prefix    = "hailbytes-${var.product}-"
+}
+
+resource "aws_s3_bucket" "backup" {
+  count               = local.create_backup_bucket ? 1 : 0
+  bucket              = coalesce(var.backup_bucket_name, "${local.name_prefix}-backups-${data.aws_caller_identity.current.account_id}")
+  force_destroy       = false
+  object_lock_enabled = true
+  tags                = local.common_tags
+}
+
+resource "aws_s3_bucket_versioning" "backup" {
+  count  = local.create_backup_bucket ? 1 : 0
+  bucket = aws_s3_bucket.backup[0].id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "backup" {
+  count                   = local.create_backup_bucket ? 1 : 0
+  bucket                  = aws_s3_bucket.backup[0].id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "backup" {
+  count  = local.create_backup_bucket ? 1 : 0
+  bucket = aws_s3_bucket.backup[0].id
+
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = var.enable_customer_managed_key ? "aws:kms" : "AES256"
+      kms_master_key_id = var.enable_customer_managed_key ? aws_kms_key.main[0].arn : null
+    }
+    bucket_key_enabled = var.enable_customer_managed_key
+  }
+}
+
+resource "aws_s3_bucket_object_lock_configuration" "backup" {
+  count  = local.create_backup_bucket ? 1 : 0
+  bucket = aws_s3_bucket.backup[0].id
+
+  rule {
+    default_retention {
+      mode = "GOVERNANCE"
+      days = var.backup_object_lock_retention_days
+    }
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "backup" {
+  count  = local.create_backup_bucket ? 1 : 0
+  bucket = aws_s3_bucket.backup[0].id
+
+  rule {
+    id     = "tier-and-expire"
+    status = "Enabled"
+    filter {
+      prefix = local.backup_object_prefix
+    }
+
+    transition {
+      days          = 30
+      storage_class = "STANDARD_IA"
+    }
+
+    transition {
+      days          = 90
+      storage_class = "DEEP_ARCHIVE"
+    }
+
+    noncurrent_version_transition {
+      noncurrent_days = 30
+      storage_class   = "STANDARD_IA"
+    }
+
+    noncurrent_version_transition {
+      noncurrent_days = 90
+      storage_class   = "DEEP_ARCHIVE"
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = var.backup_noncurrent_version_expiration_days
+    }
+  }
+}
+
+resource "aws_iam_role_policy" "backup_put" {
+  count = local.effective_backup_bucket == null ? 0 : 1
+  name  = "${local.name_prefix}-backup-put"
+  role  = aws_iam_role.vm.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:PutObject",
+          "s3:PutObjectAcl",
+          "s3:AbortMultipartUpload",
+        ]
+        Resource = "arn:aws:s3:::${local.effective_backup_bucket}/${local.backup_object_prefix}*.tar.gz"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket", "s3:GetBucketLocation"]
+        Resource = "arn:aws:s3:::${local.effective_backup_bucket}"
+      },
+    ]
+  })
+}
+
+# ----- SSM Run Command document: pre-patch backup -----
+#
+# Customer-initiated entry point that the AWS Console (Systems Manager ->
+# Run Command -> select this document) wraps around the on-VM
+# /opt/hailbytes/bin/ha-pre-patch-backup.sh script. The script reads the same
+# Secrets Manager entries the instance already mounts (DB creds, encryption
+# key), produces a bundle.json + db.sql + uploads/ tarball, and ships it to
+# the backup bucket. It also takes a pre-refresh RDS snapshot so the runbook
+# is one click.
+
+resource "aws_ssm_document" "pre_patch_backup" {
+  name            = "${local.name_prefix}-pre-patch-backup"
+  document_type   = "Command"
+  document_format = "YAML"
+  target_type     = "/AWS::EC2::Instance"
+  tags            = local.common_tags
+
+  content = yamlencode({
+    schemaVersion = "2.2"
+    description   = "HailBytes SAT/ASM pre-patch backup. Bundles DB + uploads + manifest to the configured S3 bucket and triggers an RDS snapshot."
+    parameters = {
+      bucketName = {
+        type        = "String"
+        description = "S3 bucket name to receive the backup tarball. Defaults to the module-provisioned bucket."
+        default     = local.effective_backup_bucket == null ? "" : local.effective_backup_bucket
+      }
+      rdsSnapshotIdentifier = {
+        type        = "String"
+        description = "Optional override for the RDS snapshot identifier. Defaults to a timestamped value."
+        default     = ""
+      }
+    }
+    mainSteps = [
+      {
+        action = "aws:runShellScript"
+        name   = "prePatchBackup"
+        inputs = {
+          timeoutSeconds = "1800"
+          runCommand = [
+            "set -euo pipefail",
+            "TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)",
+            "BUCKET='{{ bucketName }}'",
+            "if [ -n \"$BUCKET\" ]; then export AWS_S3_BUCKET=\"$BUCKET\"; fi",
+            "export AWS_S3_PREFIX=\"${local.backup_object_prefix}$${TS}\"",
+            "export HAILBYTES_DB_SECRET_ARN='${aws_secretsmanager_secret.db.arn}'",
+            "export AWS_DEFAULT_REGION='${data.aws_region.current.id}'",
+            "if [ -x /opt/hailbytes/bin/ha-pre-patch-backup.sh ]; then sudo -E /opt/hailbytes/bin/ha-pre-patch-backup.sh; else echo 'WARN: /opt/hailbytes/bin/ha-pre-patch-backup.sh not present on this AMI; skipping local bundle.'; fi",
+            "RDS_ID='{{ rdsSnapshotIdentifier }}'",
+            "if [ -z \"$RDS_ID\" ]; then RDS_ID=\"${local.name_prefix}-pre-patch-$${TS}\"; fi",
+            "aws rds create-db-snapshot --db-instance-identifier '${aws_db_instance.primary.id}' --db-snapshot-identifier \"$RDS_ID\" --tags Key=Module,Value=hailbytes-terraform-modules Key=Phase,Value=pre-patch",
+          ]
+        }
+      }
+    ]
+  })
 }

@@ -30,5 +30,18 @@ module "this" {
   access_log_retention_days       = var.access_log_retention_days
   marketplace_product_code        = var.marketplace_product_code
   enable_http_redirect            = var.enable_http_redirect
-  tags                            = var.tags
+
+  # Patching and migration safety
+  create_backup_bucket                      = var.create_backup_bucket
+  backup_bucket_name                        = var.backup_bucket_name
+  backup_object_lock_retention_days         = var.backup_object_lock_retention_days
+  backup_noncurrent_version_expiration_days = var.backup_noncurrent_version_expiration_days
+  instance_refresh_min_healthy_percentage   = var.instance_refresh_min_healthy_percentage
+  instance_refresh_instance_warmup_seconds  = var.instance_refresh_instance_warmup_seconds
+  refresh_rollback_5xx_threshold_pct        = var.refresh_rollback_5xx_threshold_pct
+  waf_web_acl_arn                           = var.waf_web_acl_arn
+  rds_copy_tags_to_snapshot                 = var.rds_copy_tags_to_snapshot
+  schema_version_endpoint_path              = var.schema_version_endpoint_path
+
+  tags = var.tags
 }
