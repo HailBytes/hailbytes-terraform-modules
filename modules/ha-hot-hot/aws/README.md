@@ -29,6 +29,10 @@ Two reference shapes. The defaults below are the **starter** shape; the
 and the customer-facing pricing the account team quotes. Pick the shape
 that matches your sizing before sharing numbers with finance.
 
+For the three-shape (single / HA / unlimited-scale) comparison and the
+canonical procurement-grade source, see
+[`COST_SHAPES.md`](../../../COST_SHAPES.md).
+
 | Component | Starter default | ~Monthly | Procurement-grade variable / value | ~Monthly |
 |---|---|---|---|---|
 | 2× EC2 SAT/ASM | `instance_type = "t3.large"` | $120 | `instance_type = "m6i.large"` | $140 |
