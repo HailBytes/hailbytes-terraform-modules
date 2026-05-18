@@ -1,18 +1,23 @@
 locals {
   name_prefix = coalesce(var.name_prefix, "hailbytes-${var.product}-${var.environment}")
 
+  # Listing slugs from the published Azure Marketplace offers:
+  #   ASM: lcmcon1687976613543.hardened_ubuntu_with_rengine
+  #   SAT: lcmcon1687976613543.gophish-phishing-simulator
+  # Verify the SKU (plan name) for your subscription with:
+  #   az vm image list --publisher lcmcon1687976613543 --offer <offer> --all -o table
   marketplace_plans = {
     asm = {
-      publisher = "hailbytes"
-      offer     = "hailbytes-asm"
-      sku       = "hailbytes-asm-byol"
-      version   = "latest"
+      publisher = "lcmcon1687976613543"
+      offer     = "hardened_ubuntu_with_rengine"
+      sku       = coalesce(var.marketplace_sku_override, "hardened_ubuntu_with_rengine")
+      version   = var.marketplace_image_version
     }
     sat = {
-      publisher = "hailbytes"
-      offer     = "hailbytes-sat"
-      sku       = "hailbytes-sat-byol"
-      version   = "latest"
+      publisher = "lcmcon1687976613543"
+      offer     = "gophish-phishing-simulator"
+      sku       = coalesce(var.marketplace_sku_override, "gophish-phishing-simulator")
+      version   = var.marketplace_image_version
     }
   }
 

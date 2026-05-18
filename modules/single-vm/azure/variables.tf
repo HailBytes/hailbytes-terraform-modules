@@ -101,6 +101,18 @@ variable "accept_marketplace_terms" {
   default     = true
 }
 
+variable "marketplace_sku_override" {
+  description = "Override the marketplace SKU (plan name). Defaults to the offer slug for each product, which matches the most common published plan. Set this if your Azure Marketplace subscription points at a different plan name."
+  type        = string
+  default     = null
+}
+
+variable "marketplace_image_version" {
+  description = "Marketplace image version to deploy. 'latest' pulls the newest published version; pin to an explicit version (e.g. '1.2.3') for reproducible production deploys."
+  type        = string
+  default     = "latest"
+}
+
 variable "tags" {
   description = "Additional tags applied to every resource."
   type        = map(string)

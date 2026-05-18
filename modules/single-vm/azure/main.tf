@@ -1,20 +1,26 @@
 locals {
   name_prefix = coalesce(var.name_prefix, "hailbytes-${var.product}-${var.environment}")
 
-  # HailBytes Marketplace publisher/offer/sku per product. Replace placeholders
-  # with the assigned Partner Center identifiers when the listing is published.
+  # HailBytes Marketplace publisher/offer/sku per product.
+  # Publisher ID is the HailBytes Partner Center publisher; offer names match the
+  # Azure Marketplace listing slugs:
+  #   ASM: https://marketplace.microsoft.com/en-us/product/virtual-machines/lcmcon1687976613543.hardened_ubuntu_with_rengine
+  #   SAT: https://marketplace.microsoft.com/en-us/product/virtual-machines/lcmcon1687976613543.gophish-phishing-simulator
+  # To verify the exact `sku` (plan name) for your subscription, run:
+  #   az vm image list --publisher lcmcon1687976613543 --offer <offer> --all -o table
+  # and override via var.marketplace_sku_override if it differs.
   marketplace_plans = {
     asm = {
-      publisher = "hailbytes"
-      offer     = "hailbytes-asm"
-      sku       = "hailbytes-asm-byol"
-      version   = "latest"
+      publisher = "lcmcon1687976613543"
+      offer     = "hardened_ubuntu_with_rengine"
+      sku       = coalesce(var.marketplace_sku_override, "hardened_ubuntu_with_rengine")
+      version   = var.marketplace_image_version
     }
     sat = {
-      publisher = "hailbytes"
-      offer     = "hailbytes-sat"
-      sku       = "hailbytes-sat-byol"
-      version   = "latest"
+      publisher = "lcmcon1687976613543"
+      offer     = "gophish-phishing-simulator"
+      sku       = coalesce(var.marketplace_sku_override, "gophish-phishing-simulator")
+      version   = var.marketplace_image_version
     }
   }
 

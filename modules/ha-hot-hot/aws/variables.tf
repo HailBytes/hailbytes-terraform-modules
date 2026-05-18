@@ -123,6 +123,18 @@ variable "enable_management_access" {
   default     = true
 }
 
+variable "marketplace_product_code" {
+  description = "Optional AWS Marketplace product code for stricter AMI lookup. See module README for the lookup command."
+  type        = string
+  default     = null
+}
+
+variable "enable_http_redirect" {
+  description = "Add an HTTP:80 listener on the ALB that 301-redirects to HTTPS. Convenient when customers hit the bare hostname."
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

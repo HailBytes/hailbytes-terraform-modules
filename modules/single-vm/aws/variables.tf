@@ -92,6 +92,12 @@ variable "enable_snapshots" {
   default     = true
 }
 
+variable "marketplace_product_code" {
+  description = "Optional AWS Marketplace product code. When set, the AMI lookup adds a product-code filter for stricter validation. Find it with: aws ec2 describe-images --owners aws-marketplace --filters 'Name=name,Values=hailbytes-*' --query 'Images[*].ProductCodes'"
+  type        = string
+  default     = null
+}
+
 variable "tags" {
   description = "Additional tags applied to every resource."
   type        = map(string)

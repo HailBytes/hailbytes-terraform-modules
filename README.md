@@ -11,10 +11,10 @@ Production-grade Terraform modules for deploying HailBytes products (ASM, SAT) f
 
 ## Marketplace subscription links
 
-| Product | AWS Marketplace | Azure Marketplace |
-|---|---|---|
-| **HailBytes ASM** — Attack Surface Management | [Subscribe on AWS](https://aws.amazon.com/marketplace/search/results?searchTerms=hailbytes-asm) | [Subscribe on Azure](https://azuremarketplace.microsoft.com/marketplace/apps?search=hailbytes-asm) |
-| **HailBytes SAT** — Security Awareness Training | [Subscribe on AWS](https://aws.amazon.com/marketplace/search/results?searchTerms=hailbytes-sat) | [Subscribe on Azure](https://azuremarketplace.microsoft.com/marketplace/apps?search=hailbytes-sat) |
+| Product | Overview | AWS Marketplace | Azure Marketplace | Demo |
+|---|---|---|---|---|
+| **HailBytes ASM** — Attack Surface Management | [hailbytes.com/asm](https://hailbytes.com/asm/) | [Subscribe on AWS](https://aws.amazon.com/marketplace/pp/prodview-66d5bswmbtfhs) | [Subscribe on Azure](https://marketplace.microsoft.com/en-us/product/virtual-machines/lcmcon1687976613543.hardened_ubuntu_with_rengine) | [Watch](https://youtu.be/suYUuOP7JUk) |
+| **HailBytes SAT** — Security Awareness Training (phishing simulation) | [hailbytes.com/sat](https://hailbytes.com/sat/) | [Subscribe on AWS](https://aws.amazon.com/marketplace/pp/prodview-yyk6iton3ghu4) | [Subscribe on Azure](https://marketplace.microsoft.com/en-us/product/virtual-machines/lcmcon1687976613543.gophish-phishing-simulator?tab=overview) | [Watch](https://youtu.be/kfNEhpFHPLA) |
 
 ---
 
@@ -62,7 +62,12 @@ modules/
   unlimited-scale/
     aws/        # Auto Scaling Group, ALB, RDS + read replicas, CloudWatch
     azure/      # VM Scale Set, Azure LB, Azure DB for PostgreSQL + read replicas, Azure Monitor
+  network/      # OPTIONAL bundled networking for customers without a landing zone
+    aws/        # VPC + 3-tier subnets across N AZs + NAT + Flow Logs
+    azure/      # Vnet + workload/LB/delegated DB subnets + private DNS zone
 ```
+
+The workload modules accept your existing VPC / vnet by ID. Use `network/*` only if you don't already have a landing zone.
 
 ---
 
@@ -131,3 +136,13 @@ PRs welcome. Every PR must pass `terraform validate`, `tflint`, `checkov`, and `
 ## License
 
 [Apache-2.0](LICENSE). Why Apache-2.0 instead of MPL-2.0: HailBytes revenue comes from marketplace VM image billing, *not* from the IaC. Permissive licensing maximizes adoption — partners, MSSPs, and customers can embed these modules in their own platforms without copyleft friction. The marketplace billing rail is the moat; the Terraform is sales enablement.
+
+---
+
+## Links
+
+- Website: [hailbytes.com](https://hailbytes.com)
+- GitHub: [github.com/HailBytes](https://github.com/HailBytes)
+- YouTube: [youtube.com/c/HailBytes](https://www.youtube.com/c/HailBytes)
+- ASM demo: <https://youtu.be/suYUuOP7JUk>
+- SAT demo: <https://youtu.be/kfNEhpFHPLA>

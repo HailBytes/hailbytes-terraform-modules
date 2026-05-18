@@ -1,11 +1,10 @@
 locals {
   name_prefix = coalesce(var.name_prefix, "hailbytes-${var.product}-${var.environment}")
 
-  marketplace_product_codes = {
-    asm = "REPLACE_WITH_HAILBYTES_ASM_PRODUCT_CODE"
-    sat = "REPLACE_WITH_HAILBYTES_SAT_PRODUCT_CODE"
-  }
-
+  # AWS Marketplace listings (subscribe before applying):
+  #   ASM: https://aws.amazon.com/marketplace/pp/prodview-66d5bswmbtfhs
+  #   SAT: https://aws.amazon.com/marketplace/pp/prodview-yyk6iton3ghu4
+  # Set var.marketplace_product_code for stricter AMI validation (recommended in prod).
   ami_name_pattern = {
     asm = "hailbytes-asm-*"
     sat = "hailbytes-sat-*"
@@ -31,13 +30,16 @@ data "aws_ami" "hailbytes" {
   owners      = ["aws-marketplace"]
 
   filter {
-    name   = "product-code"
-    values = [local.marketplace_product_codes[var.product]]
-  }
-
-  filter {
     name   = "name"
     values = [local.ami_name_pattern[var.product]]
+  }
+
+  dynamic "filter" {
+    for_each = var.marketplace_product_code == null ? [] : [var.marketplace_product_code]
+    content {
+      name   = "product-code"
+      values = [filter.value]
+    }
   }
 }
 
@@ -69,6 +71,17 @@ resource "aws_vpc_security_group_ingress_rule" "alb_https" {
   to_port           = 443
   ip_protocol       = "tcp"
   description       = "HTTPS from ${each.value}"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "alb_http_redirect" {
+  for_each = var.enable_http_redirect ? toset(var.allowed_cidrs) : toset([])
+
+  security_group_id = aws_security_group.alb.id
+  cidr_ipv4         = each.value
+  from_port         = 80
+  to_port           = 80
+  ip_protocol       = "tcp"
+  description       = "HTTP (redirected to HTTPS) from ${each.value}"
 }
 
 resource "aws_vpc_security_group_egress_rule" "alb_out" {
@@ -204,6 +217,12 @@ resource "aws_db_parameter_group" "main" {
   parameter {
     name  = "rds.force_ssl"
     value = "1"
+  }
+
+  # Log queries slower than 1s for triage; rotates through CloudWatch.
+  parameter {
+    name  = "log_min_duration_statement"
+    value = "1000"
   }
 }
 
@@ -369,5 +388,22 @@ resource "aws_lb_listener" "https" {
   default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.main.arn
+  }
+}
+
+resource "aws_lb_listener" "http_redirect" {
+  count = var.enable_http_redirect ? 1 : 0
+
+  load_balancer_arn = aws_lb.main.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type = "redirect"
+    redirect {
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
+    }
   }
 }
