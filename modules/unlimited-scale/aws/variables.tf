@@ -97,8 +97,9 @@ variable "db_engine_version" {
 }
 
 variable "db_backup_retention_days" {
-  type    = number
-  default = 30
+  description = "Days RDS retains automated daily backups. 30 covers a typical monthly review cycle and aligns with the pre-patch on-demand snapshot lifecycle."
+  type        = number
+  default     = 30
 }
 
 variable "db_read_replica_count" {
@@ -153,6 +154,68 @@ variable "enable_http_redirect" {
   description = "Add an HTTP:80 listener that 301-redirects to HTTPS. Convenient when customers hit the bare hostname."
   type        = bool
   default     = true
+}
+
+# ----- Patching and migration safety -----
+
+variable "create_backup_bucket" {
+  description = "Provision an S3 bucket (versioning + object-lock governance + lifecycle to IA at 30d and Deep Archive at 90d) for pre-patch /api/instance/export bundles. The SAT instance profile gets least-privilege PutObject on hailbytes-*.tar.gz."
+  type        = bool
+  default     = true
+}
+
+variable "backup_bucket_name" {
+  description = "Name of an existing S3 bucket to use for pre-patch backups. If null and create_backup_bucket is true, the module names one '<name_prefix>-backups-<account_id>'. If non-null and create_backup_bucket is false, the module only attaches the IAM PutObject policy to the existing bucket."
+  type        = string
+  default     = null
+}
+
+variable "backup_object_lock_retention_days" {
+  description = "Object Lock (governance mode) retention period for backup objects. 30 days satisfies the procurement-grade safety net while still allowing privileged operator override for compaction."
+  type        = number
+  default     = 30
+}
+
+variable "backup_noncurrent_version_expiration_days" {
+  description = "Expire noncurrent versions of backup objects after this many days. 365 retains a year of pre-patch bundles for rollback."
+  type        = number
+  default     = 365
+}
+
+variable "instance_refresh_min_healthy_percentage" {
+  description = "Minimum percentage of the ASG that must remain healthy during an instance refresh. 50 drains one instance at a time on a 2-instance ASG; tune higher for larger fleets that can tolerate parallel replacement."
+  type        = number
+  default     = 50
+}
+
+variable "instance_refresh_instance_warmup_seconds" {
+  description = "Seconds the ASG considers a new instance 'warming up' before counting toward healthy_percentage. 120 is enough for the SAT marketplace AMI to pass the ALB /health probe; raise for slower boot images."
+  type        = number
+  default     = 120
+}
+
+variable "refresh_rollback_5xx_threshold_pct" {
+  description = "Target-group 5xx rate (percent) above which the instance refresh auto-rollback alarm fires. Default 1% over 2 evaluation periods of 1 minute."
+  type        = number
+  default     = 1
+}
+
+variable "waf_web_acl_arn" {
+  description = "Optional ARN of an existing WAFv2 web ACL to associate with the ALB. Defaults to null (not attached). HailBytes does not bundle a managed ruleset; most enterprises bring their own."
+  type        = string
+  default     = null
+}
+
+variable "rds_copy_tags_to_snapshot" {
+  description = "Propagate tags from the RDS instance to automated and on-demand snapshots."
+  type        = bool
+  default     = true
+}
+
+variable "schema_version_endpoint_path" {
+  description = "Path on the SAT/ASM API that returns the running schema version. Used by the schema_version_endpoint output that customer CI/CD curls in post-patch verification."
+  type        = string
+  default     = "/api/instance/schema-version"
 }
 
 variable "tags" {

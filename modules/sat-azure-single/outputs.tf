@@ -44,3 +44,20 @@ output "console_url" {
   value     = module.this.console_url
   sensitive = false
 }
+
+# ----- Patching and migration safety -----
+
+output "backup_storage_account_name" {
+  value     = module.this.backup_storage_account_name
+  sensitive = false
+}
+
+output "backup_container_uri" {
+  value     = module.this.backup_container_uri
+  sensitive = false
+}
+
+output "pre_patch_run_command_name" {
+  value     = module.this.pre_patch_run_command_name
+  sensitive = false
+}

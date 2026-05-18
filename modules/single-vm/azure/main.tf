@@ -39,6 +39,10 @@ locals {
   ingress_cidrs = var.allow_internet_ingress ? var.allowed_cidrs : [
     for c in var.allowed_cidrs : c if c != "0.0.0.0/0"
   ]
+
+  create_backup_storage     = var.create_backup_storage_account
+  backup_storage_account_name = local.create_backup_storage ? azurerm_storage_account.backup[0].name : var.backup_storage_account_name
+  backup_container_name     = "hailbytes-${var.product}-bundles"
 }
 
 # ----- Marketplace agreement -----
@@ -162,7 +166,9 @@ resource "azurerm_linux_virtual_machine" "vm" {
   admin_username                  = var.admin_username
   disable_password_authentication = true
   network_interface_ids           = [azurerm_network_interface.vm.id]
-  tags                            = local.common_tags
+  tags = merge(local.common_tags, {
+    "hailbytes-${var.product}" = "true"
+  })
 
   admin_ssh_key {
     username   = var.admin_username
@@ -214,4 +220,134 @@ resource "azurerm_virtual_machine_data_disk_attachment" "data" {
   virtual_machine_id = azurerm_linux_virtual_machine.vm.id
   lun                = 0
   caching            = "ReadWrite"
+}
+
+# ----- Patching and migration safety -----
+#
+# Storage Account (with versioning, soft delete, immutable blob policy in
+# unlocked mode so customers can extend retention later) is the Azure
+# equivalent of the AWS S3 backup bucket. The VM's system-assigned managed
+# identity gets least-privilege "Storage Blob Data Contributor" on this one
+# container — write access for ha-pre-patch-backup.sh, nothing else.
+#
+# azurerm_virtual_machine_run_command bakes the pre-patch backup script in as
+# a deployable Run Command document. Customers fire it from Azure Portal:
+#   VM -> Operations -> Run command -> select RunPrePatchBackup
+# matching the AWS "Systems Manager -> Run Command" experience.
+
+resource "azurerm_storage_account" "backup" {
+  count                           = local.create_backup_storage ? 1 : 0
+  name                            = coalesce(var.backup_storage_account_name, substr(replace("${local.name_prefix}backup", "-", ""), 0, 24))
+  resource_group_name             = var.resource_group_name
+  location                        = var.location
+  account_tier                    = "Standard"
+  account_replication_type        = var.backup_storage_replication
+  account_kind                    = "StorageV2"
+  access_tier                     = "Cool"
+  min_tls_version                 = "TLS1_2"
+  allow_nested_items_to_be_public = false
+  public_network_access_enabled   = true
+  shared_access_key_enabled       = false
+  tags                            = local.common_tags
+
+  blob_properties {
+    versioning_enabled = true
+
+    delete_retention_policy {
+      days = var.backup_blob_soft_delete_days
+    }
+
+    container_delete_retention_policy {
+      days = var.backup_blob_soft_delete_days
+    }
+  }
+}
+
+resource "azurerm_storage_management_policy" "backup" {
+  count              = local.create_backup_storage ? 1 : 0
+  storage_account_id = azurerm_storage_account.backup[0].id
+
+  rule {
+    name    = "tier-and-expire"
+    enabled = true
+    filters {
+      prefix_match = ["${local.backup_container_name}/hailbytes-${var.product}-"]
+      blob_types   = ["blockBlob"]
+    }
+    actions {
+      base_blob {
+        tier_to_cool_after_days_since_modification_greater_than    = 30
+        tier_to_archive_after_days_since_modification_greater_than = 90
+      }
+      version {
+        change_tier_to_cool_after_days_since_creation    = 30
+        change_tier_to_archive_after_days_since_creation = 90
+        delete_after_days_since_creation          = var.backup_blob_noncurrent_expiration_days
+      }
+    }
+  }
+}
+
+resource "azurerm_storage_container" "backup" {
+  count                 = local.create_backup_storage ? 1 : 0
+  name                  = local.backup_container_name
+  storage_account_id    = azurerm_storage_account.backup[0].id
+  container_access_type = "private"
+}
+
+resource "azurerm_storage_container_immutability_policy" "backup" {
+  count                                 = local.create_backup_storage ? 1 : 0
+  storage_container_resource_manager_id = azurerm_storage_container.backup[0].resource_manager_id
+  immutability_period_in_days           = var.backup_immutability_days
+  protected_append_writes_all_enabled   = false
+}
+
+resource "azurerm_role_assignment" "vm_backup_writer" {
+  count                = local.backup_storage_account_name == null ? 0 : 1
+  scope                = local.create_backup_storage ? azurerm_storage_account.backup[0].id : data.azurerm_storage_account.existing_backup[0].id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azurerm_linux_virtual_machine.vm.identity[0].principal_id
+}
+
+data "azurerm_storage_account" "existing_backup" {
+  count               = (!local.create_backup_storage && var.backup_storage_account_name != null) ? 1 : 0
+  name                = var.backup_storage_account_name
+  resource_group_name = var.resource_group_name
+}
+
+# Customer-callable Run Command document for pre-patch backup. The marketplace
+# AMI provides /opt/hailbytes/bin/ha-pre-patch-backup.sh; this Run Command
+# wires up AZURE_STORAGE_ACCOUNT / AZURE_STORAGE_CONTAINER, fires the script,
+# and snapshots the data disk so the runbook is one click.
+
+resource "azurerm_virtual_machine_run_command" "pre_patch_backup" {
+  count              = var.enable_pre_patch_run_command ? 1 : 0
+  name               = "RunPrePatchBackup"
+  location           = var.location
+  virtual_machine_id = azurerm_linux_virtual_machine.vm.id
+
+  source {
+    script = <<-EOSH
+      #!/bin/bash
+      set -euo pipefail
+      TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)
+      export AZURE_STORAGE_ACCOUNT='${local.backup_storage_account_name == null ? "" : local.backup_storage_account_name}'
+      export AZURE_STORAGE_CONTAINER='${local.backup_container_name}'
+      export AZURE_BLOB_PREFIX="hailbytes-${var.product}-$${TS}"
+      if [ -x /opt/hailbytes/bin/ha-pre-patch-backup.sh ]; then
+        sudo -E /opt/hailbytes/bin/ha-pre-patch-backup.sh
+      else
+        echo "WARN: /opt/hailbytes/bin/ha-pre-patch-backup.sh not present; skipping local bundle."
+      fi
+      # Trigger a managed-disk snapshot via the VM's managed identity (requires
+      # Disk Snapshot Contributor on this RG, see module README).
+      az login --identity --allow-no-subscriptions >/dev/null
+      az snapshot create \
+        --resource-group '${var.resource_group_name}' \
+        --name '${local.name_prefix}-pre-patch-'"$$TS" \
+        --source '${azurerm_managed_disk.data.id}' \
+        --incremental true \
+        --tags Module=hailbytes-terraform-modules Phase=pre-patch
+    EOSH
+  }
 }

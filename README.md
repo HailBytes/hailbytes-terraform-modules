@@ -162,12 +162,35 @@ GovCloud (AWS) and Azure Government are out of scope for v1.
 
 ---
 
+## Patching and migration safety
+
+Every module ships a procurement-grade safety net for HailBytes patches
+and schema migrations: customer-initiated pre-patch backups (immutable
+S3 / Azure Storage), rolling-replace with auto-rollback, post-patch
+schema-version verification, and a DB-on-VM toggle for compliance-led
+deployments. None of this requires manual portal clicks after
+`terraform apply`.
+
+See **[docs/PATCHING_AND_MIGRATION.md](docs/PATCHING_AND_MIGRATION.md)**
+for the customer-facing runbook, the audit pointers for procurement /
+security reviewers, and the variable reference.
+
+The companion HailBytes SAT change (export / import API endpoints, plus
+on-VM `ha-pre-patch-backup.sh` / `ha-post-patch-verify.sh` scripts) lands
+in
+[`hailbytes-sat@c804cac`](https://github.com/HailBytes/hailbytes-sat)
+with the runbook in
+[`hailbytes-sat/docs/AWS_HA_DEPLOYMENT.md`](https://github.com/HailBytes/hailbytes-sat/blob/main/docs/AWS_HA_DEPLOYMENT.md).
+
+---
+
 ## Documentation
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — per-tier diagrams and rationale, shared responsibility model
 - [BILLING.md](BILLING.md) — marketplace billing model, why no containers
 - [SECURITY.md](SECURITY.md) — responsible disclosure
 - [SECURITY-DEFAULTS.md](SECURITY-DEFAULTS.md) — encryption / IMDSv2 / IAM / NSG defaults baked into modules
+- [docs/PATCHING_AND_MIGRATION.md](docs/PATCHING_AND_MIGRATION.md) — pre-patch backups, rolling-replace, auto-rollback, DB mode toggle
 - [CHANGELOG.md](CHANGELOG.md) — release history
 
 ---

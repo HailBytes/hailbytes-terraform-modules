@@ -42,3 +42,20 @@ output "console_url" {
   description = "AWS console URL for this instance."
   value       = "https://console.aws.amazon.com/ec2/home#InstanceDetails:instanceId=${aws_instance.vm.id}"
 }
+
+# ----- Patching and migration safety -----
+
+output "backup_bucket_name" {
+  description = "Name of the S3 bucket configured to receive pre-patch bundles. Empty if neither create_backup_bucket nor backup_bucket_name is set."
+  value       = local.effective_backup_bucket
+}
+
+output "backup_s3_uri_prefix" {
+  description = "Fully-qualified S3 URI prefix that the on-VM ha-pre-patch-backup.sh and /api/instance/export upload bundles to."
+  value       = local.effective_backup_bucket == null ? "" : "s3://${local.effective_backup_bucket}/${local.backup_object_prefix}"
+}
+
+output "pre_patch_ssm_document_name" {
+  description = "Name of the AWS Systems Manager Run Command document that triggers a pre-patch backup + EBS data-volume snapshot. Run from the Console under Systems Manager -> Run Command, targeting instances tagged hailbytes-<product>=true."
+  value       = aws_ssm_document.pre_patch_backup.name
+}
