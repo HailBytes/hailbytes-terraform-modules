@@ -1,0 +1,41 @@
+name: terraform-validate
+
+on:
+  pull_request:
+    paths:
+      - 'modules/**'
+      - '.github/workflows/terraform-validate.yml'
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - modules/single-vm/aws
+          - modules/single-vm/azure
+          - modules/ha-hot-hot/aws
+          - modules/ha-hot-hot/azure
+          - modules/unlimited-scale/aws
+          - modules/unlimited-scale/azure
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.5
+
+      - name: terraform fmt
+        run: terraform -chdir=${{ matrix.module }} fmt -check -recursive
+
+      - name: terraform init -backend=false
+        run: terraform -chdir=${{ matrix.module }} init -backend=false
+
+      - name: terraform validate
+        run: terraform -chdir=${{ matrix.module }} validate
