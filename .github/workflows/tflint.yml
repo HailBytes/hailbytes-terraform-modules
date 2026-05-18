@@ -19,12 +19,29 @@ jobs:
       fail-fast: false
       matrix:
         module:
+          # Internal tier modules
           - modules/single-vm/aws
           - modules/single-vm/azure
           - modules/ha-hot-hot/aws
           - modules/ha-hot-hot/azure
           - modules/unlimited-scale/aws
           - modules/unlimited-scale/azure
+          # Product-first wrappers
+          - modules/asm-aws-single
+          - modules/asm-aws-ha
+          - modules/asm-aws-autoscale
+          - modules/asm-azure-single
+          - modules/asm-azure-ha
+          - modules/asm-azure-autoscale
+          - modules/sat-aws-single
+          - modules/sat-aws-ha
+          - modules/sat-aws-autoscale
+          - modules/sat-azure-single
+          - modules/sat-azure-ha
+          - modules/sat-azure-autoscale
+          # Supporting
+          - modules/network/aws
+          - modules/network/azure
     steps:
       - uses: actions/checkout@v4
 

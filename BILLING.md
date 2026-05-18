@@ -36,8 +36,8 @@ If we shipped a Dockerfile, we would be giving away the product. So we don't.
 
 | Artifact | License | Cost |
 |---|---|---|
-| This Terraform repository | Apache-2.0 | Free |
-| Module documentation | Apache-2.0 | Free |
+| This Terraform repository | MPL-2.0 | Free |
+| Module documentation | MPL-2.0 | Free |
 | HailBytes ASM Marketplace AMI / Azure image | Commercial EULA accepted at subscribe time | **Paid** (hourly metering) |
 | HailBytes SAT Marketplace AMI / Azure image | Commercial EULA accepted at subscribe time | **Paid** (hourly metering) |
 | Underlying cloud resources (EC2, RDS, ALB, VPC, EBS, KMS, etc.) | Per AWS/Azure standard pricing | Paid (to cloud provider) |

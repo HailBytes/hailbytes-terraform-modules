@@ -1,61 +1,63 @@
-# Security Defaults
+# Security Policy
 
-These modules ship with security-conservative defaults. You should have to explicitly opt *out* of safety, not opt in.
+## Reporting a Vulnerability
 
-## Encryption
+HailBytes takes security vulnerabilities seriously. If you discover a security issue in this repository or any HailBytes product, **please do not open a public GitHub issue.**
 
-| Surface | Default | Knob |
-|---|---|---|
-| Root volume / OS disk | Encrypted with cloud-managed CMK | `enable_customer_managed_key = true` switches to KMS / Key Vault key created by the module |
-| Data volume / data disk | Encrypted | Same as above |
-| RDS / Azure DB for PostgreSQL storage | Encrypted | Customer-managed KMS/Key Vault key supported |
-| RDS / Azure DB backups | Encrypted | n/a (forced on) |
-| In-transit — client to LB | TLS 1.2+ required | `min_tls_version` (default `TLS_1_2`) |
-| In-transit — LB to VM | TLS terminated at LB; HTTP to VM over private subnet only | `backend_tls_enabled = true` for end-to-end TLS |
-| In-transit — VM to DB | TLS required (`rds.force_ssl=1`, Azure equivalent) | `require_db_tls = true` (default) |
+### How to Report
 
-## Network
+**Email:** [security@hailbytes.com](mailto:security@hailbytes.com)
 
-- **Security groups / NSGs** default to **deny all** inbound. Required ports (443 for the LB, 5432 between VMs and DB) are opened only to the CIDRs you pass in `allowed_cidrs`. Wide-open `0.0.0.0/0` requires `allow_internet_ingress = true` and emits a deprecation warning.
-- **SSH** is **not** exposed by default. For break-glass access, prefer **AWS SSM Session Manager** (IAM-gated) or **Azure Bastion**. Modules wire these up when `enable_management_access = true`.
-- **IMDSv2** is required on every EC2 launch (`http_tokens = "required"`).
-- **Public IPs** are off by default. The LB has a public DNS name; the VMs sit in private subnets.
-- VMs are tagged for AWS Inspector / Azure Defender for Servers auto-enrollment when those services are enabled at the account level.
+Please include:
+- A description of the vulnerability
+- Steps to reproduce
+- Potential impact
+- Any suggested mitigations (optional)
 
-## IAM / RBAC
+We will acknowledge receipt within **2 business days** and aim to provide a resolution timeline within **7 business days**.
 
-- Each module creates a **least-privilege instance profile / managed identity** scoped to:
-  - Read its own marketplace product code (for subscription verification)
-  - Read/write its own CloudWatch / Azure Monitor namespace
-  - Read its own KMS / Key Vault keys
-  - Read its own secrets (DB connection string) from Secrets Manager / Key Vault
-  - Nothing else
-- No wildcard `*` resources in attached policies.
-- No long-lived access keys. Instance profiles / managed identities only.
+---
 
-## Secrets
+## Supported Versions
 
-- DB master passwords are generated via `random_password` (32 chars, full symbol set) and stored in **AWS Secrets Manager** or **Azure Key Vault**, never in plaintext outputs or Terraform state diff logs (`sensitive = true`).
-- Customer-supplied admin credentials are accepted only via `sensitive` variables and are pushed to Secrets Manager / Key Vault on first apply, not stored in state alongside the resources.
+| Version | Supported |
+|---------|-----------|
+| Latest  | ✅ |
+| N-1     | ✅ Security fixes only |
+| < N-1   | ❌ |
 
-## Logging & audit
+---
 
-- VPC Flow Logs / Azure NSG Flow Logs are enabled by default (`enable_flow_logs = true`).
-- LB access logs land in an S3 bucket / Storage Account with versioning and a 90-day lifecycle policy (`access_log_retention_days = 90`).
-- CloudTrail / Azure Activity Log are **not** managed by these modules — those are account-level concerns and should be owned by your landing-zone tooling.
+## Disclosure Policy
 
-## Patching
+HailBytes follows a **coordinated disclosure** model. We ask that you:
 
-The HailBytes marketplace image is the source of truth for in-image patches. When HailBytes publishes a new image version, you:
+1. Report the vulnerability to us privately first.
+2. Give us reasonable time to investigate and patch (typically 90 days).
+3. Avoid publicly disclosing details until a fix is available.
 
-1. Pull the latest module version (or bump the pinned image version in your tfvars).
-2. `terraform plan` shows the launch template / VMSS image reference changing.
-3. `terraform apply` triggers instance refresh (ASG) or rolling upgrade (VMSS) — zero-downtime in `ha-hot-hot` and `unlimited-scale` tiers, ~2 min downtime in `single-vm`.
+We will credit researchers in our release notes unless you prefer to remain anonymous.
 
-Do not run `apt`/`yum` updates inside the running VM. The image is immutable; replace it.
+---
 
-## Reporting vulnerabilities
+## Scope
 
-Security issues in these Terraform modules: open a private security advisory in this repo's GitHub Security tab.
+This security policy covers:
+- Code and configurations in this repository
+- HailBytes ASM and SAT APIs
+- HailBytes BYOC deployment modules
 
-Security issues in the HailBytes software itself (inside the marketplace VM image): see `SECURITY.md` in the relevant product repo (`hailbytes-asm`, `hailbytes-sat`).
+Out of scope: third-party dependencies (please report those upstream), HailBytes.com marketing website.
+
+---
+
+## PGP Key
+
+For sensitive disclosures, our security team PGP key is available at:  
+[hailbytes.com/.well-known/security.txt](https://hailbytes.com/.well-known/security.txt)
+
+---
+
+## Module security defaults
+
+This page covers *how to report* vulnerabilities. For *what defaults the modules ship with* (encryption, IMDSv2, KMS/Key Vault, least-privilege IAM, security group postures), see [SECURITY-DEFAULTS.md](SECURITY-DEFAULTS.md).
