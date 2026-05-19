@@ -388,6 +388,15 @@ resource "aws_s3_bucket_lifecycle_configuration" "alb_logs" {
   bucket = aws_s3_bucket.alb_logs.id
 
   rule {
+    id     = "abort-incomplete-multipart"
+    status = "Enabled"
+    filter {}
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  rule {
     id     = "expire"
     status = "Enabled"
     filter {}
@@ -423,6 +432,7 @@ resource "aws_lb" "main" {
 
   drop_invalid_header_fields = true
   enable_http2               = true
+  enable_deletion_protection = var.enable_alb_deletion_protection
 
   access_logs {
     bucket  = aws_s3_bucket.alb_logs.id
@@ -542,13 +552,13 @@ resource "aws_launch_template" "main" {
 }
 
 resource "aws_autoscaling_group" "main" {
-  name                = "${local.name_prefix}-asg"
-  min_size            = var.asg_min_size
-  max_size            = var.asg_max_size
-  desired_capacity    = var.asg_desired_capacity
-  vpc_zone_identifier = var.private_subnet_ids
-  target_group_arns   = [aws_lb_target_group.main.arn]
-  health_check_type   = "ELB"
+  name                      = "${local.name_prefix}-asg"
+  min_size                  = var.asg_min_size
+  max_size                  = var.asg_max_size
+  desired_capacity          = var.asg_desired_capacity
+  vpc_zone_identifier       = var.private_subnet_ids
+  target_group_arns         = [aws_lb_target_group.main.arn]
+  health_check_type         = "ELB"
   health_check_grace_period = 300
 
   launch_template {
@@ -920,6 +930,15 @@ resource "aws_s3_bucket_object_lock_configuration" "backup" {
 resource "aws_s3_bucket_lifecycle_configuration" "backup" {
   count  = local.create_backup_bucket ? 1 : 0
   bucket = aws_s3_bucket.backup[0].id
+
+  rule {
+    id     = "abort-incomplete-multipart"
+    status = "Enabled"
+    filter {}
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
 
   rule {
     id     = "tier-and-expire"

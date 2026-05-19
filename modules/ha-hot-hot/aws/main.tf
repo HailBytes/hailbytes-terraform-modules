@@ -30,11 +30,12 @@ locals {
   # Pick two private subnets for two VMs (one per AZ). For >2 subnets we take the first 2.
   vm_subnets = slice(var.private_subnet_ids, 0, 2)
 
-  use_rds                 = var.db_mode == "rds"
-  use_ec2_db              = var.db_mode == "ec2"
-  create_backup_bucket    = var.create_backup_bucket
-  effective_backup_bucket = local.create_backup_bucket ? aws_s3_bucket.backup[0].id : var.backup_bucket_name
-  backup_object_prefix    = "hailbytes-${var.product}-"
+  use_rds                       = var.db_mode == "rds"
+  use_ec2_db                    = var.db_mode == "ec2"
+  create_backup_bucket          = var.create_backup_bucket
+  effective_backup_bucket       = local.create_backup_bucket ? aws_s3_bucket.backup[0].id : var.backup_bucket_name
+  backup_object_prefix          = "hailbytes-${var.product}-"
+  create_alb_access_logs_bucket = var.enable_alb_access_logging
 
   db_host = coalesce(one(aws_db_instance.main[*].address), one(aws_instance.db_ec2[*].private_ip))
   db_port = local.use_rds ? coalesce(one(aws_db_instance.main[*].port), 5432) : 5432
@@ -362,8 +363,8 @@ resource "aws_iam_role_policy" "db_ec2_backup" {
         Resource = aws_secretsmanager_secret.db.arn
       },
       {
-        Effect = "Allow"
-        Action = ["ec2:CreateSnapshot", "ec2:CreateTags", "ec2:DescribeVolumes", "ec2:DescribeSnapshots"]
+        Effect   = "Allow"
+        Action   = ["ec2:CreateSnapshot", "ec2:CreateTags", "ec2:DescribeVolumes", "ec2:DescribeSnapshots"]
         Resource = "*"
       },
     ]
@@ -451,7 +452,7 @@ resource "aws_instance" "db_ec2" {
   # no special handling — it sees the same Secrets Manager secret shape as in
   # RDS mode.
   user_data_replace_on_change = false
-  user_data = <<-EOF
+  user_data                   = <<-EOF
     #cloud-config
     package_update: true
     packages:
@@ -620,7 +621,7 @@ resource "aws_instance" "vm" {
   }))
 
   tags = merge(local.common_tags, {
-    Name             = "${local.name_prefix}-vm-${count.index + 1}"
+    Name                       = "${local.name_prefix}-vm-${count.index + 1}"
     "hailbytes-${var.product}" = "true"
   })
 
@@ -645,6 +646,16 @@ resource "aws_lb" "main" {
 
   drop_invalid_header_fields = true
   enable_http2               = true
+  enable_deletion_protection = var.enable_alb_deletion_protection
+
+  dynamic "access_logs" {
+    for_each = local.create_alb_access_logs_bucket ? [1] : []
+    content {
+      bucket  = aws_s3_bucket.alb_logs[0].id
+      prefix  = "alb"
+      enabled = true
+    }
+  }
 
   tags = local.common_tags
 }
@@ -887,6 +898,15 @@ resource "aws_s3_bucket_lifecycle_configuration" "backup" {
   bucket = aws_s3_bucket.backup[0].id
 
   rule {
+    id     = "abort-incomplete-multipart"
+    status = "Enabled"
+    filter {}
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  rule {
     id     = "tier-and-expire"
     status = "Enabled"
     filter {
@@ -1033,5 +1053,93 @@ resource "aws_ssm_document" "post_patch_verify" {
         }
       }
     ]
+  })
+}
+
+# ----- ALB access logs (optional) -----
+#
+# CKV_AWS_91 wants every ALB to have access logging enabled. We make it
+# opt-in (default off) since it adds a second S3 bucket and a small
+# log-volume cost; production deployments should turn it on.
+
+data "aws_elb_service_account" "main" {
+  count = local.create_alb_access_logs_bucket ? 1 : 0
+}
+
+resource "aws_s3_bucket" "alb_logs" {
+  count         = local.create_alb_access_logs_bucket ? 1 : 0
+  bucket        = "${local.name_prefix}-alb-logs-${data.aws_caller_identity.current.account_id}"
+  force_destroy = false
+  tags          = local.common_tags
+}
+
+resource "aws_s3_bucket_versioning" "alb_logs" {
+  count  = local.create_alb_access_logs_bucket ? 1 : 0
+  bucket = aws_s3_bucket.alb_logs[0].id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "alb_logs" {
+  count                   = local.create_alb_access_logs_bucket ? 1 : 0
+  bucket                  = aws_s3_bucket.alb_logs[0].id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "alb_logs" {
+  count  = local.create_alb_access_logs_bucket ? 1 : 0
+  bucket = aws_s3_bucket.alb_logs[0].id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = var.enable_customer_managed_key ? "aws:kms" : "AES256"
+      kms_master_key_id = var.enable_customer_managed_key ? aws_kms_key.main[0].arn : null
+    }
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "alb_logs" {
+  count  = local.create_alb_access_logs_bucket ? 1 : 0
+  bucket = aws_s3_bucket.alb_logs[0].id
+
+  rule {
+    id     = "abort-incomplete-multipart"
+    status = "Enabled"
+    filter {}
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  rule {
+    id     = "expire-and-archive"
+    status = "Enabled"
+    filter {
+      prefix = "alb/"
+    }
+    transition {
+      days          = 30
+      storage_class = "STANDARD_IA"
+    }
+    expiration {
+      days = var.alb_access_log_retention_days
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "alb_logs" {
+  count  = local.create_alb_access_logs_bucket ? 1 : 0
+  bucket = aws_s3_bucket.alb_logs[0].id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { AWS = data.aws_elb_service_account.main[0].arn }
+      Action    = "s3:PutObject"
+      Resource  = "${aws_s3_bucket.alb_logs[0].arn}/*"
+    }]
   })
 }

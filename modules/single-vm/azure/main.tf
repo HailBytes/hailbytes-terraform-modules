@@ -40,9 +40,9 @@ locals {
     for c in var.allowed_cidrs : c if c != "0.0.0.0/0"
   ]
 
-  create_backup_storage     = var.create_backup_storage_account
+  create_backup_storage       = var.create_backup_storage_account
   backup_storage_account_name = local.create_backup_storage ? azurerm_storage_account.backup[0].name : var.backup_storage_account_name
-  backup_container_name     = "hailbytes-${var.product}-bundles"
+  backup_container_name       = "hailbytes-${var.product}-bundles"
 }
 
 # ----- Marketplace agreement -----
@@ -282,7 +282,7 @@ resource "azurerm_storage_management_policy" "backup" {
       version {
         change_tier_to_cool_after_days_since_creation    = 30
         change_tier_to_archive_after_days_since_creation = 90
-        delete_after_days_since_creation          = var.backup_blob_noncurrent_expiration_days
+        delete_after_days_since_creation                 = var.backup_blob_noncurrent_expiration_days
       }
     }
   }

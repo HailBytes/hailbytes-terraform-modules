@@ -1,7 +1,7 @@
 module "this" {
-  source                      = "../single-vm/azure"
+  source = "../single-vm/azure"
 
-  product                     = "asm"
+  product = "asm"
 
   resource_group_name         = var.resource_group_name
   location                    = var.location

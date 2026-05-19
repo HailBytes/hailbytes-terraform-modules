@@ -1,7 +1,7 @@
 module "this" {
-  source                    = "../unlimited-scale/azure"
+  source = "../unlimited-scale/azure"
 
-  product                   = "asm"
+  product = "asm"
 
   resource_group_name       = var.resource_group_name
   location                  = var.location
@@ -56,6 +56,8 @@ module "this" {
   redis_endpoint_override      = var.redis_endpoint_override
   redis_endpoint_override_port = var.redis_endpoint_override_port
   redis_endpoint_override_tls  = var.redis_endpoint_override_tls
+
+  db_secret_expiration_hours = var.db_secret_expiration_hours
 
   tags = var.tags
 }

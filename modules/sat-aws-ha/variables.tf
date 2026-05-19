@@ -255,6 +255,25 @@ variable "redis_endpoint_override_tls" {
   default     = true
 }
 
+
+variable "enable_alb_deletion_protection" {
+  description = "Enable deletion protection on the ALB. Default true; dev/test override to false to let `terraform destroy` succeed."
+  type        = bool
+  default     = true
+}
+
+variable "enable_alb_access_logging" {
+  description = "Provision an S3 bucket for ALB access logs and enable the listener access_logs block."
+  type        = bool
+  default     = false
+}
+
+variable "alb_access_log_retention_days" {
+  description = "Days to retain ALB access log objects."
+  type        = number
+  default     = 365
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

@@ -294,6 +294,12 @@ variable "schema_version_endpoint_path" {
   default     = "/api/instance/schema-version"
 }
 
+variable "db_secret_expiration_hours" {
+  description = "Hours until the Key Vault DB-password secret expires. Set on every apply via `timeadd(timestamp(), ...)` and then ignored on subsequent applies so a stale value doesn't show drift. Default 8760 = one calendar year — long enough that ops don't need to rotate weekly, short enough that the secret never lives unrotated past a year without operator attention."
+  type        = number
+  default     = 8760
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

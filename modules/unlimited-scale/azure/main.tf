@@ -86,10 +86,17 @@ resource "random_password" "db" {
 }
 
 resource "azurerm_key_vault_secret" "db" {
-  name         = "hailbytes-db-password"
-  value        = random_password.db.result
-  key_vault_id = azurerm_key_vault.main.id
-  depends_on   = [azurerm_role_assignment.kv_writer]
+  name            = "hailbytes-db-password"
+  value           = random_password.db.result
+  key_vault_id    = azurerm_key_vault.main.id
+  content_type    = "application/x-postgresql-password"
+  expiration_date = timeadd(timestamp(), "${var.db_secret_expiration_hours}h")
+
+  lifecycle {
+    ignore_changes = [expiration_date]
+  }
+
+  depends_on = [azurerm_role_assignment.kv_writer]
 }
 
 # ----- LB -----
@@ -154,10 +161,16 @@ resource "azurerm_linux_virtual_machine_scale_set" "main" {
   instances                       = var.vmss_default_count
   admin_username                  = var.admin_username
   disable_password_authentication = true
-  zones                           = ["1", "2", "3"]
-  zone_balance                    = true
-  upgrade_mode                    = "Rolling"
-  health_probe_id                 = azurerm_lb_probe.https.id
+  # CKV_AZURE_97. Encrypts the OS disk + temp disk + data disks at the
+  # hypervisor host level on top of Azure's default platform-managed
+  # encryption. No additional cost; requires the subscription to be
+  # registered for the EncryptionAtHost feature (it is, on all
+  # production Azure subscriptions by default).
+  encryption_at_host_enabled = true
+  zones                      = ["1", "2", "3"]
+  zone_balance               = true
+  upgrade_mode               = "Rolling"
+  health_probe_id            = azurerm_lb_probe.https.id
   tags = merge(local.common_tags, {
     "hailbytes-${var.product}" = "true"
   })
@@ -205,9 +218,9 @@ resource "azurerm_linux_virtual_machine_scale_set" "main" {
     primary = true
 
     ip_configuration {
-      name      = "primary"
-      primary   = true
-      subnet_id = var.vm_subnet_id
+      name                                   = "primary"
+      primary                                = true
+      subnet_id                              = var.vm_subnet_id
       load_balancer_backend_address_pool_ids = [azurerm_lb_backend_address_pool.main.id]
       application_gateway_backend_address_pool_ids = local.enable_application_gateway ? [
         for p in azurerm_application_gateway.main[0].backend_address_pool : p.id if p.name == "vmss"
@@ -224,15 +237,15 @@ resource "azurerm_linux_virtual_machine_scale_set" "main" {
 
   custom_data = base64encode(jsonencode({
     hailbytes = {
-      mode             = "scale-out"
-      key_vault_uri    = azurerm_key_vault.main.vault_uri
-      db_secret_name   = azurerm_key_vault_secret.db.name
-      db_fqdn          = azurerm_postgresql_flexible_server.primary.fqdn
-      db_read_fqdns    = [for r in azurerm_postgresql_flexible_server.replica : r.fqdn]
-      product          = var.product
-      redis_host       = local.effective_redis_host
-      redis_port       = local.effective_redis_port
-      redis_tls        = local.provision_managed_redis ? true : var.redis_endpoint_override_tls
+      mode           = "scale-out"
+      key_vault_uri  = azurerm_key_vault.main.vault_uri
+      db_secret_name = azurerm_key_vault_secret.db.name
+      db_fqdn        = azurerm_postgresql_flexible_server.primary.fqdn
+      db_read_fqdns  = [for r in azurerm_postgresql_flexible_server.replica : r.fqdn]
+      product        = var.product
+      redis_host     = local.effective_redis_host
+      redis_port     = local.effective_redis_port
+      redis_tls      = local.provision_managed_redis ? true : var.redis_endpoint_override_tls
     }
   }))
 
@@ -507,7 +520,7 @@ resource "azurerm_storage_management_policy" "backup" {
       version {
         change_tier_to_cool_after_days_since_creation    = 30
         change_tier_to_archive_after_days_since_creation = 90
-        delete_after_days_since_creation          = var.backup_blob_noncurrent_expiration_days
+        delete_after_days_since_creation                 = var.backup_blob_noncurrent_expiration_days
       }
     }
   }
