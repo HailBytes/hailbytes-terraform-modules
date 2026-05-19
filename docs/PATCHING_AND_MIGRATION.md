@@ -85,7 +85,7 @@ the new stack to restore.
 
 ## Pulling a bundle for off-deployment retention
 
-Some procurement frameworks (UK G-Cloud, HEAnet, FedRAMP-adjacent) require
+Some procurement frameworks (UK G-Cloud, FedRAMP-adjacent) require
 that backup artifacts live outside the production account. The modules
 emit a clean copy path for that:
 
