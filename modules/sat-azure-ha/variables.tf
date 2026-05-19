@@ -228,6 +228,68 @@ variable "schema_version_endpoint_path" {
   default     = "/api/instance/schema-version"
 }
 
+variable "enable_post_patch_run_command" {
+  description = "Install an Azure Run Command document named RunPostPatchVerify on each VM, mirroring the AWS sat-aws-ha aws_ssm_document.post_patch_verify."
+  type        = bool
+  default     = true
+}
+
+# ----- Shared session store (Azure Cache for Redis) -----
+
+variable "enable_managed_redis" {
+  description = "Provision an Azure Cache for Redis (Standard or Premium SKU, zone-redundant in Premium). Required for HA; set to false only when supplying redis_endpoint_override."
+  type        = bool
+  default     = true
+}
+
+variable "redis_sku_name" {
+  description = "Redis SKU. Standard delivers a primary/replica pair across two zones; Premium adds persistence and explicit zone selection. Basic is single-node and NOT a valid HA option."
+  type        = string
+  default     = "Standard"
+}
+
+variable "redis_family" {
+  description = "Redis SKU family. 'C' = Standard/Basic, 'P' = Premium. Must match redis_sku_name."
+  type        = string
+  default     = "C"
+}
+
+variable "redis_capacity" {
+  description = "Redis capacity (size index). For SKU=Standard / family=C, valid values are 0 (250MB) through 6 (53GB). The procurement-friendly default is 1 (1GB)."
+  type        = number
+  default     = 1
+}
+
+variable "redis_endpoint_override" {
+  description = "Host of an existing customer-managed Redis endpoint (Azure Cache, self-managed Redis Sentinel, etc.). Pair with enable_managed_redis = false."
+  type        = string
+  default     = null
+}
+
+variable "redis_endpoint_override_port" {
+  type    = number
+  default = 6380
+}
+
+variable "redis_endpoint_override_tls" {
+  type    = bool
+  default = true
+}
+
+
+variable "db_secret_expiration_hours" {
+  description = "Hours until the Key Vault DB-password secret expires. Default 8760 = one calendar year."
+  type        = number
+  default     = 8760
+}
+
+
+variable "postgres_geo_redundant_backup_enabled" {
+  description = "Enable geo-redundant backup on Postgres Flexible Server. CKV_AZURE_136."
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

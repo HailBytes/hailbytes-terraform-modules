@@ -1,0 +1,447 @@
+name: Terraform Modules — CI
+
+# Cheap-but-load-bearing gates for every PR and every push to main.
+# Catches the things that would otherwise only fail at a customer's
+# `terraform apply`: malformed HCL, fmt drift, undeclared variable
+# references, mis-typed resource attributes.
+#
+# A real `terraform plan` against AWS/Azure needs credentials and is
+# scoped out of this workflow — that's what the SAT/ASM Packer +
+# end-to-end smoke pipelines cover. Here we only need to know the
+# HCL parses, formats, and validates.
+
+on:
+  pull_request:
+    paths:
+      - 'modules/**'
+      - '.github/workflows/ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'modules/**'
+      - '.github/workflows/ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tf-ci-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  TERRAFORM_VERSION: '1.9.8'
+  TFLINT_VERSION: 'v0.55.0'
+
+jobs:
+  fmt:
+    name: terraform fmt -check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform fmt (check, recursive)
+        run: |
+          if ! terraform fmt -check -recursive -diff; then
+            echo "::error::terraform fmt drift detected. Run: terraform fmt -recursive"
+            exit 1
+          fi
+
+  validate:
+    name: terraform validate — ${{ matrix.module }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    strategy:
+      # Don't cancel sibling validations: a syntax error in one module
+      # shouldn't hide a different error in another. Each module is a
+      # tiny independent terraform init + validate.
+      fail-fast: false
+      matrix:
+        module:
+          # AWS — single, HA, autoscale (shared cores)
+          - single-vm/aws
+          - ha-hot-hot/aws
+          - unlimited-scale/aws
+          # Azure — same three tiers
+          - single-vm/azure
+          - ha-hot-hot/azure
+          - unlimited-scale/azure
+          # Per-product wrappers (thin shims around the core modules)
+          - sat-aws-single
+          - sat-aws-ha
+          - sat-aws-autoscale
+          - sat-azure-single
+          - sat-azure-ha
+          - sat-azure-autoscale
+          - asm-aws-single
+          - asm-aws-ha
+          - asm-aws-autoscale
+          - asm-azure-single
+          - asm-azure-ha
+          - asm-azure-autoscale
+          # Shared infra
+          - network/aws
+          - network/azure
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform init (no backend, no providers download cache)
+        working-directory: modules/${{ matrix.module }}
+        run: |
+          # -backend=false skips remote state config — none of these
+          # modules use a backend at the module level; consumers supply
+          # one. -input=false fails fast on missing inputs instead of
+          # hanging waiting for prompts.
+          terraform init -backend=false -input=false
+
+      - name: terraform validate
+        working-directory: modules/${{ matrix.module }}
+        run: terraform validate -no-color
+
+  tflint:
+    name: tflint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Cache tflint plugins
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: ~/.tflint.d/plugins
+          key: tflint-${{ env.TFLINT_VERSION }}-${{ runner.os }}-${{ hashFiles('.tflint.hcl') }}
+
+      - name: Set up tflint
+        uses: terraform-linters/setup-tflint@90f302c255ef959cbfb4bd10581afecdb7ece3e6 # v4.1.1
+        with:
+          tflint_version: ${{ env.TFLINT_VERSION }}
+
+      - name: tflint init (plugins)
+        run: tflint --init
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: tflint — recursive
+        run: tflint --recursive --format=compact --minimum-failure-severity=error
+
+  cost-shapes-sync:
+    name: COST_SHAPES.md sync check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    # Cheap structural check: COST_SHAPES.md should mention every cloud
+    # x tier marker and every meter-line marker. If someone adds a new
+    # module tier and forgets the cost table, this catches it before
+    # procurement does.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Assert canonical cost markers present
+        run: |
+          required=(
+            # AWS tiers
+            "single-vm/aws"
+            "ha-hot-hot/aws"
+            "unlimited-scale/aws"
+            # Azure tiers
+            "single-vm/azure"
+            "ha-hot-hot/azure"
+            "unlimited-scale/azure"
+            # Per-vCPU meter line
+            "0.24/vCPU"
+            # Azure Cache sizing table
+            "Standard C1"
+          )
+          missing=()
+          for marker in "${required[@]}"; do
+            if ! grep -qF "$marker" COST_SHAPES.md; then
+              missing+=("$marker")
+            fi
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::COST_SHAPES.md is missing required markers: ${missing[*]}"
+            echo "::error::Update COST_SHAPES.md before merging — it's the canonical procurement-grade reference."
+            exit 1
+          fi
+          echo "All required cost-shape markers present."
+
+  # ---------------------------------------------------------------------
+  # tfsec — static security scan for the Terraform tree.  Catches
+  # encryption-off / public-by-default / IMDSv1-allowed / missing-KMS
+  # type bugs that terraform validate alone misses.  We pin a specific
+  # release and accept inline disables (#tfsec:ignore) where a finding
+  # is intentional (e.g. ALB SGs that *must* accept 0.0.0.0/0 because
+  # they're internet-facing by design).
+  # ---------------------------------------------------------------------
+  tfsec:
+    name: tfsec
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    permissions:
+      contents: read
+      # Upload SARIF for code-scanning UI.  Module authors get the
+      # findings in the PR file-view, not just the run summary.
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Run tfsec
+        uses: aquasecurity/tfsec-sarif-action@9a83b5c3524f825c020e356335855741fd02745f # v0.1.4
+        with:
+          sarif_file: tfsec.sarif
+          working_directory: modules
+          # Soft-fail on the SARIF run; the gate below uses tfsec
+          # directly so we can scope severity and inline-disable rules.
+
+      - name: Upload SARIF to GitHub code-scanning
+        uses: github/codeql-action/upload-sarif@28deaeda66b76a05916b6923827895f2b14ab387 # v3.27.5
+        if: always()
+        with:
+          sarif_file: tfsec.sarif
+          category: tfsec-modules
+
+      - name: Hard gate on HIGH/CRITICAL findings
+        # The SARIF path uploads everything; here we re-run with --severity
+        # so the build fails on HIGH+ and tolerates MEDIUM/LOW that are
+        # already triaged.
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/src" \
+            aquasec/tfsec:v1.28.13 \
+            /src/modules \
+            --minimum-severity HIGH \
+            --format default \
+            --no-color
+
+  # ---------------------------------------------------------------------
+  # Examples validation — every modules/*/aws/examples/* and
+  # modules/*/azure/examples/* should `terraform validate` clean.  These
+  # are the snippets customers copy-paste; a broken one is a worse first
+  # impression than a missing one.
+  # ---------------------------------------------------------------------
+  examples-validate:
+    name: terraform validate — examples/${{ matrix.example }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    strategy:
+      fail-fast: false
+      matrix:
+        example:
+          - single-vm/aws/examples/basic
+          - single-vm/azure/examples/basic
+          - ha-hot-hot/aws/examples/basic
+          - ha-hot-hot/azure/examples/basic
+          - unlimited-scale/aws/examples/basic
+          - unlimited-scale/azure/examples/basic
+          - network/aws/examples/basic
+          - network/azure/examples/basic
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: Skip if example directory absent
+        id: probe
+        run: |
+          if [ -d "modules/${{ matrix.example }}" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::modules/${{ matrix.example }} not present — skipping"
+          fi
+
+      - name: terraform init -backend=false
+        if: steps.probe.outputs.exists == 'true'
+        working-directory: modules/${{ matrix.example }}
+        run: terraform init -backend=false -input=false
+
+      - name: terraform validate
+        if: steps.probe.outputs.exists == 'true'
+        working-directory: modules/${{ matrix.example }}
+        run: terraform validate -no-color
+
+  # ---------------------------------------------------------------------
+  # Marketplace product-code / publisher-offer-SKU consistency.  Every
+  # AWS module that resolves an AMI via product-code must use the same
+  # codes as MARKETPLACE.md in the SAT and ASM application repos.  This
+  # check runs against THIS repo only — it asserts internal consistency
+  # (the codes match across all modules); cross-repo verification is
+  # documented as a release-time step in CONTRIBUTING.md.
+  # ---------------------------------------------------------------------
+  marketplace-id-consistency:
+    name: Marketplace ID consistency
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: AWS AMI product-codes match across modules
+        run: |
+          set -eo pipefail
+          # Canonical codes — keep in sync with hailbytes-{sat,asm}/MARKETPLACE.md.
+          want_asm="1n57wg1f6735e30vj5fn420bp"
+          want_sat="d19hjbz3gakqdlonlf8twdmll"
+
+          fail=0
+          for tf in $(grep -rl 'marketplace_product_codes' modules/ --include='*.tf'); do
+            got_asm=$(grep -A 5 'marketplace_product_codes' "$tf" | grep -oP 'asm\s*=\s*"\K[^"]+' | head -1)
+            got_sat=$(grep -A 5 'marketplace_product_codes' "$tf" | grep -oP 'sat\s*=\s*"\K[^"]+' | head -1)
+            if [ "${got_asm}" != "${want_asm}" ]; then
+              echo "::error file=${tf}::ASM product code drift: want=${want_asm} got=${got_asm}"
+              fail=1
+            fi
+            if [ "${got_sat}" != "${want_sat}" ]; then
+              echo "::error file=${tf}::SAT product code drift: want=${want_sat} got=${got_sat}"
+              fail=1
+            fi
+          done
+          if [ "${fail}" = "1" ]; then
+            exit 1
+          fi
+          echo "All AWS marketplace product codes consistent."
+
+      - name: Azure publisher / offer / SKU match across modules
+        run: |
+          set -eo pipefail
+          want_publisher="lcmcon1687976613543"
+          want_asm_offer="hardened_ubuntu_with_rengine"
+          want_sat_offer="gophish-phishing-simulator"
+
+          fail=0
+          for tf in $(grep -rl 'marketplace_plans' modules/ --include='*.tf'); do
+            got_publisher=$(grep -oP 'publisher\s*=\s*"\K[^"]+' "$tf" | sort -u | head -1)
+            if [ -n "${got_publisher}" ] && [ "${got_publisher}" != "${want_publisher}" ]; then
+              echo "::error file=${tf}::Azure publisher drift: want=${want_publisher} got=${got_publisher}"
+              fail=1
+            fi
+            if grep -q "${want_asm_offer}" "$tf" && ! grep -q "${want_sat_offer}" "$tf"; then
+              # Should mention both products' offers.
+              echo "::error file=${tf}::Azure SAT offer missing — should reference both ${want_asm_offer} and ${want_sat_offer}"
+              fail=1
+            fi
+          done
+          if [ "${fail}" = "1" ]; then
+            exit 1
+          fi
+          echo "All Azure marketplace identifiers consistent."
+
+  # ---------------------------------------------------------------------
+  # Wrapper variable forwarding — every wrapper module (sat-*, asm-*)
+  # should expose the same variable surface as its core module, minus
+  # `product` (hardcoded by the wrapper) and any wrapper-only providers
+  # block.  Customers using the wrapper shouldn't be missing knobs the
+  # core module accepts.  See e.g. the Redis variables added in
+  # ha-hot-hot/aws — they MUST be forwarded by sat-aws-ha and asm-aws-ha.
+  # ---------------------------------------------------------------------
+  wrapper-forwarding:
+    name: Wrapper variable forwarding
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Diff wrappers against their core modules
+        run: |
+          set -eo pipefail
+          # wrapper_dir => core_dir map.  Single-VM wrappers don't need
+          # Redis or post-patch knobs, but they should still expose every
+          # other variable the core module declares.
+          declare -A wrappers=(
+            ["sat-aws-single"]="single-vm/aws"
+            ["asm-aws-single"]="single-vm/aws"
+            ["sat-aws-ha"]="ha-hot-hot/aws"
+            ["asm-aws-ha"]="ha-hot-hot/aws"
+            ["sat-aws-autoscale"]="unlimited-scale/aws"
+            ["asm-aws-autoscale"]="unlimited-scale/aws"
+            ["sat-azure-single"]="single-vm/azure"
+            ["asm-azure-single"]="single-vm/azure"
+            ["sat-azure-ha"]="ha-hot-hot/azure"
+            ["asm-azure-ha"]="ha-hot-hot/azure"
+            ["sat-azure-autoscale"]="unlimited-scale/azure"
+            ["asm-azure-autoscale"]="unlimited-scale/azure"
+          )
+
+          # Variables intentionally hidden by wrappers.
+          hidden_in_wrapper="^(product)$"
+
+          fail=0
+          for wrapper in "${!wrappers[@]}"; do
+            core="${wrappers[$wrapper]}"
+            core_vars=$(grep -h '^variable ' "modules/${core}/variables.tf" | awk '{print $2}' | tr -d '"' | sort)
+            wrapper_vars=$(grep -h '^variable ' "modules/${wrapper}/variables.tf" | awk '{print $2}' | tr -d '"' | sort)
+            missing=$(comm -23 <(echo "$core_vars") <(echo "$wrapper_vars") \
+                      | grep -vE "$hidden_in_wrapper" || true)
+            if [ -n "$missing" ]; then
+              echo "::error::Wrapper modules/${wrapper} is missing variables exposed by core modules/${core}:"
+              echo "$missing" | sed 's|^|::error::  - |'
+              fail=1
+            fi
+          done
+
+          if [ "${fail}" = "1" ]; then
+            echo "::error::Wrappers must forward every core variable a customer might want to override (except 'product')."
+            exit 1
+          fi
+          echo "All wrapper modules forward their core surface area cleanly."
+
+  # ---------------------------------------------------------------------
+  # versions.tf existence + pinning.  Every module dir that has a *.tf
+  # file should also have a versions.tf declaring required_providers
+  # and required_version.  Avoids accidental provider-version drift
+  # between modules.
+  # ---------------------------------------------------------------------
+  versions-tf:
+    name: versions.tf present
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Every module declares versions.tf with required_version
+        run: |
+          set -eo pipefail
+          fail=0
+          for d in modules/*/aws modules/*/azure modules/{sat,asm}-{aws,azure}-{single,ha,autoscale}; do
+            [ -d "$d" ] || continue
+            if [ ! -f "$d/versions.tf" ]; then
+              echo "::error file=${d}/versions.tf::missing versions.tf"
+              fail=1
+              continue
+            fi
+            if ! grep -q 'required_version' "$d/versions.tf"; then
+              echo "::error file=${d}/versions.tf::versions.tf missing required_version pin"
+              fail=1
+            fi
+            if ! grep -q 'required_providers' "$d/versions.tf"; then
+              echo "::error file=${d}/versions.tf::versions.tf missing required_providers block"
+              fail=1
+            fi
+          done
+          if [ "${fail}" = "1" ]; then
+            exit 1
+          fi
+          echo "All module dirs have versions.tf with required_version + required_providers."

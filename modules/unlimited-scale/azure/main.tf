@@ -39,6 +39,14 @@ locals {
 
   enable_application_gateway = var.enable_application_gateway
   endpoint_ip                = local.enable_application_gateway ? azurerm_public_ip.appgw[0].ip_address : azurerm_public_ip.lb.ip_address
+
+  # Shared session store: required by every horizontally-scaled SAT/ASM
+  # deployment because every VMSS instance has to read the same session
+  # map and worker-lock heartbeat. Provisioned by default; can be
+  # overridden via var.redis_endpoint_override + var.enable_managed_redis.
+  provision_managed_redis = var.enable_managed_redis && var.redis_endpoint_override == null
+  effective_redis_host    = local.provision_managed_redis ? one(azurerm_redis_cache.main[*].hostname) : var.redis_endpoint_override
+  effective_redis_port    = local.provision_managed_redis ? 6380 : var.redis_endpoint_override_port
 }
 
 data "azurerm_client_config" "current" {}
@@ -78,10 +86,17 @@ resource "random_password" "db" {
 }
 
 resource "azurerm_key_vault_secret" "db" {
-  name         = "hailbytes-db-password"
-  value        = random_password.db.result
-  key_vault_id = azurerm_key_vault.main.id
-  depends_on   = [azurerm_role_assignment.kv_writer]
+  name            = "hailbytes-db-password"
+  value           = random_password.db.result
+  key_vault_id    = azurerm_key_vault.main.id
+  content_type    = "application/x-postgresql-password"
+  expiration_date = timeadd(timestamp(), "${var.db_secret_expiration_hours}h")
+
+  lifecycle {
+    ignore_changes = [expiration_date]
+  }
+
+  depends_on = [azurerm_role_assignment.kv_writer]
 }
 
 # ----- LB -----
@@ -146,10 +161,16 @@ resource "azurerm_linux_virtual_machine_scale_set" "main" {
   instances                       = var.vmss_default_count
   admin_username                  = var.admin_username
   disable_password_authentication = true
-  zones                           = ["1", "2", "3"]
-  zone_balance                    = true
-  upgrade_mode                    = "Rolling"
-  health_probe_id                 = azurerm_lb_probe.https.id
+  # CKV_AZURE_97. Encrypts the OS disk + temp disk + data disks at the
+  # hypervisor host level on top of Azure's default platform-managed
+  # encryption. No additional cost; requires the subscription to be
+  # registered for the EncryptionAtHost feature (it is, on all
+  # production Azure subscriptions by default).
+  encryption_at_host_enabled = true
+  zones                      = ["1", "2", "3"]
+  zone_balance               = true
+  upgrade_mode               = "Rolling"
+  health_probe_id            = azurerm_lb_probe.https.id
   tags = merge(local.common_tags, {
     "hailbytes-${var.product}" = "true"
   })
@@ -197,9 +218,9 @@ resource "azurerm_linux_virtual_machine_scale_set" "main" {
     primary = true
 
     ip_configuration {
-      name      = "primary"
-      primary   = true
-      subnet_id = var.vm_subnet_id
+      name                                   = "primary"
+      primary                                = true
+      subnet_id                              = var.vm_subnet_id
       load_balancer_backend_address_pool_ids = [azurerm_lb_backend_address_pool.main.id]
       application_gateway_backend_address_pool_ids = local.enable_application_gateway ? [
         for p in azurerm_application_gateway.main[0].backend_address_pool : p.id if p.name == "vmss"
@@ -216,12 +237,15 @@ resource "azurerm_linux_virtual_machine_scale_set" "main" {
 
   custom_data = base64encode(jsonencode({
     hailbytes = {
-      mode             = "scale-out"
-      key_vault_uri    = azurerm_key_vault.main.vault_uri
-      db_secret_name   = azurerm_key_vault_secret.db.name
-      db_fqdn          = azurerm_postgresql_flexible_server.primary.fqdn
-      db_read_fqdns    = [for r in azurerm_postgresql_flexible_server.replica : r.fqdn]
-      product          = var.product
+      mode           = "scale-out"
+      key_vault_uri  = azurerm_key_vault.main.vault_uri
+      db_secret_name = azurerm_key_vault_secret.db.name
+      db_fqdn        = azurerm_postgresql_flexible_server.primary.fqdn
+      db_read_fqdns  = [for r in azurerm_postgresql_flexible_server.replica : r.fqdn]
+      product        = var.product
+      redis_host     = local.effective_redis_host
+      redis_port     = local.effective_redis_port
+      redis_tls      = local.provision_managed_redis ? true : var.redis_endpoint_override_tls
     }
   }))
 
@@ -309,7 +333,7 @@ resource "azurerm_postgresql_flexible_server" "primary" {
   private_dns_zone_id = var.private_dns_zone_id
 
   backup_retention_days        = var.db_backup_retention_days
-  geo_redundant_backup_enabled = true
+  geo_redundant_backup_enabled = var.postgres_geo_redundant_backup_enabled
 
   high_availability {
     mode = "ZoneRedundant"
@@ -352,6 +376,32 @@ resource "azurerm_postgresql_flexible_server" "replica" {
 
   lifecycle {
     ignore_changes = [zone, high_availability]
+  }
+}
+
+# ----- Shared session store: Azure Cache for Redis -----
+#
+# Required for horizontal scaling. Every instance in the VMSS must
+# share session state, otherwise sticky-session LB stickiness becomes
+# the only thing keeping users logged in across rolling upgrade.
+# Standard/Premium SKUs only — Basic is single-node and breaks HA.
+
+resource "azurerm_redis_cache" "main" {
+  count                         = local.provision_managed_redis ? 1 : 0
+  name                          = "${local.name_prefix}-redis"
+  resource_group_name           = var.resource_group_name
+  location                      = var.location
+  capacity                      = var.redis_capacity
+  family                        = var.redis_family
+  sku_name                      = var.redis_sku_name
+  non_ssl_port_enabled          = false
+  minimum_tls_version           = "1.2"
+  public_network_access_enabled = false
+  zones                         = var.redis_sku_name == "Premium" ? ["1", "2"] : null
+  tags                          = local.common_tags
+
+  redis_configuration {
+    maxmemory_policy = "allkeys-lru"
   }
 }
 
@@ -427,14 +477,14 @@ resource "azurerm_storage_account" "backup" {
   count                           = local.create_backup_storage ? 1 : 0
   name                            = coalesce(var.backup_storage_account_name, substr(replace("${local.name_prefix}backup", "-", ""), 0, 24))
   resource_group_name             = var.resource_group_name
+  public_network_access_enabled   = false
+  allow_nested_items_to_be_public = false
   location                        = var.location
   account_tier                    = "Standard"
   account_replication_type        = var.backup_storage_replication
   account_kind                    = "StorageV2"
   access_tier                     = "Cool"
   min_tls_version                 = "TLS1_2"
-  allow_nested_items_to_be_public = false
-  public_network_access_enabled   = true
   shared_access_key_enabled       = false
   tags                            = local.common_tags
 
@@ -470,7 +520,7 @@ resource "azurerm_storage_management_policy" "backup" {
       version {
         change_tier_to_cool_after_days_since_creation    = 30
         change_tier_to_archive_after_days_since_creation = 90
-        delete_after_days_since_creation          = var.backup_blob_noncurrent_expiration_days
+        delete_after_days_since_creation                 = var.backup_blob_noncurrent_expiration_days
       }
     }
   }
@@ -539,7 +589,9 @@ resource "azurerm_virtual_machine_scale_set_extension" "pre_patch_backup" {
       if [ -x /opt/hailbytes/bin/ha-pre-patch-backup.sh ]; then
         sudo -E /opt/hailbytes/bin/ha-pre-patch-backup.sh
       else
-        echo "WARN: /opt/hailbytes/bin/ha-pre-patch-backup.sh not present; skipping local bundle."
+        echo "ERROR: /opt/hailbytes/bin/ha-pre-patch-backup.sh not present on this VM image." >&2
+        echo "       Rebuild the marketplace image from main; provision.sh installs the script." >&2
+        exit 1
       fi
       az login --identity --allow-no-subscriptions >/dev/null
       az postgres flexible-server backup create \
@@ -547,6 +599,41 @@ resource "azurerm_virtual_machine_scale_set_extension" "pre_patch_backup" {
         --name '${azurerm_postgresql_flexible_server.primary.name}' \
         --backup-name "${local.name_prefix}-pre-patch-$${TS}" \
         || echo "WARN: on-demand backup not supported; relying on automated backups."
+    EOSH
+    )
+  })
+}
+
+# ----- VMSS post-patch verify extension -----
+#
+# Mirrors the AWS aws_ssm_document.post_patch_verify in
+# modules/unlimited-scale/aws/main.tf. Bakes the on-VM five-probe
+# verifier as a VMSS extension so the rolling-upgrade pipeline can
+# fail fast on a schema-version regression, encryption-key
+# fingerprint mismatch, or smoke-test failure.
+
+resource "azurerm_virtual_machine_scale_set_extension" "post_patch_verify" {
+  count                        = var.enable_post_patch_run_command ? 1 : 0
+  name                         = "RunPostPatchVerify"
+  virtual_machine_scale_set_id = azurerm_linux_virtual_machine_scale_set.main.id
+  publisher                    = "Microsoft.Azure.Extensions"
+  type                         = "CustomScript"
+  type_handler_version         = "2.1"
+  auto_upgrade_minor_version   = true
+
+  settings = jsonencode({})
+  protected_settings = jsonencode({
+    script = base64encode(<<-EOSH
+      #!/bin/bash
+      set -euo pipefail
+      export HAILBYTES_SCHEMA_VERSION_PATH='${var.schema_version_endpoint_path}'
+      if [ -x /opt/hailbytes/bin/ha-post-patch-verify.sh ]; then
+        sudo -E /opt/hailbytes/bin/ha-post-patch-verify.sh
+      else
+        echo "ERROR: /opt/hailbytes/bin/ha-post-patch-verify.sh not present on this VM image." >&2
+        echo "       Rebuild the marketplace image from main; provision.sh installs the script." >&2
+        exit 1
+      fi
     EOSH
     )
   })

@@ -211,6 +211,71 @@ variable "schema_version_endpoint_path" {
   default     = "/api/instance/schema-version"
 }
 
+variable "enable_post_patch_run_command" {
+  description = "Install a VMSS extension named RunPostPatchVerify that runs the on-VM five-probe verifier, mirroring the AWS aws_ssm_document.post_patch_verify."
+  type        = bool
+  default     = true
+}
+
+# ----- Shared session store (Azure Cache for Redis) -----
+
+variable "enable_managed_redis" {
+  description = "Provision an Azure Cache for Redis (Standard or Premium SKU). Required for horizontal scaling; set to false only when supplying redis_endpoint_override."
+  type        = bool
+  default     = true
+}
+
+variable "redis_sku_name" {
+  description = "Redis SKU. Standard delivers a primary/replica pair; Premium adds zone selection. Basic is single-node and breaks horizontal scaling (validated)."
+  type        = string
+  default     = "Standard"
+  validation {
+    condition     = contains(["Standard", "Premium"], var.redis_sku_name)
+    error_message = "redis_sku_name must be one of: Standard, Premium. Basic is single-node and breaks horizontal scaling."
+  }
+}
+
+variable "redis_family" {
+  description = "Redis SKU family. 'C' = Standard/Basic, 'P' = Premium."
+  type        = string
+  default     = "C"
+}
+
+variable "redis_capacity" {
+  description = "Redis capacity (size index). For SKU=Standard / family=C, valid values are 0-6. Scale alongside VMSS instance count: 1 (1GB) handles 3-5 instances; 3 (6GB) handles 10-20+."
+  type        = number
+  default     = 1
+}
+
+variable "redis_endpoint_override" {
+  description = "Host of an existing customer-managed Redis endpoint. Pair with enable_managed_redis = false."
+  type        = string
+  default     = null
+}
+
+variable "redis_endpoint_override_port" {
+  type    = number
+  default = 6380
+}
+
+variable "redis_endpoint_override_tls" {
+  type    = bool
+  default = true
+}
+
+variable "db_secret_expiration_hours" {
+  description = "Hours until the Key Vault DB-password secret expires. Default 8760 = one calendar year. Set on every apply via timeadd(timestamp(), ...) and then ignored on subsequent applies so a stale value doesn't show drift."
+  type        = number
+  default     = 8760
+}
+
+
+variable "postgres_geo_redundant_backup_enabled" {
+  description = "Enable geo-redundant backup on the Postgres Flexible Server. Defaults to false; adds cross-region replication of backups for DR scenarios. CKV_AZURE_136."
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

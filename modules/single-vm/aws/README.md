@@ -23,13 +23,19 @@ flowchart TB
 
 | Component | Default | ~Monthly |
 |---|---|---|
-| EC2 `t3.large` | 1 × 24/7 | $60 |
+| EC2 `t3.large` (starter) | 1 × 24/7 | $60 |
+| EC2 `m6i.large` (procurement-grade) | 1 × 24/7 | $70 |
 | EBS gp3 root | 50 GB | $4 |
 | EBS gp3 data | 200 GB | $16 |
 | EBS snapshots | ~50 GB stored after dedup | $3 |
 | KMS key (if enabled) | 1 | $1 + usage |
-| **Total infrastructure** | | **~$84/month** |
-| **HailBytes marketplace software fee** | per AWS Marketplace listing | **separate** |
+| **Total infrastructure (starter / procurement-grade)** | | **~$84 / ~$94 per month** |
+| **HailBytes marketplace software fee** ($0.24/vCPU-hr) | 2 vCPU × 730h | **~$350/mo** |
+| **All-in (procurement-grade)** | | **~$435/mo** |
+
+See [`COST_SHAPES.md`](../../../COST_SHAPES.md) for the three-shape
+comparison (single / HA / unlimited-scale) and the canonical
+procurement-grade pricing source.
 
 ## Prerequisites
 

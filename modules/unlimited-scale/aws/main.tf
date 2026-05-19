@@ -26,6 +26,13 @@ locals {
     },
     var.tags,
   )
+
+  # Shared session store: required by every horizontally-scaled SAT/ASM
+  # deployment because every ASG instance has to read the same session map
+  # and worker-lock heartbeat. Provisioned by default; can be overridden.
+  provision_managed_redis = var.enable_managed_redis && var.redis_endpoint_override == null
+  effective_redis_host    = local.provision_managed_redis ? one(aws_elasticache_replication_group.main[*].primary_endpoint_address) : var.redis_endpoint_override
+  effective_redis_port    = local.provision_managed_redis ? 6379 : var.redis_endpoint_override_port
 }
 
 data "aws_region" "current" {}
@@ -99,6 +106,7 @@ resource "aws_vpc_security_group_egress_rule" "alb_to_vm" {
   from_port                    = 443
   to_port                      = 443
   ip_protocol                  = "tcp"
+  description                  = "ALB to ASG instances 443"
 }
 
 resource "aws_security_group" "vm" {
@@ -114,12 +122,14 @@ resource "aws_vpc_security_group_ingress_rule" "vm_from_alb" {
   from_port                    = 443
   to_port                      = 443
   ip_protocol                  = "tcp"
+  description                  = "HTTPS from ALB"
 }
 
 resource "aws_vpc_security_group_egress_rule" "vm_egress" {
   security_group_id = aws_security_group.vm.id
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
+  description       = "Egress for marketplace metering, updates, DB"
 }
 
 resource "aws_security_group" "db" {
@@ -135,6 +145,60 @@ resource "aws_vpc_security_group_ingress_rule" "db_from_vm" {
   from_port                    = 5432
   to_port                      = 5432
   ip_protocol                  = "tcp"
+  description                  = "Postgres from ASG instances"
+}
+
+resource "aws_security_group" "redis" {
+  count       = local.provision_managed_redis ? 1 : 0
+  name        = "${local.name_prefix}-redis-sg"
+  description = "ElastiCache Redis ingress from VMs (shared session store)"
+  vpc_id      = var.vpc_id
+  tags        = local.common_tags
+}
+
+resource "aws_vpc_security_group_ingress_rule" "redis_from_vm" {
+  count                        = local.provision_managed_redis ? 1 : 0
+  security_group_id            = aws_security_group.redis[0].id
+  referenced_security_group_id = aws_security_group.vm.id
+  from_port                    = 6379
+  to_port                      = 6379
+  ip_protocol                  = "tcp"
+  description                  = "Redis from ASG instances"
+}
+
+# ----- Shared session store: ElastiCache for Redis (Multi-AZ) -----
+#
+# Required for horizontal scaling. Every instance in the ASG must share session
+# state, otherwise sticky-session ALB stickiness becomes the only thing keeping
+# users logged in across rolling refresh.
+
+resource "aws_elasticache_subnet_group" "main" {
+  count      = local.provision_managed_redis ? 1 : 0
+  name       = "${local.name_prefix}-redis-subnets"
+  subnet_ids = var.private_subnet_ids
+  tags       = local.common_tags
+}
+
+resource "aws_elasticache_replication_group" "main" {
+  count                      = local.provision_managed_redis ? 1 : 0
+  replication_group_id       = "${local.name_prefix}-redis"
+  description                = "HailBytes ${var.product} session store + worker lock (scale-out)"
+  engine                     = "redis"
+  engine_version             = var.redis_engine_version
+  node_type                  = var.redis_node_type
+  num_cache_clusters         = 2
+  automatic_failover_enabled = true
+  multi_az_enabled           = true
+  port                       = 6379
+  parameter_group_name       = "default.redis7"
+  subnet_group_name          = aws_elasticache_subnet_group.main[0].name
+  security_group_ids         = [aws_security_group.redis[0].id]
+  at_rest_encryption_enabled = true
+  transit_encryption_enabled = true
+  kms_key_id                 = var.enable_customer_managed_key ? aws_kms_key.main[0].arn : null
+  snapshot_retention_limit   = var.redis_snapshot_retention_days
+  apply_immediately          = false
+  tags                       = local.common_tags
 }
 
 # ----- IAM -----
@@ -261,12 +325,17 @@ resource "aws_db_instance" "primary" {
   backup_window           = "03:00-04:00"
   maintenance_window      = "sun:04:00-sun:05:00"
 
-  deletion_protection             = var.db_deletion_protection
-  skip_final_snapshot             = !var.db_deletion_protection
-  copy_tags_to_snapshot           = var.rds_copy_tags_to_snapshot
-  performance_insights_enabled    = true
-  enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
-  auto_minor_version_upgrade      = true
+  deletion_protection                   = var.db_deletion_protection
+  skip_final_snapshot                   = !var.db_deletion_protection
+  copy_tags_to_snapshot                 = var.rds_copy_tags_to_snapshot
+  iam_database_authentication_enabled   = var.rds_iam_authentication_enabled
+  performance_insights_enabled          = var.rds_performance_insights_enabled
+  performance_insights_kms_key_id       = var.rds_performance_insights_enabled && var.enable_customer_managed_key ? aws_kms_key.main[0].arn : null
+  performance_insights_retention_period = var.rds_performance_insights_enabled ? var.rds_performance_insights_retention_days : null
+  monitoring_interval                   = var.rds_enhanced_monitoring_interval
+  monitoring_role_arn                   = var.rds_enhanced_monitoring_interval > 0 ? aws_iam_role.rds_monitoring[0].arn : null
+  enabled_cloudwatch_logs_exports       = var.rds_enabled_cloudwatch_log_types
+  auto_minor_version_upgrade            = true
 
   tags = local.common_tags
 
@@ -285,9 +354,10 @@ resource "aws_db_instance" "replica" {
   storage_encrypted      = true
   kms_key_id             = var.enable_customer_managed_key ? aws_kms_key.main[0].arn : null
 
-  performance_insights_enabled = true
-  auto_minor_version_upgrade   = true
-  skip_final_snapshot          = true
+  performance_insights_enabled    = var.rds_performance_insights_enabled
+  performance_insights_kms_key_id = var.rds_performance_insights_enabled && var.enable_customer_managed_key ? aws_kms_key.main[0].arn : null
+  auto_minor_version_upgrade      = true
+  skip_final_snapshot             = true
 
   tags = local.common_tags
 }
@@ -329,6 +399,15 @@ resource "aws_s3_bucket_lifecycle_configuration" "alb_logs" {
   bucket = aws_s3_bucket.alb_logs.id
 
   rule {
+    id     = "abort-incomplete-multipart"
+    status = "Enabled"
+    filter {}
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  rule {
     id     = "expire"
     status = "Enabled"
     filter {}
@@ -364,6 +443,7 @@ resource "aws_lb" "main" {
 
   drop_invalid_header_fields = true
   enable_http2               = true
+  enable_deletion_protection = var.enable_alb_deletion_protection
 
   access_logs {
     bucket  = aws_s3_bucket.alb_logs.id
@@ -465,6 +545,9 @@ resource "aws_launch_template" "main" {
       db_secret_arn    = aws_secretsmanager_secret.db.arn
       db_secret_region = data.aws_region.current.id
       product          = var.product
+      redis_host       = local.effective_redis_host
+      redis_port       = local.effective_redis_port
+      redis_tls        = local.provision_managed_redis ? true : var.redis_endpoint_override_tls
     }
   }))
 
@@ -480,13 +563,13 @@ resource "aws_launch_template" "main" {
 }
 
 resource "aws_autoscaling_group" "main" {
-  name                = "${local.name_prefix}-asg"
-  min_size            = var.asg_min_size
-  max_size            = var.asg_max_size
-  desired_capacity    = var.asg_desired_capacity
-  vpc_zone_identifier = var.private_subnet_ids
-  target_group_arns   = [aws_lb_target_group.main.arn]
-  health_check_type   = "ELB"
+  name                      = "${local.name_prefix}-asg"
+  min_size                  = var.asg_min_size
+  max_size                  = var.asg_max_size
+  desired_capacity          = var.asg_desired_capacity
+  vpc_zone_identifier       = var.private_subnet_ids
+  target_group_arns         = [aws_lb_target_group.main.arn]
+  health_check_type         = "ELB"
   health_check_grace_period = 300
 
   launch_template {
@@ -860,6 +943,15 @@ resource "aws_s3_bucket_lifecycle_configuration" "backup" {
   bucket = aws_s3_bucket.backup[0].id
 
   rule {
+    id     = "abort-incomplete-multipart"
+    status = "Enabled"
+    filter {}
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  rule {
     id     = "tier-and-expire"
     status = "Enabled"
     filter {
@@ -964,7 +1056,7 @@ resource "aws_ssm_document" "pre_patch_backup" {
             "export AWS_S3_PREFIX=\"${local.backup_object_prefix}$${TS}\"",
             "export HAILBYTES_DB_SECRET_ARN='${aws_secretsmanager_secret.db.arn}'",
             "export AWS_DEFAULT_REGION='${data.aws_region.current.id}'",
-            "if [ -x /opt/hailbytes/bin/ha-pre-patch-backup.sh ]; then sudo -E /opt/hailbytes/bin/ha-pre-patch-backup.sh; else echo 'WARN: /opt/hailbytes/bin/ha-pre-patch-backup.sh not present on this AMI; skipping local bundle.'; fi",
+            "if [ -x /opt/hailbytes/bin/ha-pre-patch-backup.sh ]; then sudo -E /opt/hailbytes/bin/ha-pre-patch-backup.sh; else echo 'ERROR: /opt/hailbytes/bin/ha-pre-patch-backup.sh not present on this AMI. Rebuild from main; the Packer provision.sh now installs the script.' >&2; exit 1; fi",
             "RDS_ID='{{ rdsSnapshotIdentifier }}'",
             "if [ -z \"$RDS_ID\" ]; then RDS_ID=\"${local.name_prefix}-pre-patch-$${TS}\"; fi",
             "aws rds create-db-snapshot --db-instance-identifier '${aws_db_instance.primary.id}' --db-snapshot-identifier \"$RDS_ID\" --tags Key=Module,Value=hailbytes-terraform-modules Key=Phase,Value=pre-patch",
@@ -973,4 +1065,69 @@ resource "aws_ssm_document" "pre_patch_backup" {
       }
     ]
   })
+}
+
+# ----- SSM Run Command document: post-patch verify -----
+
+resource "aws_ssm_document" "post_patch_verify" {
+  name            = "${local.name_prefix}-post-patch-verify"
+  document_type   = "Command"
+  document_format = "YAML"
+  target_type     = "/AWS::EC2::Instance"
+  tags            = local.common_tags
+
+  content = yamlencode({
+    schemaVersion = "2.2"
+    description   = "HailBytes SAT/ASM post-patch verifier. Runs the five-probe on-VM verifier so the autoscaling instance_refresh can fail fast on a regression."
+    parameters = {
+      schemaVersionPath = {
+        type        = "String"
+        description = "Path to the schema-version endpoint."
+        default     = var.schema_version_endpoint_path
+      }
+      minSchemaVersion = {
+        type        = "String"
+        description = "Optional integer floor that the running schema version must meet or exceed. Empty string skips the regression check."
+        default     = ""
+      }
+    }
+    mainSteps = [
+      {
+        action = "aws:runShellScript"
+        name   = "postPatchVerify"
+        inputs = {
+          timeoutSeconds = "600"
+          runCommand = [
+            "set -euo pipefail",
+            "export HAILBYTES_SCHEMA_VERSION_PATH='{{ schemaVersionPath }}'",
+            "export HAILBYTES_MIN_SCHEMA_VERSION='{{ minSchemaVersion }}'",
+            "if [ -x /opt/hailbytes/bin/ha-post-patch-verify.sh ]; then sudo -E /opt/hailbytes/bin/ha-post-patch-verify.sh; else echo 'ERROR: /opt/hailbytes/bin/ha-post-patch-verify.sh not present on this AMI.'; exit 1; fi",
+          ]
+        }
+      }
+    ]
+  })
+}
+
+# ----- RDS enhanced monitoring IAM role (conditional) -----
+
+resource "aws_iam_role" "rds_monitoring" {
+  count = var.rds_enhanced_monitoring_interval > 0 ? 1 : 0
+  name  = "${local.name_prefix}-rds-monitoring"
+  tags  = local.common_tags
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "monitoring.rds.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "rds_monitoring" {
+  count      = var.rds_enhanced_monitoring_interval > 0 ? 1 : 0
+  role       = aws_iam_role.rds_monitoring[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
 }

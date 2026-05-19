@@ -23,11 +23,15 @@ jobs:
         with:
           directory: modules/
           framework: terraform
+          # Skip list, suppression rationale, and category breakdown
+          # live in .checkov.yaml at the repo root. Every entry there
+          # carries a one-line reason in a comment; PRs that add new
+          # suppressions without rationale are rejected at review.
+          config_file: .checkov.yaml
           output_format: cli,sarif
           output_file_path: console,checkov.sarif
           soft_fail: false
           quiet: true
-          skip_check: CKV_AWS_8,CKV_AWS_79
 
       - name: Upload Checkov SARIF to GitHub code scanning
         if: always()

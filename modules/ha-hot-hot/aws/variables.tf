@@ -74,6 +74,50 @@ variable "db_instance_class" {
   default = "db.t3.medium"
 }
 
+# ----- Shared session store (ElastiCache for Redis) -----
+
+variable "enable_managed_redis" {
+  description = "Provision an ElastiCache Multi-AZ replication group for HailBytes shared sessions and worker locks. HA mode requires a shared Redis endpoint — set to false only if you supply redis_endpoint_override."
+  type        = bool
+  default     = true
+}
+
+variable "redis_node_type" {
+  description = "ElastiCache node type. cache.t4g.small is the procurement-friendly default; raise for higher session-throughput deployments."
+  type        = string
+  default     = "cache.t4g.small"
+}
+
+variable "redis_engine_version" {
+  description = "ElastiCache Redis engine version."
+  type        = string
+  default     = "7.1"
+}
+
+variable "redis_snapshot_retention_days" {
+  description = "Days ElastiCache retains daily snapshots. Sessions are recoverable from Postgres re-login, so this defaults to 0; raise if you want a Redis PITR window."
+  type        = number
+  default     = 0
+}
+
+variable "redis_endpoint_override" {
+  description = "Host of a customer-managed Redis endpoint (e.g. existing ElastiCache, MemoryDB, or self-managed Redis Sentinel). When non-null, the module skips its own ElastiCache replication group and wires the VMs at this host instead. Pair with enable_managed_redis = false."
+  type        = string
+  default     = null
+}
+
+variable "redis_endpoint_override_port" {
+  description = "Port on the customer-managed Redis endpoint. Ignored unless redis_endpoint_override is set."
+  type        = number
+  default     = 6379
+}
+
+variable "redis_endpoint_override_tls" {
+  description = "Whether the customer-managed Redis endpoint requires in-transit TLS. Ignored unless redis_endpoint_override is set."
+  type        = bool
+  default     = true
+}
+
 variable "db_allocated_storage_gb" {
   type    = number
   default = 100
@@ -110,6 +154,24 @@ variable "enable_customer_managed_key" {
 variable "alb_idle_timeout_seconds" {
   type    = number
   default = 120
+}
+
+variable "enable_alb_deletion_protection" {
+  description = "Enable deletion protection on the ALB. Default true; production deployments should keep this on. Set to false in dev/test sandboxes where you want `terraform destroy` to succeed without manual cleanup."
+  type        = bool
+  default     = true
+}
+
+variable "enable_alb_access_logging" {
+  description = "Provision an S3 bucket for ALB access logs and enable the listener access_logs block. Adds ~$1-5/mo storage cost depending on traffic; recommended for production deployments where the access log is part of the audit trail."
+  type        = bool
+  default     = false
+}
+
+variable "alb_access_log_retention_days" {
+  description = "Days to retain ALB access log objects before lifecycle expiration. Default 365 (one calendar year) — long enough for most compliance lookback windows."
+  type        = number
+  default     = 365
 }
 
 variable "alb_min_tls_version" {
@@ -218,6 +280,43 @@ variable "schema_version_endpoint_path" {
   description = "Path on the SAT/ASM API that returns the running schema version."
   type        = string
   default     = "/api/instance/schema-version"
+}
+
+
+# ----- RDS production-hardening (opt-in) -----
+
+variable "rds_enhanced_monitoring_interval" {
+  description = "RDS enhanced monitoring sample interval in seconds (0, 1, 5, 10, 15, 30, 60). 0 disables enhanced monitoring. Default 0; production deployments typically set 60. CKV_AWS_118."
+  type        = number
+  default     = 0
+  validation {
+    condition     = contains([0, 1, 5, 10, 15, 30, 60], var.rds_enhanced_monitoring_interval)
+    error_message = "rds_enhanced_monitoring_interval must be one of: 0, 1, 5, 10, 15, 30, 60."
+  }
+}
+
+variable "rds_enabled_cloudwatch_log_types" {
+  description = "RDS log types to export to CloudWatch. Empty list = no log exports (cost-saving default). Production should set to [\"postgresql\", \"upgrade\"]. CKV_AWS_129."
+  type        = list(string)
+  default     = []
+}
+
+variable "rds_iam_authentication_enabled" {
+  description = "Enable IAM database authentication on the RDS instance. Adds app-side complexity (psql connections must mint IAM tokens) but eliminates long-lived passwords. CKV_AWS_161."
+  type        = bool
+  default     = false
+}
+
+variable "rds_performance_insights_enabled" {
+  description = "Enable RDS Performance Insights. Adds ~$0/instance for 7-day retention (free tier); KMS-encrypted automatically when enable_customer_managed_key is also set. CKV_AWS_354."
+  type        = bool
+  default     = false
+}
+
+variable "rds_performance_insights_retention_days" {
+  description = "Performance Insights data retention. 7 = free tier (default); 731 = long-term retention (paid)."
+  type        = number
+  default     = 7
 }
 
 variable "tags" {

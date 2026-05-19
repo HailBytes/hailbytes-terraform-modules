@@ -188,6 +188,7 @@ with the runbook in
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — per-tier diagrams and rationale, shared responsibility model
 - [BILLING.md](BILLING.md) — marketplace billing model, why no containers
+- [COST_SHAPES.md](COST_SHAPES.md) — three AWS deployment shapes side-by-side (single / HA / unlimited-scale) with per-vCore meter and procurement-grade pricing
 - [SECURITY.md](SECURITY.md) — responsible disclosure
 - [SECURITY-DEFAULTS.md](SECURITY-DEFAULTS.md) — encryption / IMDSv2 / IAM / NSG defaults baked into modules
 - [docs/PATCHING_AND_MIGRATION.md](docs/PATCHING_AND_MIGRATION.md) — pre-patch backups, rolling-replace, auto-rollback, DB mode toggle

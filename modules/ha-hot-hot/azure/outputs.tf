@@ -53,6 +53,21 @@ output "pre_patch_run_command_name" {
   value       = var.enable_pre_patch_run_command ? azurerm_virtual_machine_run_command.pre_patch_backup[0].name : ""
 }
 
+output "post_patch_run_command_name" {
+  description = "Name of the Azure Run Command document that runs the on-VM five-probe post-patch verifier on each VM."
+  value       = var.enable_post_patch_run_command ? azurerm_virtual_machine_run_command.post_patch_verify[0].name : ""
+}
+
+output "redis_endpoint" {
+  description = "Host:port of the Redis endpoint wired into the HA VMs. Either the module-provisioned Azure Cache for Redis or var.redis_endpoint_override."
+  value       = local.effective_redis_host == null ? "" : "${local.effective_redis_host}:${local.effective_redis_port}"
+}
+
+output "redis_mode" {
+  description = "How Redis is wired: 'managed' (this module provisioned Azure Cache), 'override' (customer-supplied endpoint), or 'disabled' (HA is not actually safe)."
+  value       = local.provision_managed_redis ? "managed" : (var.redis_endpoint_override == null ? "disabled" : "override")
+}
+
 output "schema_version_endpoint" {
   description = "HTTPS URL that returns the running schema version. CI/CD post-patch verify scripts curl this."
   value       = "https://${local.appgw_endpoint}${var.schema_version_endpoint_path}"
