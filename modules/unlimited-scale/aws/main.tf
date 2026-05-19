@@ -106,6 +106,7 @@ resource "aws_vpc_security_group_egress_rule" "alb_to_vm" {
   from_port                    = 443
   to_port                      = 443
   ip_protocol                  = "tcp"
+  description                  = "ALB to ASG instances 443"
 }
 
 resource "aws_security_group" "vm" {
@@ -121,12 +122,14 @@ resource "aws_vpc_security_group_ingress_rule" "vm_from_alb" {
   from_port                    = 443
   to_port                      = 443
   ip_protocol                  = "tcp"
+  description                  = "HTTPS from ALB"
 }
 
 resource "aws_vpc_security_group_egress_rule" "vm_egress" {
   security_group_id = aws_security_group.vm.id
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
+  description       = "Egress for marketplace metering, updates, DB"
 }
 
 resource "aws_security_group" "db" {
@@ -142,6 +145,7 @@ resource "aws_vpc_security_group_ingress_rule" "db_from_vm" {
   from_port                    = 5432
   to_port                      = 5432
   ip_protocol                  = "tcp"
+  description                  = "Postgres from ASG instances"
 }
 
 resource "aws_security_group" "redis" {
@@ -159,6 +163,7 @@ resource "aws_vpc_security_group_ingress_rule" "redis_from_vm" {
   from_port                    = 6379
   to_port                      = 6379
   ip_protocol                  = "tcp"
+  description                  = "Redis from ASG instances"
 }
 
 # ----- Shared session store: ElastiCache for Redis (Multi-AZ) -----

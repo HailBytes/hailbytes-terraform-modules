@@ -239,14 +239,14 @@ resource "azurerm_storage_account" "backup" {
   count                           = local.create_backup_storage ? 1 : 0
   name                            = coalesce(var.backup_storage_account_name, substr(replace("${local.name_prefix}backup", "-", ""), 0, 24))
   resource_group_name             = var.resource_group_name
+  public_network_access_enabled   = false
+  allow_nested_items_to_be_public = false
   location                        = var.location
   account_tier                    = "Standard"
   account_replication_type        = var.backup_storage_replication
   account_kind                    = "StorageV2"
   access_tier                     = "Cool"
   min_tls_version                 = "TLS1_2"
-  allow_nested_items_to_be_public = false
-  public_network_access_enabled   = true
   shared_access_key_enabled       = false
   tags                            = local.common_tags
 
