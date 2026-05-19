@@ -42,6 +42,18 @@ variable "ssh_public_key" {
   type = string
 }
 
+variable "key_vault_network_default_action" {
+  description = "Default action for the Key Vault network ACL. 'Allow' preserves the pre-network-ACL behavior; set 'Deny' once you've added the operator IP to key_vault_ip_rules and the Microsoft.KeyVault service endpoint on vm_subnet_id."
+  type        = string
+  default     = "Allow"
+}
+
+variable "key_vault_ip_rules" {
+  description = "IPv4 addresses or CIDRs allowed to reach the Key Vault data plane. Required only when key_vault_network_default_action = Deny and you don't have Private Link configured."
+  type        = list(string)
+  default     = []
+}
+
 variable "environment" {
   type    = string
   default = "prod"
