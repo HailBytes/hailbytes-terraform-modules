@@ -156,6 +156,24 @@ variable "alb_idle_timeout_seconds" {
   default = 120
 }
 
+variable "enable_alb_deletion_protection" {
+  description = "Enable deletion protection on the ALB. Default true; production deployments should keep this on. Set to false in dev/test sandboxes where you want `terraform destroy` to succeed without manual cleanup."
+  type        = bool
+  default     = true
+}
+
+variable "enable_alb_access_logging" {
+  description = "Provision an S3 bucket for ALB access logs and enable the listener access_logs block. Adds ~$1-5/mo storage cost depending on traffic; recommended for production deployments where the access log is part of the audit trail."
+  type        = bool
+  default     = false
+}
+
+variable "alb_access_log_retention_days" {
+  description = "Days to retain ALB access log objects before lifecycle expiration. Default 365 (one calendar year) — long enough for most compliance lookback windows."
+  type        = number
+  default     = 365
+}
+
 variable "alb_min_tls_version" {
   description = "Minimum TLS version on the ALB HTTPS listener."
   type        = string

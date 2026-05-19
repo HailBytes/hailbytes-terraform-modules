@@ -1,7 +1,7 @@
 module "this" {
-  source                      = "../single-vm/aws"
+  source = "../single-vm/aws"
 
-  product                     = "asm"
+  product = "asm"
 
   vpc_id                      = var.vpc_id
   subnet_id                   = var.subnet_id

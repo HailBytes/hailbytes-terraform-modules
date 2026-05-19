@@ -104,6 +104,12 @@ variable "instance_type" {
   default = "m6i.large"
 }
 
+variable "enable_alb_deletion_protection" {
+  description = "Enable deletion protection on the ALB. Default true; production deployments should keep this on. Set to false in dev/test sandboxes where `terraform destroy` should succeed without manual cleanup."
+  type        = bool
+  default     = true
+}
+
 variable "target_cpu_utilization" {
   type    = number
   default = 60

@@ -319,6 +319,15 @@ resource "aws_s3_bucket_lifecycle_configuration" "backup" {
   bucket = aws_s3_bucket.backup[0].id
 
   rule {
+    id     = "abort-incomplete-multipart"
+    status = "Enabled"
+    filter {}
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  rule {
     id     = "tier-and-expire"
     status = "Enabled"
     filter {

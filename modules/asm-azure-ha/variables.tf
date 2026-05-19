@@ -276,6 +276,13 @@ variable "redis_endpoint_override_tls" {
   default = true
 }
 
+
+variable "db_secret_expiration_hours" {
+  description = "Hours until the Key Vault DB-password secret expires. Default 8760 = one calendar year."
+  type        = number
+  default     = 8760
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

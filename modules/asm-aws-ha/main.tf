@@ -1,7 +1,7 @@
 module "this" {
-  source                      = "../ha-hot-hot/aws"
+  source = "../ha-hot-hot/aws"
 
-  product                     = "asm"
+  product = "asm"
 
   vpc_id                      = var.vpc_id
   public_subnet_ids           = var.public_subnet_ids
@@ -49,6 +49,10 @@ module "this" {
   redis_endpoint_override       = var.redis_endpoint_override
   redis_endpoint_override_port  = var.redis_endpoint_override_port
   redis_endpoint_override_tls   = var.redis_endpoint_override_tls
+
+  enable_alb_deletion_protection = var.enable_alb_deletion_protection
+  enable_alb_access_logging      = var.enable_alb_access_logging
+  alb_access_log_retention_days  = var.alb_access_log_retention_days
 
   tags = var.tags
 }

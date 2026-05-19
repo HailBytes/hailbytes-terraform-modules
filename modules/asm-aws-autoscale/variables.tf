@@ -245,6 +245,13 @@ variable "redis_endpoint_override_tls" {
   default = true
 }
 
+
+variable "enable_alb_deletion_protection" {
+  description = "Enable deletion protection on the ALB. Default true."
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
