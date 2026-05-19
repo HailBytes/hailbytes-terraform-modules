@@ -18,6 +18,24 @@ variable "admin_username" { type = string }
 
 variable "ssh_public_key" { type = string }
 
+variable "key_vault_network_default_action" {
+  description = "Default action for the Key Vault network ACL. 'Allow' preserves the pre-network-ACL behavior; set 'Deny' once you've added the operator IP to key_vault_ip_rules and the Microsoft.KeyVault service endpoint on vm_subnet_id."
+  type        = string
+  default     = "Allow"
+}
+
+variable "key_vault_ip_rules" {
+  description = "IPv4 addresses or CIDRs allowed to reach the Key Vault data plane. Required only when key_vault_network_default_action = Deny and you don't have Private Link configured."
+  type        = list(string)
+  default     = []
+}
+
+variable "associate_vm_subnet_nsg" {
+  description = "Associate the module-managed NSG (built from allowed_cidrs) with vm_subnet_id. Set false if the subnet already has an NSG attached by your landing-zone tooling."
+  type        = bool
+  default     = true
+}
+
 variable "vmss_min_count" {
   type    = number
   default = 3

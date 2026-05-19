@@ -40,7 +40,6 @@ locals {
   use_vm_db           = var.db_mode == "vm"
 
   db_host = local.use_flexible_server ? one(azurerm_postgresql_flexible_server.main[*].fqdn) : one(azurerm_linux_virtual_machine.db_vm[*].private_ip_address)
-  db_arn  = local.use_flexible_server ? one(azurerm_postgresql_flexible_server.main[*].id) : one(azurerm_linux_virtual_machine.db_vm[*].id)
 
   create_backup_storage       = var.create_backup_storage_account
   backup_storage_account_name = local.create_backup_storage ? azurerm_storage_account.backup[0].name : var.backup_storage_account_name
@@ -81,6 +80,18 @@ resource "azurerm_key_vault" "main" {
   soft_delete_retention_days = 30
   enable_rbac_authorization  = true
   tags                       = local.common_tags
+
+  network_acls {
+    # default_action is wired through var.key_vault_network_default_action so
+    # customers can opt into "Deny" once they've added the operator IP to
+    # key_vault_ip_rules and a Microsoft.KeyVault service endpoint on
+    # vm_subnet_id. Defaulting to "Allow" preserves pre-ACL behavior;
+    # data-plane access is still gated by RBAC and the AzureServices bypass.
+    default_action             = var.key_vault_network_default_action #tfsec:ignore:azure-keyvault-specify-network-acl
+    bypass                     = "AzureServices"
+    ip_rules                   = var.key_vault_ip_rules
+    virtual_network_subnet_ids = [var.vm_subnet_id]
+  }
 }
 
 resource "random_password" "db" {
@@ -138,6 +149,14 @@ resource "azurerm_network_security_rule" "lb_https_in" {
   destination_address_prefix  = "*"
   resource_group_name         = var.resource_group_name
   network_security_group_name = azurerm_network_security_group.lb.name
+}
+
+# Attach the NSG to the LB frontend subnet so the allow-https-* rules
+# actually take effect. Without this association the rules exist on the
+# NSG but the subnet routes traffic unfiltered.
+resource "azurerm_subnet_network_security_group_association" "lb" {
+  subnet_id                 = var.lb_subnet_id
+  network_security_group_id = azurerm_network_security_group.lb.id
 }
 
 # ----- Load Balancer -----
@@ -571,8 +590,6 @@ resource "azurerm_role_assignment" "db_vm_kv_reader" {
 }
 
 # ----- Backup Storage Account + immutable container -----
-
-data "azurerm_subscription" "current" {}
 
 resource "azurerm_storage_account" "backup" {
   count                           = local.create_backup_storage ? 1 : 0
