@@ -48,6 +48,24 @@ variable "ssh_public_key" {
   type = string
 }
 
+# ----- Key Vault network ACL -----
+
+variable "key_vault_network_default_action" {
+  description = "Default action for the Key Vault network ACL. 'Allow' preserves the pre-network-ACL behavior (public endpoint open, RBAC-gated); set 'Deny' once you've added the operator IP to key_vault_ip_rules and the Microsoft.KeyVault service endpoint on vm_subnet_id. AzureServices bypass is always on so the VMs' managed identities can read secrets either way."
+  type        = string
+  default     = "Allow"
+  validation {
+    condition     = contains(["Allow", "Deny"], var.key_vault_network_default_action)
+    error_message = "key_vault_network_default_action must be one of: Allow, Deny."
+  }
+}
+
+variable "key_vault_ip_rules" {
+  description = "IPv4 addresses or CIDRs allowed to reach the Key Vault data plane (typically the operator IP running terraform apply, or your bastion's egress NAT). Required only when default_action = Deny and you don't have Private Link configured."
+  type        = list(string)
+  default     = []
+}
+
 # ----- Optional -----
 
 variable "environment" {

@@ -40,7 +40,6 @@ locals {
   db_host = coalesce(one(aws_db_instance.main[*].address), one(aws_instance.db_ec2[*].private_ip))
   db_port = local.use_rds ? coalesce(one(aws_db_instance.main[*].port), 5432) : 5432
   db_arn  = coalesce(one(aws_db_instance.main[*].arn), one(aws_instance.db_ec2[*].arn))
-  db_id   = coalesce(one(aws_db_instance.main[*].id), one(aws_instance.db_ec2[*].id))
 
   # Redis is required for HA: both app instances must share session state and
   # the worker-lock heartbeat through the same Redis. The module provisions
@@ -642,8 +641,12 @@ data "aws_region" "current" {}
 # ----- ALB -----
 
 resource "aws_lb" "main" {
-  name               = "${local.name_prefix}-alb"
-  internal           = false
+  name = "${local.name_prefix}-alb"
+  # The HailBytes SAT / ASM console is customer-facing by design; the ALB sits
+  # in public subnets behind a security group that only allows ingress from
+  # var.allowed_cidrs. Customers who want a fully private deployment can front
+  # the module with their own internal ALB or API Gateway.
+  internal           = false #tfsec:ignore:aws-elb-alb-not-public
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = var.public_subnet_ids
@@ -742,8 +745,11 @@ resource "aws_wafv2_web_acl_association" "alb" {
 # ----- SNS topic for patching alerts -----
 
 resource "aws_sns_topic" "alerts" {
-  name              = "${local.name_prefix}-alerts"
-  kms_master_key_id = var.enable_customer_managed_key ? aws_kms_key.main[0].id : "alias/aws/sns"
+  name = "${local.name_prefix}-alerts"
+  # CMK is opt-in via var.enable_customer_managed_key. tfsec's static analysis
+  # evaluates the false branch ("alias/aws/sns") of the ternary; customers who
+  # set enable_customer_managed_key = true get the module-owned CMK.
+  kms_master_key_id = var.enable_customer_managed_key ? aws_kms_key.main[0].id : "alias/aws/sns" #tfsec:ignore:aws-sns-topic-encryption-use-cmk
   tags              = local.common_tags
 }
 

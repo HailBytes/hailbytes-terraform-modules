@@ -71,6 +71,18 @@ resource "azurerm_key_vault" "main" {
   soft_delete_retention_days = 30
   enable_rbac_authorization  = true
   tags                       = local.common_tags
+
+  network_acls {
+    # default_action is wired through var.key_vault_network_default_action so
+    # customers can opt into "Deny" once they've added the operator IP to
+    # key_vault_ip_rules and a Microsoft.KeyVault service endpoint on
+    # vm_subnet_id. Defaulting to "Allow" preserves pre-ACL behavior;
+    # data-plane access is still gated by RBAC and the AzureServices bypass.
+    default_action             = var.key_vault_network_default_action #tfsec:ignore:azure-keyvault-specify-network-acl
+    bypass                     = "AzureServices"
+    ip_rules                   = var.key_vault_ip_rules
+    virtual_network_subnet_ids = [var.vm_subnet_id]
+  }
 }
 
 resource "azurerm_role_assignment" "kv_writer" {
@@ -97,6 +109,43 @@ resource "azurerm_key_vault_secret" "db" {
   }
 
   depends_on = [azurerm_role_assignment.kv_writer]
+}
+
+# ----- NSG (allowed_cidrs ingress) -----
+#
+# Mirrors the ha-hot-hot/azure pattern: build an NSG with one allow-https
+# rule per CIDR and associate it with the VMSS subnet so the rules
+# actually filter ingress. Customers who already manage NSGs on
+# vm_subnet_id should set associate_vm_subnet_nsg = false and consume
+# the NSG via output instead.
+
+resource "azurerm_network_security_group" "vmss" {
+  name                = "${local.name_prefix}-vmss-nsg"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  tags                = local.common_tags
+}
+
+resource "azurerm_network_security_rule" "vmss_https_in" {
+  for_each = { for i, c in var.allowed_cidrs : tostring(i) => c }
+
+  name                        = "allow-https-${each.key}"
+  priority                    = 100 + tonumber(each.key)
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "443"
+  source_address_prefix       = each.value
+  destination_address_prefix  = "*"
+  resource_group_name         = var.resource_group_name
+  network_security_group_name = azurerm_network_security_group.vmss.name
+}
+
+resource "azurerm_subnet_network_security_group_association" "vmss" {
+  count                     = var.associate_vm_subnet_nsg ? 1 : 0
+  subnet_id                 = var.vm_subnet_id
+  network_security_group_id = azurerm_network_security_group.vmss.id
 }
 
 # ----- LB -----

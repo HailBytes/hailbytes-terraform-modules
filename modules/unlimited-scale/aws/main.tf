@@ -385,6 +385,10 @@ resource "aws_s3_bucket_public_access_block" "alb_logs" {
   restrict_public_buckets = true
 }
 
+# ALB access-log buckets are documented by AWS as supporting only SSE-S3
+# (AES256); attempting SSE-KMS silently drops log delivery. See
+# https://docs.aws.amazon.com/elasticloadbalancing/latest/application/enable-access-logging.html#access-logging-bucket-permissions
+#tfsec:ignore:aws-s3-encryption-customer-key
 resource "aws_s3_bucket_server_side_encryption_configuration" "alb_logs" {
   bucket = aws_s3_bucket.alb_logs.id
 
@@ -435,8 +439,12 @@ resource "aws_s3_bucket_policy" "alb_logs" {
 }
 
 resource "aws_lb" "main" {
-  name               = "${local.name_prefix}-alb"
-  internal           = false
+  name = "${local.name_prefix}-alb"
+  # The HailBytes SAT / ASM console is customer-facing by design; the ALB sits
+  # in public subnets behind a security group that only allows ingress from
+  # var.allowed_cidrs. Customers who want a fully private deployment can front
+  # the module with their own internal ALB or API Gateway.
+  internal           = false #tfsec:ignore:aws-elb-alb-not-public
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = var.public_subnet_ids
@@ -664,6 +672,12 @@ resource "aws_iam_role" "flow_logs" {
   })
 }
 
+# The flow-logs role's first statement is scoped to this module's single
+# flow_logs log-group ARN. The second statement uses Resource = "*" only for
+# logs:DescribeLogGroups, which the API itself requires — IAM rejects ARN
+# scoping on that action. The role can still neither read nor write any other
+# log group.
+#tfsec:ignore:aws-iam-no-policy-wildcards
 resource "aws_iam_role_policy" "flow_logs" {
   count = var.enable_flow_logs ? 1 : 0
   name  = "${local.name_prefix}-flow-logs"
@@ -671,16 +685,25 @@ resource "aws_iam_role_policy" "flow_logs" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "logs:CreateLogStream",
-        "logs:PutLogEvents",
-        "logs:DescribeLogGroups",
-        "logs:DescribeLogStreams",
-      ]
-      Resource = "*"
-    }]
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:DescribeLogStreams",
+        ]
+        Resource = [
+          aws_cloudwatch_log_group.flow_logs[0].arn,
+          "${aws_cloudwatch_log_group.flow_logs[0].arn}:*",
+        ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["logs:DescribeLogGroups"]
+        Resource = "*"
+      },
+    ]
   })
 }
 
