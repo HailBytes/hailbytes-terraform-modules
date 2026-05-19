@@ -58,5 +58,7 @@ module "this" {
 
   db_secret_expiration_hours = var.db_secret_expiration_hours
 
+  postgres_geo_redundant_backup_enabled = var.postgres_geo_redundant_backup_enabled
+
   tags = var.tags
 }

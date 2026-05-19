@@ -300,6 +300,13 @@ variable "db_secret_expiration_hours" {
   default     = 8760
 }
 
+
+variable "postgres_geo_redundant_backup_enabled" {
+  description = "Enable geo-redundant backup on the Postgres Flexible Server. Defaults to false; adds cross-region replication of backups for DR scenarios. CKV_AZURE_136."
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

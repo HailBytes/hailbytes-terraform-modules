@@ -252,6 +252,39 @@ variable "enable_alb_deletion_protection" {
   default     = true
 }
 
+
+# ----- RDS production-hardening (opt-in) -----
+
+variable "rds_enhanced_monitoring_interval" {
+  description = "RDS enhanced monitoring sample interval. 0 disables. CKV_AWS_118."
+  type        = number
+  default     = 0
+}
+
+variable "rds_enabled_cloudwatch_log_types" {
+  description = "RDS log types to export to CloudWatch. CKV_AWS_129."
+  type        = list(string)
+  default     = []
+}
+
+variable "rds_iam_authentication_enabled" {
+  description = "Enable IAM DB authentication. CKV_AWS_161."
+  type        = bool
+  default     = false
+}
+
+variable "rds_performance_insights_enabled" {
+  description = "Enable RDS Performance Insights. CKV_AWS_354."
+  type        = bool
+  default     = false
+}
+
+variable "rds_performance_insights_retention_days" {
+  description = "Performance Insights retention. 7 = free tier; 731 = long-term."
+  type        = number
+  default     = 7
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
