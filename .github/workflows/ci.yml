@@ -197,17 +197,26 @@ jobs:
       # Upload SARIF for code-scanning UI.  Module authors get the
       # findings in the PR file-view, not just the run summary.
       security-events: write
+    env:
+      TFSEC_VERSION: v1.28.13
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Run tfsec
-        uses: aquasecurity/tfsec-sarif-action@9a83b5c3524f825c020e356335855741fd02745f # v0.1.4
-        with:
-          sarif_file: tfsec.sarif
-          working_directory: modules
-          # Soft-fail on the SARIF run; the gate below uses tfsec
-          # directly so we can scope severity and inline-disable rules.
+      - name: Install tfsec
+        # aquasecurity/tfsec-sarif-action@v0.1.4 was the previous step here,
+        # but it bundles a Node 16 runtime that GitHub flags as deprecated.
+        # tfsec itself (the binary) is fine — install it directly from the
+        # GitHub release and we sidestep the action runtime entirely.
+        run: |
+          set -eo pipefail
+          curl -sSfL -o /usr/local/bin/tfsec \
+            "https://github.com/aquasecurity/tfsec/releases/download/${TFSEC_VERSION}/tfsec-linux-amd64"
+          chmod +x /usr/local/bin/tfsec
+          tfsec --version
+
+      - name: Run tfsec (SARIF, no fail)
+        run: tfsec modules --format sarif --out tfsec.sarif --soft-fail
 
       - name: Upload SARIF to GitHub code-scanning
         uses: github/codeql-action/upload-sarif@28deaeda66b76a05916b6923827895f2b14ab387 # v3.27.5
@@ -220,14 +229,7 @@ jobs:
         # The SARIF path uploads everything; here we re-run with --severity
         # so the build fails on HIGH+ and tolerates MEDIUM/LOW that are
         # already triaged.
-        run: |
-          docker run --rm \
-            -v "${{ github.workspace }}:/src" \
-            aquasec/tfsec:v1.28.13 \
-            /src/modules \
-            --minimum-severity HIGH \
-            --format default \
-            --no-color
+        run: tfsec modules --minimum-severity HIGH --format default --no-color
 
   # ---------------------------------------------------------------------
   # Examples validation — every modules/*/aws/examples/* and
@@ -331,11 +333,40 @@ jobs:
 
           fail=0
           for tf in $(grep -rl 'marketplace_plans' modules/ --include='*.tf'); do
-            got_publisher=$(grep -oP 'publisher\s*=\s*"\K[^"]+' "$tf" | sort -u | head -1)
-            if [ -n "${got_publisher}" ] && [ "${got_publisher}" != "${want_publisher}" ]; then
-              echo "::error file=${tf}::Azure publisher drift: want=${want_publisher} got=${got_publisher}"
+            # Scope the publisher check to the marketplace_plans local block
+            # only. The same .tf files legitimately reference other publishers
+            # (Canonical for a Postgres-on-VM bastion image, Microsoft.Azure.Extensions
+            # for VMSS CustomScript extensions) and we don't want those to
+            # trigger a marketplace-drift error.
+            in_block_publishers=$(awk '
+              /marketplace_plans[[:space:]]*=[[:space:]]*\{/ { depth=1; next }
+              depth > 0 {
+                for (i = 1; i <= length($0); i++) {
+                  c = substr($0, i, 1)
+                  if (c == "{") depth++
+                  else if (c == "}") { depth--; if (depth == 0) exit }
+                }
+                if (match($0, /publisher[[:space:]]*=[[:space:]]*"[^"]+"/)) {
+                  s = substr($0, RSTART, RLENGTH)
+                  sub(/^publisher[[:space:]]*=[[:space:]]*"/, "", s)
+                  sub(/"$/, "", s)
+                  print s
+                }
+              }
+            ' "$tf" | sort -u)
+
+            if [ -z "${in_block_publishers}" ]; then
+              echo "::error file=${tf}::No publisher found inside marketplace_plans block"
               fail=1
+              continue
             fi
+            while IFS= read -r got_publisher; do
+              if [ "${got_publisher}" != "${want_publisher}" ]; then
+                echo "::error file=${tf}::Azure publisher drift inside marketplace_plans: want=${want_publisher} got=${got_publisher}"
+                fail=1
+              fi
+            done <<< "${in_block_publishers}"
+
             if grep -q "${want_asm_offer}" "$tf" && ! grep -q "${want_sat_offer}" "$tf"; then
               # Should mention both products' offers.
               echo "::error file=${tf}::Azure SAT offer missing — should reference both ${want_asm_offer} and ${want_sat_offer}"
