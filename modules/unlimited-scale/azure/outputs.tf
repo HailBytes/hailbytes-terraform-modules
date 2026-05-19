@@ -30,6 +30,21 @@ output "pre_patch_run_command_extension_name" {
   value       = var.enable_pre_patch_run_command ? azurerm_virtual_machine_scale_set_extension.pre_patch_backup[0].name : ""
 }
 
+output "post_patch_run_command_extension_name" {
+  description = "Name of the VMSS extension wrapping the post-patch verifier. Invoke via `az vmss run-command`."
+  value       = var.enable_post_patch_run_command ? azurerm_virtual_machine_scale_set_extension.post_patch_verify[0].name : ""
+}
+
+output "redis_endpoint" {
+  description = "Host:port of the Redis endpoint wired into the VMSS launch profile. Either the module-provisioned Azure Cache or var.redis_endpoint_override."
+  value       = local.effective_redis_host == null ? "" : "${local.effective_redis_host}:${local.effective_redis_port}"
+}
+
+output "redis_mode" {
+  description = "How Redis is wired: 'managed' (this module provisioned Azure Cache), 'override' (customer-supplied), or 'disabled' (horizontal scaling is not session-safe)."
+  value       = local.provision_managed_redis ? "managed" : (var.redis_endpoint_override == null ? "disabled" : "override")
+}
+
 output "schema_version_endpoint" {
   description = "HTTPS URL that returns the running schema version."
   value       = "https://${local.endpoint_ip}${var.schema_version_endpoint_path}"

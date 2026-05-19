@@ -211,6 +211,50 @@ variable "schema_version_endpoint_path" {
   default     = "/api/instance/schema-version"
 }
 
+# ----- Shared session store (ElastiCache for Redis) -----
+
+variable "enable_managed_redis" {
+  description = "Provision an ElastiCache Multi-AZ replication group for HailBytes shared sessions and worker locks. HA mode requires a shared Redis endpoint — set to false only if you supply redis_endpoint_override."
+  type        = bool
+  default     = true
+}
+
+variable "redis_node_type" {
+  description = "ElastiCache node type. cache.t4g.small is the procurement-friendly default; raise for higher session-throughput deployments."
+  type        = string
+  default     = "cache.t4g.small"
+}
+
+variable "redis_engine_version" {
+  description = "ElastiCache Redis engine version."
+  type        = string
+  default     = "7.1"
+}
+
+variable "redis_snapshot_retention_days" {
+  description = "Days ElastiCache retains daily snapshots. Sessions are recoverable from Postgres re-login, so this defaults to 0; raise if you want a Redis PITR window."
+  type        = number
+  default     = 0
+}
+
+variable "redis_endpoint_override" {
+  description = "Host of a customer-managed Redis endpoint. When non-null, the module skips its own ElastiCache replication group and wires the VMs at this host instead. Pair with enable_managed_redis = false."
+  type        = string
+  default     = null
+}
+
+variable "redis_endpoint_override_port" {
+  description = "Port on the customer-managed Redis endpoint. Ignored unless redis_endpoint_override is set."
+  type        = number
+  default     = 6379
+}
+
+variable "redis_endpoint_override_tls" {
+  description = "Whether the customer-managed Redis endpoint requires in-transit TLS. Ignored unless redis_endpoint_override is set."
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
