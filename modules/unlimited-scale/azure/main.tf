@@ -39,6 +39,14 @@ locals {
 
   enable_application_gateway = var.enable_application_gateway
   endpoint_ip                = local.enable_application_gateway ? azurerm_public_ip.appgw[0].ip_address : azurerm_public_ip.lb.ip_address
+
+  # Shared session store: required by every horizontally-scaled SAT/ASM
+  # deployment because every VMSS instance has to read the same session
+  # map and worker-lock heartbeat. Provisioned by default; can be
+  # overridden via var.redis_endpoint_override + var.enable_managed_redis.
+  provision_managed_redis = var.enable_managed_redis && var.redis_endpoint_override == null
+  effective_redis_host    = local.provision_managed_redis ? one(azurerm_redis_cache.main[*].hostname) : var.redis_endpoint_override
+  effective_redis_port    = local.provision_managed_redis ? 6380 : var.redis_endpoint_override_port
 }
 
 data "azurerm_client_config" "current" {}
@@ -222,6 +230,9 @@ resource "azurerm_linux_virtual_machine_scale_set" "main" {
       db_fqdn          = azurerm_postgresql_flexible_server.primary.fqdn
       db_read_fqdns    = [for r in azurerm_postgresql_flexible_server.replica : r.fqdn]
       product          = var.product
+      redis_host       = local.effective_redis_host
+      redis_port       = local.effective_redis_port
+      redis_tls        = local.provision_managed_redis ? true : var.redis_endpoint_override_tls
     }
   }))
 
@@ -352,6 +363,32 @@ resource "azurerm_postgresql_flexible_server" "replica" {
 
   lifecycle {
     ignore_changes = [zone, high_availability]
+  }
+}
+
+# ----- Shared session store: Azure Cache for Redis -----
+#
+# Required for horizontal scaling. Every instance in the VMSS must
+# share session state, otherwise sticky-session LB stickiness becomes
+# the only thing keeping users logged in across rolling upgrade.
+# Standard/Premium SKUs only — Basic is single-node and breaks HA.
+
+resource "azurerm_redis_cache" "main" {
+  count                         = local.provision_managed_redis ? 1 : 0
+  name                          = "${local.name_prefix}-redis"
+  resource_group_name           = var.resource_group_name
+  location                      = var.location
+  capacity                      = var.redis_capacity
+  family                        = var.redis_family
+  sku_name                      = var.redis_sku_name
+  non_ssl_port_enabled          = false
+  minimum_tls_version           = "1.2"
+  public_network_access_enabled = false
+  zones                         = var.redis_sku_name == "Premium" ? ["1", "2"] : null
+  tags                          = local.common_tags
+
+  redis_configuration {
+    maxmemory_policy = "allkeys-lru"
   }
 }
 
@@ -539,7 +576,9 @@ resource "azurerm_virtual_machine_scale_set_extension" "pre_patch_backup" {
       if [ -x /opt/hailbytes/bin/ha-pre-patch-backup.sh ]; then
         sudo -E /opt/hailbytes/bin/ha-pre-patch-backup.sh
       else
-        echo "WARN: /opt/hailbytes/bin/ha-pre-patch-backup.sh not present; skipping local bundle."
+        echo "ERROR: /opt/hailbytes/bin/ha-pre-patch-backup.sh not present on this VM image." >&2
+        echo "       Rebuild the marketplace image from main; provision.sh installs the script." >&2
+        exit 1
       fi
       az login --identity --allow-no-subscriptions >/dev/null
       az postgres flexible-server backup create \
@@ -547,6 +586,41 @@ resource "azurerm_virtual_machine_scale_set_extension" "pre_patch_backup" {
         --name '${azurerm_postgresql_flexible_server.primary.name}' \
         --backup-name "${local.name_prefix}-pre-patch-$${TS}" \
         || echo "WARN: on-demand backup not supported; relying on automated backups."
+    EOSH
+    )
+  })
+}
+
+# ----- VMSS post-patch verify extension -----
+#
+# Mirrors the AWS aws_ssm_document.post_patch_verify in
+# modules/unlimited-scale/aws/main.tf. Bakes the on-VM five-probe
+# verifier as a VMSS extension so the rolling-upgrade pipeline can
+# fail fast on a schema-version regression, encryption-key
+# fingerprint mismatch, or smoke-test failure.
+
+resource "azurerm_virtual_machine_scale_set_extension" "post_patch_verify" {
+  count                        = var.enable_post_patch_run_command ? 1 : 0
+  name                         = "RunPostPatchVerify"
+  virtual_machine_scale_set_id = azurerm_linux_virtual_machine_scale_set.main.id
+  publisher                    = "Microsoft.Azure.Extensions"
+  type                         = "CustomScript"
+  type_handler_version         = "2.1"
+  auto_upgrade_minor_version   = true
+
+  settings = jsonencode({})
+  protected_settings = jsonencode({
+    script = base64encode(<<-EOSH
+      #!/bin/bash
+      set -euo pipefail
+      export HAILBYTES_SCHEMA_VERSION_PATH='${var.schema_version_endpoint_path}'
+      if [ -x /opt/hailbytes/bin/ha-post-patch-verify.sh ]; then
+        sudo -E /opt/hailbytes/bin/ha-post-patch-verify.sh
+      else
+        echo "ERROR: /opt/hailbytes/bin/ha-post-patch-verify.sh not present on this VM image." >&2
+        echo "       Rebuild the marketplace image from main; provision.sh installs the script." >&2
+        exit 1
+      fi
     EOSH
     )
   })

@@ -41,5 +41,14 @@ module "this" {
   alert_email                               = var.alert_email
   schema_version_endpoint_path              = var.schema_version_endpoint_path
 
+  # Shared session store (ElastiCache for Redis)
+  enable_managed_redis          = var.enable_managed_redis
+  redis_node_type               = var.redis_node_type
+  redis_engine_version          = var.redis_engine_version
+  redis_snapshot_retention_days = var.redis_snapshot_retention_days
+  redis_endpoint_override       = var.redis_endpoint_override
+  redis_endpoint_override_port  = var.redis_endpoint_override_port
+  redis_endpoint_override_tls   = var.redis_endpoint_override_tls
+
   tags = var.tags
 }

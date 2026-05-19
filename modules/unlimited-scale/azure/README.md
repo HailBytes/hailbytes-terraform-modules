@@ -13,6 +13,7 @@ flowchart TB
     LB --> VMSS[VM Scale Set<br/>min=3 max=20<br/>3 zones, zone-balanced<br/>autoscale on CPU]
     VMSS --> VMs[(Marketplace image instances)]
     VMs --> KV[(Key Vault<br/>DB password)]
+    VMs -->|TLS| RC[(Azure Cache for Redis<br/>Standard/Premium<br/>sessions + worker locks)]
     VMs -->|writes, TLS| DBP[(Postgres Flex Server<br/>ZoneRedundant HA)]
     VMs -->|reads, TLS| DBR1[(Read replica 1)]
     VMs -->|reads, TLS| DBR2[(Read replica 2)]
@@ -23,19 +24,33 @@ flowchart TB
 
 ## Cost estimate (East US, pay-as-you-go, default sizing)
 
+Unlimited-scale on Azure is a fundamentally different cost shape from
+single-vm or HA hot-hot. Compare against `modules/single-vm/azure` and
+`modules/ha-hot-hot/azure` (~$585/mo all-in for HA at procurement-grade)
+before quoting. The Azure cost rows are tracked here today; the
+canonical AWS table lives in [`COST_SHAPES.md`](../../../COST_SHAPES.md).
+
 | Component | Default | ~Monthly |
 |---|---|---|
 | 3× VMSS `Standard_D2s_v5` instances | 24/7 | $210 |
 | 3× Premium SSD OS disks | 64 GB | $30 |
 | Standard Load Balancer + 1 rule | | $25 |
+| Azure Cache for Redis (`Standard C1`) | shared session store | $55 |
 | Postgres Flex `GP_Standard_D4ds_v5` ZoneRedundant | 256 GB | $600 |
 | 2× Postgres Flex read replicas | | $500 |
 | Postgres backups | 30d, geo-redundant | $40 |
 | Key Vault | secrets ops | $1 |
 | Azure Monitor metrics + alerts | typical | $20 |
-| **Total infrastructure (3-instance steady state)** | | **~$1,425/month** |
+| **Total infrastructure (3-instance steady state)** | | **~$1,480/month** |
 | **+ scale-out hours** | each extra D2s_v5 24/7 | +$70/mo |
-| **HailBytes marketplace software fee** | per VM-hour, every VMSS instance | **separate** |
+| **HailBytes marketplace software fee** ($0.24/vCPU-hr) | 3× 2 vCPU × 730h | **~$1,050/mo** |
+| **All-in (3-instance steady state)** | | **~$2,530/month** |
+
+Scale-out behaves the same as the AWS shape: each extra VMSS instance
+adds an EC2-line equivalent and a per-vCPU meter line. At 5 steady-
+state instances the bill lands around $3,150/mo all-in; at 10 around
+$5,150/mo. For deployments above 5 instances raise `redis_capacity`
+to 3 (~$220/mo) — `Standard C1` becomes a bottleneck around 5 replicas.
 
 ## Prerequisites
 
@@ -44,7 +59,7 @@ flowchart TB
   - Subnet delegated to `Microsoft.DBforPostgreSQL/flexibleServers`
   - Private DNS zone `privatelink.postgres.database.azure.com` linked to the vnet
 - Marketplace subscription accepted (handled by module)
-- Permissions for Compute, Network, DBforPostgreSQL, KeyVault, Monitor
+- Permissions for Compute, Network, DBforPostgreSQL, KeyVault, Monitor, **Cache** (Standard tier or higher — Basic is single-node and breaks horizontal scaling)
 
 ## Usage
 
