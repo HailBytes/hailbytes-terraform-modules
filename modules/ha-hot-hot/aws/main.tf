@@ -30,16 +30,25 @@ locals {
   # Pick two private subnets for two VMs (one per AZ). For >2 subnets we take the first 2.
   vm_subnets = slice(var.private_subnet_ids, 0, 2)
 
-  use_rds                 = var.db_mode == "rds"
-  use_ec2_db              = var.db_mode == "ec2"
-  create_backup_bucket    = var.create_backup_bucket
-  effective_backup_bucket = local.create_backup_bucket ? aws_s3_bucket.backup[0].id : var.backup_bucket_name
-  backup_object_prefix    = "hailbytes-${var.product}-"
+  use_rds                       = var.db_mode == "rds"
+  use_ec2_db                    = var.db_mode == "ec2"
+  create_backup_bucket          = var.create_backup_bucket
+  effective_backup_bucket       = local.create_backup_bucket ? aws_s3_bucket.backup[0].id : var.backup_bucket_name
+  backup_object_prefix          = "hailbytes-${var.product}-"
+  create_alb_access_logs_bucket = var.enable_alb_access_logging
 
   db_host = coalesce(one(aws_db_instance.main[*].address), one(aws_instance.db_ec2[*].private_ip))
   db_port = local.use_rds ? coalesce(one(aws_db_instance.main[*].port), 5432) : 5432
   db_arn  = coalesce(one(aws_db_instance.main[*].arn), one(aws_instance.db_ec2[*].arn))
   db_id   = coalesce(one(aws_db_instance.main[*].id), one(aws_instance.db_ec2[*].id))
+
+  # Redis is required for HA: both app instances must share session state and
+  # the worker-lock heartbeat through the same Redis. The module provisions
+  # ElastiCache by default; customers with an existing Redis can supply an
+  # endpoint via var.redis_endpoint_override and set enable_managed_redis = false.
+  provision_managed_redis = var.enable_managed_redis && var.redis_endpoint_override == null
+  effective_redis_host    = local.provision_managed_redis ? one(aws_elasticache_replication_group.main[*].primary_endpoint_address) : var.redis_endpoint_override
+  effective_redis_port    = local.provision_managed_redis ? 6379 : var.redis_endpoint_override_port
 }
 
 data "aws_caller_identity" "current" {}
@@ -146,6 +155,24 @@ resource "aws_vpc_security_group_ingress_rule" "db_from_vm" {
   to_port                      = 5432
   ip_protocol                  = "tcp"
   description                  = "Postgres from VMs"
+}
+
+resource "aws_security_group" "redis" {
+  count       = local.provision_managed_redis ? 1 : 0
+  name        = "${local.name_prefix}-redis-sg"
+  description = "ElastiCache Redis ingress from VMs"
+  vpc_id      = var.vpc_id
+  tags        = local.common_tags
+}
+
+resource "aws_vpc_security_group_ingress_rule" "redis_from_vm" {
+  count                        = local.provision_managed_redis ? 1 : 0
+  security_group_id            = aws_security_group.redis[0].id
+  referenced_security_group_id = aws_security_group.vm.id
+  from_port                    = 6379
+  to_port                      = 6379
+  ip_protocol                  = "tcp"
+  description                  = "Redis from VMs"
 }
 
 # ----- IAM -----
@@ -282,9 +309,14 @@ resource "aws_db_instance" "main" {
   final_snapshot_identifier = var.db_deletion_protection ? "${local.name_prefix}-final-${formatdate("YYYYMMDD-hhmmss", timestamp())}" : null
   copy_tags_to_snapshot     = var.rds_copy_tags_to_snapshot
 
-  performance_insights_enabled    = true
-  enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
-  auto_minor_version_upgrade      = true
+  iam_database_authentication_enabled   = var.rds_iam_authentication_enabled
+  performance_insights_enabled          = var.rds_performance_insights_enabled
+  performance_insights_kms_key_id       = var.rds_performance_insights_enabled && var.enable_customer_managed_key ? aws_kms_key.main[0].arn : null
+  performance_insights_retention_period = var.rds_performance_insights_enabled ? var.rds_performance_insights_retention_days : null
+  monitoring_interval                   = var.rds_enhanced_monitoring_interval
+  monitoring_role_arn                   = var.rds_enhanced_monitoring_interval > 0 ? aws_iam_role.rds_monitoring[0].arn : null
+  enabled_cloudwatch_logs_exports       = var.rds_enabled_cloudwatch_log_types
+  auto_minor_version_upgrade            = true
 
   tags = local.common_tags
 
@@ -336,8 +368,8 @@ resource "aws_iam_role_policy" "db_ec2_backup" {
         Resource = aws_secretsmanager_secret.db.arn
       },
       {
-        Effect = "Allow"
-        Action = ["ec2:CreateSnapshot", "ec2:CreateTags", "ec2:DescribeVolumes", "ec2:DescribeSnapshots"]
+        Effect   = "Allow"
+        Action   = ["ec2:CreateSnapshot", "ec2:CreateTags", "ec2:DescribeVolumes", "ec2:DescribeSnapshots"]
         Resource = "*"
       },
     ]
@@ -425,7 +457,7 @@ resource "aws_instance" "db_ec2" {
   # no special handling — it sees the same Secrets Manager secret shape as in
   # RDS mode.
   user_data_replace_on_change = false
-  user_data = <<-EOF
+  user_data                   = <<-EOF
     #cloud-config
     package_update: true
     packages:
@@ -502,6 +534,43 @@ resource "aws_volume_attachment" "db_data" {
   instance_id = aws_instance.db_ec2[0].id
 }
 
+# ----- Shared session store: ElastiCache for Redis (Multi-AZ) -----
+#
+# HailBytes SAT / ASM both keep session state in Redis when running in HA. Without
+# a shared Redis endpoint each VM falls back to in-memory sessions, which breaks
+# every cross-instance login and worker-lock claim. This block provisions a
+# Multi-AZ replication group by default; set enable_managed_redis = false and
+# pass redis_endpoint_override to point at a customer-owned cache instead.
+
+resource "aws_elasticache_subnet_group" "main" {
+  count      = local.provision_managed_redis ? 1 : 0
+  name       = "${local.name_prefix}-redis-subnets"
+  subnet_ids = local.vm_subnets
+  tags       = local.common_tags
+}
+
+resource "aws_elasticache_replication_group" "main" {
+  count                      = local.provision_managed_redis ? 1 : 0
+  replication_group_id       = "${local.name_prefix}-redis"
+  description                = "HailBytes ${var.product} session store + worker lock"
+  engine                     = "redis"
+  engine_version             = var.redis_engine_version
+  node_type                  = var.redis_node_type
+  num_cache_clusters         = 2
+  automatic_failover_enabled = true
+  multi_az_enabled           = true
+  port                       = 6379
+  parameter_group_name       = "default.redis7"
+  subnet_group_name          = aws_elasticache_subnet_group.main[0].name
+  security_group_ids         = [aws_security_group.redis[0].id]
+  at_rest_encryption_enabled = true
+  transit_encryption_enabled = true
+  kms_key_id                 = var.enable_customer_managed_key ? aws_kms_key.main[0].arn : null
+  snapshot_retention_limit   = var.redis_snapshot_retention_days
+  apply_immediately          = false
+  tags                       = local.common_tags
+}
+
 # ----- VMs (one per AZ, active/active) -----
 
 resource "aws_instance" "vm" {
@@ -538,8 +607,10 @@ resource "aws_instance" "vm" {
     kms_key_id  = var.enable_customer_managed_key ? aws_kms_key.main[0].arn : null
   }
 
-  # The marketplace image reads these on first boot to wire itself to the shared DB.
-  # Values are not sensitive (they reference the secret ARN, not the password).
+  # The marketplace image reads these on first boot to wire itself to the shared
+  # DB and Redis. Values are not sensitive (they reference the secret ARN, not
+  # the password). Redis is required for HA; without it the second VM cannot
+  # share sessions or worker-lock state with the first.
   user_data = base64encode(jsonencode({
     hailbytes = {
       mode               = "ha"
@@ -548,11 +619,14 @@ resource "aws_instance" "vm" {
       db_secret_region   = data.aws_region.current.id
       product            = var.product
       cluster_member_idx = count.index
+      redis_host         = local.effective_redis_host
+      redis_port         = local.effective_redis_port
+      redis_tls          = local.provision_managed_redis ? true : var.redis_endpoint_override_tls
     }
   }))
 
   tags = merge(local.common_tags, {
-    Name             = "${local.name_prefix}-vm-${count.index + 1}"
+    Name                       = "${local.name_prefix}-vm-${count.index + 1}"
     "hailbytes-${var.product}" = "true"
   })
 
@@ -560,7 +634,7 @@ resource "aws_instance" "vm" {
     ignore_changes = [ami, user_data]
   }
 
-  depends_on = [aws_db_instance.main, aws_instance.db_ec2]
+  depends_on = [aws_db_instance.main, aws_instance.db_ec2, aws_elasticache_replication_group.main]
 }
 
 data "aws_region" "current" {}
@@ -577,6 +651,16 @@ resource "aws_lb" "main" {
 
   drop_invalid_header_fields = true
   enable_http2               = true
+  enable_deletion_protection = var.enable_alb_deletion_protection
+
+  dynamic "access_logs" {
+    for_each = local.create_alb_access_logs_bucket ? [1] : []
+    content {
+      bucket  = aws_s3_bucket.alb_logs[0].id
+      prefix  = "alb"
+      enabled = true
+    }
+  }
 
   tags = local.common_tags
 }
@@ -819,6 +903,15 @@ resource "aws_s3_bucket_lifecycle_configuration" "backup" {
   bucket = aws_s3_bucket.backup[0].id
 
   rule {
+    id     = "abort-incomplete-multipart"
+    status = "Enabled"
+    filter {}
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  rule {
     id     = "tier-and-expire"
     status = "Enabled"
     filter {
@@ -915,7 +1008,7 @@ resource "aws_ssm_document" "pre_patch_backup" {
             "export AWS_S3_PREFIX=\"${local.backup_object_prefix}$${TS}\"",
             "export HAILBYTES_DB_SECRET_ARN='${aws_secretsmanager_secret.db.arn}'",
             "export AWS_DEFAULT_REGION='${data.aws_region.current.id}'",
-            "if [ -x /opt/hailbytes/bin/ha-pre-patch-backup.sh ]; then sudo -E /opt/hailbytes/bin/ha-pre-patch-backup.sh; else echo 'WARN: /opt/hailbytes/bin/ha-pre-patch-backup.sh not present on this AMI; skipping local bundle.'; fi",
+            "if [ -x /opt/hailbytes/bin/ha-pre-patch-backup.sh ]; then sudo -E /opt/hailbytes/bin/ha-pre-patch-backup.sh; else echo 'ERROR: /opt/hailbytes/bin/ha-pre-patch-backup.sh not present on this AMI. Rebuild from main; the Packer provision.sh now installs the script.' >&2; exit 1; fi",
             "SNAP_ID='{{ snapshotIdentifier }}'",
             "if [ -z \"$SNAP_ID\" ]; then SNAP_ID=\"${local.name_prefix}-pre-patch-$${TS}\"; fi",
             "if [ '${var.db_mode}' = 'rds' ]; then aws rds create-db-snapshot --db-instance-identifier '${try(aws_db_instance.main[0].id, "")}' --db-snapshot-identifier \"$SNAP_ID\" --tags Key=Module,Value=hailbytes-terraform-modules Key=Phase,Value=pre-patch; else VOL='${try(aws_ebs_volume.db_data[0].id, "")}'; if [ -n \"$VOL\" ]; then aws ec2 create-snapshot --volume-id \"$VOL\" --description \"hailbytes-${var.product} pre-patch $${TS}\" --tag-specifications \"ResourceType=snapshot,Tags=[{Key=Module,Value=hailbytes-terraform-modules},{Key=Phase,Value=pre-patch},{Key=Name,Value=$$SNAP_ID}]\"; fi; fi",
@@ -924,4 +1017,162 @@ resource "aws_ssm_document" "pre_patch_backup" {
       }
     ]
   })
+}
+
+# ----- SSM Run Command document: post-patch verify -----
+
+resource "aws_ssm_document" "post_patch_verify" {
+  name            = "${local.name_prefix}-post-patch-verify"
+  document_type   = "Command"
+  document_format = "YAML"
+  target_type     = "/AWS::EC2::Instance"
+  tags            = local.common_tags
+
+  content = yamlencode({
+    schemaVersion = "2.2"
+    description   = "HailBytes SAT/ASM post-patch verification. Runs the five-probe verifier shipped with the AMI: /api/ready, schema-version regression, encryption-key fingerprint, worker-lock health, sample SMTP/credential decrypt."
+    parameters = {
+      schemaVersionPath = {
+        type        = "String"
+        description = "Path to the schema-version endpoint."
+        default     = var.schema_version_endpoint_path
+      }
+      minSchemaVersion = {
+        type        = "String"
+        description = "Optional integer floor that the running schema version must meet or exceed. Empty string skips the regression check."
+        default     = ""
+      }
+    }
+    mainSteps = [
+      {
+        action = "aws:runShellScript"
+        name   = "postPatchVerify"
+        inputs = {
+          timeoutSeconds = "600"
+          runCommand = [
+            "set -euo pipefail",
+            "export HAILBYTES_SCHEMA_VERSION_PATH='{{ schemaVersionPath }}'",
+            "export HAILBYTES_MIN_SCHEMA_VERSION='{{ minSchemaVersion }}'",
+            "if [ -x /opt/hailbytes/bin/ha-post-patch-verify.sh ]; then sudo -E /opt/hailbytes/bin/ha-post-patch-verify.sh; else echo 'ERROR: /opt/hailbytes/bin/ha-post-patch-verify.sh not present on this AMI.'; exit 1; fi",
+          ]
+        }
+      }
+    ]
+  })
+}
+
+# ----- ALB access logs (optional) -----
+#
+# CKV_AWS_91 wants every ALB to have access logging enabled. We make it
+# opt-in (default off) since it adds a second S3 bucket and a small
+# log-volume cost; production deployments should turn it on.
+
+data "aws_elb_service_account" "main" {
+  count = local.create_alb_access_logs_bucket ? 1 : 0
+}
+
+resource "aws_s3_bucket" "alb_logs" {
+  count         = local.create_alb_access_logs_bucket ? 1 : 0
+  bucket        = "${local.name_prefix}-alb-logs-${data.aws_caller_identity.current.account_id}"
+  force_destroy = false
+  tags          = local.common_tags
+}
+
+resource "aws_s3_bucket_versioning" "alb_logs" {
+  count  = local.create_alb_access_logs_bucket ? 1 : 0
+  bucket = aws_s3_bucket.alb_logs[0].id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "alb_logs" {
+  count                   = local.create_alb_access_logs_bucket ? 1 : 0
+  bucket                  = aws_s3_bucket.alb_logs[0].id
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_server_side_encryption_configuration" "alb_logs" {
+  count  = local.create_alb_access_logs_bucket ? 1 : 0
+  bucket = aws_s3_bucket.alb_logs[0].id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = var.enable_customer_managed_key ? "aws:kms" : "AES256"
+      kms_master_key_id = var.enable_customer_managed_key ? aws_kms_key.main[0].arn : null
+    }
+  }
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "alb_logs" {
+  count  = local.create_alb_access_logs_bucket ? 1 : 0
+  bucket = aws_s3_bucket.alb_logs[0].id
+
+  rule {
+    id     = "abort-incomplete-multipart"
+    status = "Enabled"
+    filter {}
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+
+  rule {
+    id     = "expire-and-archive"
+    status = "Enabled"
+    filter {
+      prefix = "alb/"
+    }
+    transition {
+      days          = 30
+      storage_class = "STANDARD_IA"
+    }
+    expiration {
+      days = var.alb_access_log_retention_days
+    }
+  }
+}
+
+resource "aws_s3_bucket_policy" "alb_logs" {
+  count  = local.create_alb_access_logs_bucket ? 1 : 0
+  bucket = aws_s3_bucket.alb_logs[0].id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { AWS = data.aws_elb_service_account.main[0].arn }
+      Action    = "s3:PutObject"
+      Resource  = "${aws_s3_bucket.alb_logs[0].arn}/*"
+    }]
+  })
+}
+
+# ----- RDS enhanced monitoring IAM role (conditional) -----
+#
+# Only provisioned when var.rds_enhanced_monitoring_interval > 0.
+# CKV_AWS_118 wants this on production deployments; we keep it
+# opt-in because it adds ~$15/mo in CloudWatch ingestion at the
+# default 60-second interval.
+
+resource "aws_iam_role" "rds_monitoring" {
+  count = local.use_rds && var.rds_enhanced_monitoring_interval > 0 ? 1 : 0
+  name  = "${local.name_prefix}-rds-monitoring"
+  tags  = local.common_tags
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "monitoring.rds.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "rds_monitoring" {
+  count      = local.use_rds && var.rds_enhanced_monitoring_interval > 0 ? 1 : 0
+  role       = aws_iam_role.rds_monitoring[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
 }

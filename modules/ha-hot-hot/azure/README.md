@@ -14,12 +14,20 @@ flowchart TB
     LB --> VM2[(VM #2<br/>Zone 2<br/>Marketplace image)]
     VM1 --> KV[(Key Vault<br/>DB password)]
     VM2 --> KV
+    VM1 -->|TLS| RC[(Azure Cache for Redis<br/>Standard or Premium<br/>sessions + worker locks)]
+    VM2 -->|TLS| RC
     VM1 -->|TLS, vnet-integrated| PG[(Postgres Flexible Server<br/>ZoneRedundant HA primary)]
     VM2 -->|TLS, vnet-integrated| PG
     PG -.replication.-> PGS[(Standby in second zone)]
+    RC -.failover.-> RCS[(Replica in second zone)]
 ```
 
 ## Cost estimate (East US, pay-as-you-go)
+
+For the three-shape AWS comparison and the canonical procurement-grade
+source, see [`COST_SHAPES.md`](../../../COST_SHAPES.md). Azure pricing
+below is the Azure equivalent of the AWS HA table; the marketplace
+meter and tier sizing are aligned.
 
 | Component | Default | ~Monthly |
 |---|---|---|
@@ -27,11 +35,13 @@ flowchart TB
 | 2× Premium SSD OS | 64 GB | $20 |
 | 2× Premium SSD data | 256 GB | $70 |
 | Standard Load Balancer + 1 rule | | $25 |
+| Azure Cache for Redis (`Standard C1`, zone-redundant primary/replica) | shared session store | $55 |
 | Postgres Flexible Server `GP_Standard_D2ds_v5` Zone-Redundant | 128 GB | $260 |
 | Postgres backups | retained 14d | $15 |
 | Key Vault | secrets ops | $1 |
-| **Total infrastructure** | | **~$530/month** |
-| **HailBytes marketplace software fee** | per VM-hour | **separate, x2 hours** |
+| **Total infrastructure** | | **~$585/month** |
+| **HailBytes marketplace software fee** ($0.24/vCPU-hr) | 4 vCPU × 730h | **~$700/mo** |
+| **All-in (procurement-grade)** | | **~$1,285/month** |
 
 ## Prerequisites
 
@@ -40,6 +50,7 @@ flowchart TB
   - A subnet **delegated** to `Microsoft.DBforPostgreSQL/flexibleServers` (`db_delegated_subnet_id`)
   - A private DNS zone `privatelink.postgres.database.azure.com` linked to the vnet (`private_dns_zone_id`)
 - Marketplace subscription accepted (handled by module unless you set `accept_marketplace_terms = false`)
+- Subscription-level permissions to provision Azure Cache for Redis (Standard tier or higher — Basic is single-node and not HA-safe)
 
 ## Usage
 

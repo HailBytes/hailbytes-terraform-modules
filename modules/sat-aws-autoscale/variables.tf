@@ -205,6 +205,86 @@ variable "schema_version_endpoint_path" {
   default     = "/api/instance/schema-version"
 }
 
+# ----- Shared session store (ElastiCache for Redis) -----
+
+variable "enable_managed_redis" {
+  description = "Provision an ElastiCache Multi-AZ replication group. Required for horizontal scaling; set to false only when supplying redis_endpoint_override."
+  type        = bool
+  default     = true
+}
+
+variable "redis_node_type" {
+  description = "ElastiCache node type. Scale up alongside ASG growth — cache.t4g.small handles 3-5 instances, cache.m6g.large handles 10-20+."
+  type        = string
+  default     = "cache.t4g.small"
+}
+
+variable "redis_engine_version" {
+  type    = string
+  default = "7.1"
+}
+
+variable "redis_snapshot_retention_days" {
+  type    = number
+  default = 0
+}
+
+variable "redis_endpoint_override" {
+  description = "Host of an existing customer-managed Redis endpoint. Pair with enable_managed_redis = false."
+  type        = string
+  default     = null
+}
+
+variable "redis_endpoint_override_port" {
+  type    = number
+  default = 6379
+}
+
+variable "redis_endpoint_override_tls" {
+  type    = bool
+  default = true
+}
+
+
+variable "enable_alb_deletion_protection" {
+  description = "Enable deletion protection on the ALB. Default true."
+  type        = bool
+  default     = true
+}
+
+
+# ----- RDS production-hardening (opt-in) -----
+
+variable "rds_enhanced_monitoring_interval" {
+  description = "RDS enhanced monitoring sample interval. 0 disables. CKV_AWS_118."
+  type        = number
+  default     = 0
+}
+
+variable "rds_enabled_cloudwatch_log_types" {
+  description = "RDS log types to export to CloudWatch. CKV_AWS_129."
+  type        = list(string)
+  default     = []
+}
+
+variable "rds_iam_authentication_enabled" {
+  description = "Enable IAM DB authentication. CKV_AWS_161."
+  type        = bool
+  default     = false
+}
+
+variable "rds_performance_insights_enabled" {
+  description = "Enable RDS Performance Insights. CKV_AWS_354."
+  type        = bool
+  default     = false
+}
+
+variable "rds_performance_insights_retention_days" {
+  description = "Performance Insights retention. 7 = free tier; 731 = long-term."
+  type        = number
+  default     = 7
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

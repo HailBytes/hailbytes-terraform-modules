@@ -211,6 +211,102 @@ variable "schema_version_endpoint_path" {
   default     = "/api/instance/schema-version"
 }
 
+# ----- Shared session store (ElastiCache for Redis) -----
+
+variable "enable_managed_redis" {
+  description = "Provision an ElastiCache Multi-AZ replication group for HailBytes shared sessions and worker locks. HA mode requires a shared Redis endpoint — set to false only if you supply redis_endpoint_override."
+  type        = bool
+  default     = true
+}
+
+variable "redis_node_type" {
+  description = "ElastiCache node type. cache.t4g.small is the procurement-friendly default; raise for higher session-throughput deployments."
+  type        = string
+  default     = "cache.t4g.small"
+}
+
+variable "redis_engine_version" {
+  description = "ElastiCache Redis engine version."
+  type        = string
+  default     = "7.1"
+}
+
+variable "redis_snapshot_retention_days" {
+  description = "Days ElastiCache retains daily snapshots. Sessions are recoverable from Postgres re-login, so this defaults to 0; raise if you want a Redis PITR window."
+  type        = number
+  default     = 0
+}
+
+variable "redis_endpoint_override" {
+  description = "Host of a customer-managed Redis endpoint. When non-null, the module skips its own ElastiCache replication group and wires the VMs at this host instead. Pair with enable_managed_redis = false."
+  type        = string
+  default     = null
+}
+
+variable "redis_endpoint_override_port" {
+  description = "Port on the customer-managed Redis endpoint. Ignored unless redis_endpoint_override is set."
+  type        = number
+  default     = 6379
+}
+
+variable "redis_endpoint_override_tls" {
+  description = "Whether the customer-managed Redis endpoint requires in-transit TLS. Ignored unless redis_endpoint_override is set."
+  type        = bool
+  default     = true
+}
+
+
+variable "enable_alb_deletion_protection" {
+  description = "Enable deletion protection on the ALB. Default true; dev/test override to false to let `terraform destroy` succeed."
+  type        = bool
+  default     = true
+}
+
+variable "enable_alb_access_logging" {
+  description = "Provision an S3 bucket for ALB access logs and enable the listener access_logs block."
+  type        = bool
+  default     = false
+}
+
+variable "alb_access_log_retention_days" {
+  description = "Days to retain ALB access log objects."
+  type        = number
+  default     = 365
+}
+
+
+# ----- RDS production-hardening (opt-in) -----
+
+variable "rds_enhanced_monitoring_interval" {
+  description = "RDS enhanced monitoring sample interval. 0 disables. CKV_AWS_118."
+  type        = number
+  default     = 0
+}
+
+variable "rds_enabled_cloudwatch_log_types" {
+  description = "RDS log types to export to CloudWatch. CKV_AWS_129."
+  type        = list(string)
+  default     = []
+}
+
+variable "rds_iam_authentication_enabled" {
+  description = "Enable IAM DB authentication. CKV_AWS_161."
+  type        = bool
+  default     = false
+}
+
+variable "rds_performance_insights_enabled" {
+  description = "Enable RDS Performance Insights. CKV_AWS_354."
+  type        = bool
+  default     = false
+}
+
+variable "rds_performance_insights_retention_days" {
+  description = "Performance Insights retention. 7 = free tier; 731 = long-term."
+  type        = number
+  default     = 7
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

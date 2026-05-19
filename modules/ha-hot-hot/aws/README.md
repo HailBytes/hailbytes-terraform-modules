@@ -14,32 +14,57 @@ flowchart TB
     ALB --> VM2[(EC2 #2<br/>AZ-b<br/>Marketplace AMI)]
     VM1 --> SM[(Secrets Manager<br/>DB creds)]
     VM2 --> SM
+    VM1 -->|TLS| RDS[(ElastiCache Redis<br/>Multi-AZ replication group<br/>sessions + worker locks)]
+    VM2 -->|TLS| RDS
     VM1 -->|TLS| DB[(RDS PostgreSQL<br/>Multi-AZ primary)]
     VM2 -->|TLS| DB
     DB -.synchronous replication.-> DBS[(Standby in second AZ)]
+    RDS -.automatic failover.-> RDSS[(Replica in second AZ)]
 ```
 
 ## Cost estimate (us-east-1, on-demand)
 
-| Component | Default | ~Monthly |
-|---|---|---|
-| 2× EC2 `t3.large` | 24/7 | $120 |
-| 2× EBS gp3 root | 50 GB | $8 |
-| 2× EBS gp3 data | 200 GB | $32 |
-| Application Load Balancer | + LCU | $25 |
-| RDS `db.t3.medium` Multi-AZ | 100 GB gp3 | $180 |
-| RDS backups | retained | $10 |
-| Secrets Manager | 1 secret | $0.40 |
-| KMS (if enabled) | 1 | $1 + usage |
-| **Total infrastructure** | | **~$375/month** |
-| **HailBytes marketplace software fee** | per listing, billed per VM-hour | **separate, x2 hours** |
+Two reference shapes. The defaults below are the **starter** shape; the
+**procurement-grade** shape (right column) matches `hailbytes-sat/docs/AWS_HA_DEPLOYMENT.md`
+and the customer-facing pricing the account team quotes. Pick the shape
+that matches your sizing before sharing numbers with finance.
+
+For the three-shape (single / HA / unlimited-scale) comparison and the
+canonical procurement-grade source, see
+[`COST_SHAPES.md`](../../../COST_SHAPES.md).
+
+| Component | Starter default | ~Monthly | Procurement-grade variable / value | ~Monthly |
+|---|---|---|---|---|
+| 2× EC2 SAT/ASM | `instance_type = "t3.large"` | $120 | `instance_type = "m6i.large"` | $140 |
+| 2× EBS gp3 root | 50 GB | $8 | 50 GB | $8 |
+| 2× EBS gp3 data | `data_volume_size_gb = 200` | $32 | `data_volume_size_gb = 200` | $32 |
+| Application Load Balancer | + LCU | $25 | + LCU | $25 |
+| ElastiCache Redis Multi-AZ | `redis_node_type = "cache.t4g.small"` | $50 | `redis_node_type = "cache.t4g.small"` | $50 |
+| RDS Multi-AZ (`db_mode = "rds"`) | `db_instance_class = "db.t3.medium"` (100 GB gp3) | $180 | `db_instance_class = "db.m6g.large"` (100 GB gp3) | $230 |
+| RDS backups | retained | $10 | retained | $10 |
+| Cross-AZ data transfer | minimal | $10 | minimal | $20 |
+| Secrets Manager | 1 secret | $0.40 | 1 secret | $0.40 |
+| KMS (if enabled) | 1 | $1 + usage | 1 | $1 + usage |
+| **Total infrastructure** | | **~$435/month** | | **~$515/month** |
+| **HailBytes marketplace software fee** ($0.24/vCPU-hr) | 4 vCPU × 730h | **~$700** | 4 vCPU × 730h | **~$700** |
+| **All-in (infra + meter)** | | **~$1,135/month** | | **~$1,215/month** |
+
+Single-instance reference (for the procurement delta the account team
+quotes — Asiera/HEAnet etc.): ~$420/month all-in (1× `m6i.large`,
+co-located Postgres, no ALB, no Redis, no managed DB). HA lands at
+roughly **2.2–2.6× a single-instance bill**.
+
+For the **`db_mode = "ec2"`** path (self-managed Postgres on a third
+EC2), drop the RDS line and add ~$70/month for the third `m6i.large`
+plus another 200 GB of gp3 (~$16/month). All-in lands at roughly
+**~$940/month (≈ 2.2× single)** at procurement-grade sizing.
 
 ## Prerequisites
 
 - VPC with at least 2 public subnets (for ALB) and 2 private subnets in different AZs
 - ACM certificate in the same region (for the HTTPS listener)
 - Marketplace subscription active
-- IAM permissions to create EC2, ALB, RDS, IAM, KMS, Secrets Manager
+- IAM permissions to create EC2, ALB, RDS, ElastiCache, IAM, KMS, Secrets Manager
 
 ## Usage
 

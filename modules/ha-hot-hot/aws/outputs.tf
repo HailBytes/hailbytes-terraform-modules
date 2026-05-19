@@ -54,6 +54,11 @@ output "pre_patch_ssm_document_name" {
   value       = aws_ssm_document.pre_patch_backup.name
 }
 
+output "post_patch_ssm_document_name" {
+  description = "Name of the AWS Systems Manager Run Command document that runs the on-VM five-probe post-patch verifier."
+  value       = aws_ssm_document.post_patch_verify.name
+}
+
 output "schema_version_endpoint" {
   description = "HTTPS URL that returns the running schema version. Used by post-patch verify scripts."
   value       = "https://${aws_lb.main.dns_name}${var.schema_version_endpoint_path}"
@@ -75,8 +80,19 @@ output "ami_id" {
 
 output "security_group_ids" {
   value = {
-    alb = aws_security_group.alb.id
-    vm  = aws_security_group.vm.id
-    db  = aws_security_group.db.id
+    alb   = aws_security_group.alb.id
+    vm    = aws_security_group.vm.id
+    db    = aws_security_group.db.id
+    redis = local.provision_managed_redis ? aws_security_group.redis[0].id : null
   }
+}
+
+output "redis_endpoint" {
+  description = "Host:port of the Redis endpoint wired into the HA VMs. Either the module-provisioned ElastiCache replication group or var.redis_endpoint_override."
+  value       = local.effective_redis_host == null ? "" : "${local.effective_redis_host}:${local.effective_redis_port}"
+}
+
+output "redis_mode" {
+  description = "How Redis is wired: 'managed' (this module provisioned ElastiCache), 'override' (customer-supplied endpoint), or 'disabled' (HA is not actually safe)."
+  value       = local.provision_managed_redis ? "managed" : (var.redis_endpoint_override == null ? "disabled" : "override")
 }

@@ -25,11 +25,21 @@ flowchart TB
 
 ## Cost estimate (us-east-1, on-demand, default sizing)
 
+Unlimited-scale is a fundamentally different cost shape from a single
+instance: it adds an ASG, ALB, read replicas, ElastiCache, and the
+per-vCore meter scales with N instances rather than the topology itself.
+Compare against `modules/single-vm/aws` (~$84/mo infra + meter) and
+`modules/ha-hot-hot/aws` (~$435-$515/mo infra + meter) before you quote.
+
+For the three-shape comparison side-by-side and the canonical
+procurement-grade source, see [`COST_SHAPES.md`](../../../COST_SHAPES.md).
+
 | Component | Default | ~Monthly |
 |---|---|---|
 | 3× EC2 `m6i.large` (ASG min) | 24/7 | $225 |
 | 3× EBS gp3 root | 50 GB | $12 |
 | Application Load Balancer + LCU | | $35 |
+| ElastiCache Redis Multi-AZ (`cache.t4g.small`) | shared session store | $50 |
 | RDS `db.r6g.large` Multi-AZ primary | 200 GB gp3 | $400 |
 | 2× RDS read replicas `db.r6g.large` | | $400 |
 | RDS backups | 30d retention | $40 |
@@ -38,16 +48,24 @@ flowchart TB
 | KMS CMK | 1 + usage | $5 |
 | Secrets Manager | 1 | $0.40 |
 | SNS | low volume | $0.10 |
-| **Total infrastructure (3-instance steady state)** | | **~$1,150/month** |
+| **Total infrastructure (3-instance steady state)** | | **~$1,200/month** |
 | **+ scale-out hours** | each extra m6i.large 24/7 | +$75/mo per instance |
-| **HailBytes marketplace software fee** | per VM-hour, every ASG instance | **separate** |
+| **HailBytes marketplace software fee** ($0.24/vCPU-hr) | 3× 2 vCPU × 730h | **~$1,050/mo** |
+| **All-in (3-instance steady state)** | | **~$2,250/month** |
+
+Scale-out adds both an EC2 line and a per-vCPU meter line for every
+extra instance. At 5 steady-state instances the bill lands around
+$2,950/mo all-in; at 10 instances around $4,700/mo all-in. For
+deployments that routinely run above 5 instances, raise `redis_node_type`
+to `cache.m6g.large` (~$120/mo) — t4g.small starts becoming a bottleneck
+for shared-session throughput in that range.
 
 ## Prerequisites
 
 - VPC with at least 2 public subnets (ALB) and 3 private subnets across different AZs
 - ACM certificate in the same region
 - Marketplace subscription active for the product
-- IAM permissions for EC2, ASG, ALB, RDS, IAM, KMS, S3, CloudWatch, SNS, Secrets Manager
+- IAM permissions for EC2, ASG, ALB, RDS, ElastiCache, IAM, KMS, S3, CloudWatch, SNS, Secrets Manager
 
 ## Usage
 

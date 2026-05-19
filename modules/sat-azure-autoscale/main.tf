@@ -1,7 +1,7 @@
 module "this" {
-  source                    = "../unlimited-scale/azure"
+  source = "../unlimited-scale/azure"
 
-  product                   = "sat"
+  product = "sat"
 
   resource_group_name       = var.resource_group_name
   location                  = var.location
@@ -46,6 +46,20 @@ module "this" {
   waf_policy_id                          = var.waf_policy_id
   refresh_rollback_5xx_count_threshold   = var.refresh_rollback_5xx_count_threshold
   schema_version_endpoint_path           = var.schema_version_endpoint_path
+  enable_post_patch_run_command          = var.enable_post_patch_run_command
+
+  # Shared session store (Azure Cache for Redis)
+  enable_managed_redis         = var.enable_managed_redis
+  redis_sku_name               = var.redis_sku_name
+  redis_family                 = var.redis_family
+  redis_capacity               = var.redis_capacity
+  redis_endpoint_override      = var.redis_endpoint_override
+  redis_endpoint_override_port = var.redis_endpoint_override_port
+  redis_endpoint_override_tls  = var.redis_endpoint_override_tls
+
+  db_secret_expiration_hours = var.db_secret_expiration_hours
+
+  postgres_geo_redundant_backup_enabled = var.postgres_geo_redundant_backup_enabled
 
   tags = var.tags
 }

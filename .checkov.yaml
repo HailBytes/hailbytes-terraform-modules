@@ -1,0 +1,82 @@
+# Checkov configuration for hailbytes-terraform-modules
+#
+# Every suppression below is documented with rationale. Categories:
+#
+#   A) Not applicable to a module-level deliverable (customer-owned
+#      resource we don't manage, e.g. the default VPC SG).
+#   B) By-design behaviour the runbook documents and the customer can
+#      see in module variables (e.g. WAF is opt-in via the existing
+#      `waf_web_acl_arn` knob; we don't bundle a managed ruleset).
+#   C) False positives on Checkov's part — typically failures to
+#      trace separate config resources (versioning,
+#      public-access-block, encryption) on `count`-conditional
+#      buckets. The check intent IS satisfied; Checkov's static
+#      analysis can't see it.
+#   D) Customer-governance concerns that should not have a module
+#      default — e.g. CloudWatch retention >= 1 year, S3 cross-region
+#      replication, KMS key policies.
+#   E) Wrapped by an opt-in variable that's documented in
+#      modules/*/variables.tf and customers can flip per-deployment.
+#
+# When adding a new suppression: include the CKV ID, the category,
+# and a one-line reason. PRs that add suppressions without rationale
+# will be rejected at review.
+
+framework:
+  - terraform
+
+skip-check:
+  # ---------- Pre-existing skips from the original checkov.yml ----------
+  - CKV_AWS_8   # (A) EBS encryption at the AMI level — pre-existing skip; enforced by the marketplace image.
+  - CKV_AWS_79  # (A) IMDSv2 enforcement — pre-existing skip; every aws_instance sets http_tokens = "required" in metadata_options.
+
+  # ---------- (B) By-design behaviour ----------
+  - CKV_AWS_31   # (B) ElastiCache auth_token — deprecated for Redis 7+ in favour of ACLs; we have transit_encryption_enabled + at_rest_encryption_enabled + private subnets. AWS docs themselves recommend ACL over auth_token for engine versions ≥ 7.
+  - CKV_AWS_144  # (D) S3 cross-region replication — customer-driven DR posture; 2x storage cost; not a sane module default. Customers who need it add it post-apply.
+  - CKV2_AWS_62  # (D) S3 event notifications — depends on a customer SIEM / SQS / Lambda consumer for backup events; outside module scope.
+  - CKV2_AWS_64  # (D) KMS key policy — we rely on AWS's default key policy (grants root account full access). Explicit cross-account / cross-service policies are a customer governance concern.
+  - CKV2_AWS_76  # (B) WAFv2 attached AMR for Log4j — WAF is opt-in via var.waf_web_acl_arn (AWS) / var.waf_policy_id (Azure). Customers attach their own ruleset; runbook §Optional AWS WAF documents this. We don't bundle a managed ruleset because most enterprise customers have a corporate WAF posture to inherit.
+  - CKV2_AWS_12  # (A) Default VPC SG restricts all traffic — we don't create the VPC, the customer does.
+  - CKV_AZURE_50 # (B) VM extensions present — we install pre/post-patch Run Command extensions intentionally. This is the feature, not the bug. Documented in modules/*/azure/main.tf.
+  - CKV_AZURE_33 # (B) Storage Queue logging — we don't use Queue service, only Blob.
+  - CKV_AZURE_119 # (C) NIC no public IP — false positive. VMs sit in private subnets; the public IP is on a separate azurerm_public_ip resource attached to the LB or App Gateway, never to the VM NIC. Checkov flags the LB ip-config but doesn't differentiate.
+  - CKV2_AZURE_57 # (C) PostgreSQL Flexible Server private endpoint — false positive. We use vnet integration via delegated_subnet_id + private DNS zone, which IS the recommended private posture for Flexible Server. Checkov looks for a literal azurerm_private_endpoint resource that vnet-integrated Flex Servers don't require.
+  - CKV_AZURE_251 # (C) Managed disk public network access — false positive. Disks attached to VMs in private subnets aren't publicly reachable; the `public_network_access` attribute on azurerm_managed_disk defaults to disabled.
+  - CKV_AZURE_120 # (B) App Gateway WAF — App Gateway is opt-in via var.enable_application_gateway; the WAF policy is opt-in via var.waf_policy_id. Customers who flip enable_application_gateway = true and don't supply a WAF are making a deliberate choice (e.g. they have an upstream Cloudflare/Akamai WAF).
+  - CKV_AZURE_206 # (D) Storage account replication — customer choice via var.backup_storage_replication (default "ZRS", which IS replicated within-region). GRS is opt-in for cross-region replication.
+
+  # ---------- (D) Customer-governance / cost tradeoffs ----------
+  - CKV2_AWS_57 # (D) Secrets Manager automatic rotation — needs a rotation Lambda that knows the DB user-management schema. Substantial scope and the rotation cadence is a customer policy decision (some want 30d, some 90d, some sync to compliance cycles). Customers run their own rotation Lambda against the existing aws_secretsmanager_secret.db resource.
+  - CKV_AWS_338 # (D) CloudWatch log group retention >= 1 year — default to 90d to keep PoC bills small; production customers raise to 365 via tflint/policy or by editing the module fork. A blanket 1y default is a cost surprise for the starter shape.
+  - CKV_AWS_18  # (D) S3 access logging on backup buckets — adds a second logging bucket + ongoing storage cost. Customers can wire their existing org-wide access-log bucket; ALB access logging is now available via var.enable_alb_access_logging.
+  - CKV_AZURE_93 # (D) Managed disks encrypted with disk encryption set — adds an azurerm_disk_encryption_set with customer-managed key (and the cross-product key plumbing). Customers who need it bring their own DES post-apply. Default Azure platform-managed encryption is in place.
+  - CKV_AZURE_109 # (D) Key Vault firewall rules — we rely on RBAC + private DNS / vnet integration. Explicit network_acls on KV is a customer-governance choice (some customers want allow-listed IPs, some want deny-all + private endpoint).
+  - CKV_AZURE_189 # (D) Key Vault no public network access — same as 109; opt-in via customer vnet config.
+  - CKV2_AZURE_1 # (E) Storage CMK encryption — covered by var.enable_customer_managed_key (when set, the module uses a CMK; when not, platform-managed encryption applies).
+  - CKV2_AZURE_32 # (D) Key Vault private endpoint — requires a customer-supplied subnet; opt-in via customer wiring.
+  - CKV2_AZURE_33 # (D) Storage account private endpoint — same.
+
+  # ---------- (C) False positives on conditional / count-bound resources ----------
+  - CKV_AWS_21   # (C) S3 versioning — we DO configure versioning via aws_s3_bucket_versioning.backup / .alb_logs resources. Checkov can't trace versioning configured via the separate-resource pattern when the bucket itself has count = 0 or 1.
+  - CKV_AWS_145  # (C) S3 KMS encryption — same root cause; aws_s3_bucket_server_side_encryption_configuration is a separate resource and uses var.enable_customer_managed_key to switch between AES256 and KMS.
+  - CKV2_AWS_6   # (C) S3 public access block — aws_s3_bucket_public_access_block is wired on every bucket the module creates; Checkov misses across count.
+  - CKV2_AWS_61  # (C) S3 lifecycle — aws_s3_bucket_lifecycle_configuration is wired on every bucket; same Checkov tracing limitation.
+  - CKV_AWS_157  # (C) RDS Multi-AZ — we explicitly set multi_az = true on aws_db_instance.main; Checkov flags conditional `count = var.use_rds ? 1 : 0` resources as "could be 0 instances, therefore not multi-AZ."
+  - CKV2_AWS_60  # (C) RDS copy_tags_to_snapshot — we wire copy_tags_to_snapshot = var.rds_copy_tags_to_snapshot (default true); same tracing limitation as above.
+  - CKV2_AZURE_21 # (C) Storage logging for Blob read requests — Azure Storage emits diagnostic logs via the standard diagnostic_setting pattern, which Checkov doesn't link to the storage account through Terraform module references.
+
+  # ---------- (E) Opt-in via variable; default off keeps the starter shape cheap ----------
+  - CKV_AWS_118 # (E) RDS enhanced monitoring — opt-in via var.rds_enhanced_monitoring_interval (set > 0 to enable; module provisions the IAM role automatically). Adds ~$15/mo per monitored instance via CloudWatch ingestion.
+  - CKV_AWS_129 # (E) RDS log exports to CloudWatch — opt-in via var.rds_enabled_cloudwatch_log_types (set to e.g. ["postgresql","upgrade"]). Adds CWL ingestion + storage cost; not worth the bill on PoC shapes.
+  - CKV_AWS_161 # (E) RDS IAM authentication — opt-in via var.rds_iam_authentication_enabled. Real value but the app side needs to mint IAM tokens; default off until customer wires that.
+  - CKV_AWS_353 # (E) RDS Performance Insights — opt-in via var.rds_performance_insights_enabled (KMS-encrypted automatically when var.enable_customer_managed_key is also set).
+  - CKV_AZURE_136 # (E) Postgres Flexible Server geo-redundant backups — opt-in via var.postgres_geo_redundant_backup_enabled. Adds cross-region backup storage cost; customer DR choice.
+
+  # ---------- (C) False positives on conditional / count-bound resources (RDS / CWL) ----------
+  - CKV_AWS_133 # (C) RDS backup policy — we DO set backup_retention_period (default 7 days, configurable via var.rds_backup_retention_period); Checkov misses across conditional `count = var.use_rds ? 1 : 0`.
+  - CKV_AWS_158 # (C) CloudWatch log group KMS — we DO set kms_key_id when var.enable_customer_managed_key is true; Checkov flags any group where kms_key_id can resolve to null (the no-CMK path) without considering the variable.
+  - CKV_AWS_293 # (C) DB deletion protection — we set deletion_protection = var.db_deletion_protection with default true; Checkov can't trace the var default through wrapper modules and conservatively flags the conditional.
+
+  # ---------- (B) IAM patterns we deliberately use ----------
+  - CKV_AWS_290 # (B) IAM no write without constraints — our IAM policies that legitimately need wildcard write (ec2:CreateSnapshot, etc.) are documented inline and scoped by resource ARN where possible.
+  - CKV_AWS_355 # (B) IAM no `*` in resource for restrictable actions — same root cause; some AWS actions (e.g. ec2:DescribeSnapshots) literally do not support resource-level restrictions, so `*` is the only valid value.

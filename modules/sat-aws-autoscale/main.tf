@@ -1,7 +1,7 @@
 module "this" {
-  source                          = "../unlimited-scale/aws"
+  source = "../unlimited-scale/aws"
 
-  product                         = "sat"
+  product = "sat"
 
   vpc_id                          = var.vpc_id
   public_subnet_ids               = var.public_subnet_ids
@@ -42,6 +42,24 @@ module "this" {
   waf_web_acl_arn                           = var.waf_web_acl_arn
   rds_copy_tags_to_snapshot                 = var.rds_copy_tags_to_snapshot
   schema_version_endpoint_path              = var.schema_version_endpoint_path
+
+  # Shared session store (ElastiCache for Redis)
+  enable_managed_redis          = var.enable_managed_redis
+  redis_node_type               = var.redis_node_type
+  redis_engine_version          = var.redis_engine_version
+  redis_snapshot_retention_days = var.redis_snapshot_retention_days
+  redis_endpoint_override       = var.redis_endpoint_override
+  redis_endpoint_override_port  = var.redis_endpoint_override_port
+  redis_endpoint_override_tls   = var.redis_endpoint_override_tls
+
+  enable_alb_deletion_protection = var.enable_alb_deletion_protection
+
+  # RDS production hardening (opt-in)
+  rds_enhanced_monitoring_interval        = var.rds_enhanced_monitoring_interval
+  rds_enabled_cloudwatch_log_types        = var.rds_enabled_cloudwatch_log_types
+  rds_iam_authentication_enabled          = var.rds_iam_authentication_enabled
+  rds_performance_insights_enabled        = var.rds_performance_insights_enabled
+  rds_performance_insights_retention_days = var.rds_performance_insights_retention_days
 
   tags = var.tags
 }
