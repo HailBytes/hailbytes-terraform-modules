@@ -333,7 +333,7 @@ resource "azurerm_postgresql_flexible_server" "primary" {
   private_dns_zone_id = var.private_dns_zone_id
 
   backup_retention_days        = var.db_backup_retention_days
-  geo_redundant_backup_enabled = true
+  geo_redundant_backup_enabled = var.postgres_geo_redundant_backup_enabled
 
   high_availability {
     mode = "ZoneRedundant"

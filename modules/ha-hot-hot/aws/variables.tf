@@ -282,6 +282,43 @@ variable "schema_version_endpoint_path" {
   default     = "/api/instance/schema-version"
 }
 
+
+# ----- RDS production-hardening (opt-in) -----
+
+variable "rds_enhanced_monitoring_interval" {
+  description = "RDS enhanced monitoring sample interval in seconds (0, 1, 5, 10, 15, 30, 60). 0 disables enhanced monitoring. Default 0; production deployments typically set 60. CKV_AWS_118."
+  type        = number
+  default     = 0
+  validation {
+    condition     = contains([0, 1, 5, 10, 15, 30, 60], var.rds_enhanced_monitoring_interval)
+    error_message = "rds_enhanced_monitoring_interval must be one of: 0, 1, 5, 10, 15, 30, 60."
+  }
+}
+
+variable "rds_enabled_cloudwatch_log_types" {
+  description = "RDS log types to export to CloudWatch. Empty list = no log exports (cost-saving default). Production should set to [\"postgresql\", \"upgrade\"]. CKV_AWS_129."
+  type        = list(string)
+  default     = []
+}
+
+variable "rds_iam_authentication_enabled" {
+  description = "Enable IAM database authentication on the RDS instance. Adds app-side complexity (psql connections must mint IAM tokens) but eliminates long-lived passwords. CKV_AWS_161."
+  type        = bool
+  default     = false
+}
+
+variable "rds_performance_insights_enabled" {
+  description = "Enable RDS Performance Insights. Adds ~$0/instance for 7-day retention (free tier); KMS-encrypted automatically when enable_customer_managed_key is also set. CKV_AWS_354."
+  type        = bool
+  default     = false
+}
+
+variable "rds_performance_insights_retention_days" {
+  description = "Performance Insights data retention. 7 = free tier (default); 731 = long-term retention (paid)."
+  type        = number
+  default     = 7
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

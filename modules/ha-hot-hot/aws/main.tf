@@ -309,9 +309,14 @@ resource "aws_db_instance" "main" {
   final_snapshot_identifier = var.db_deletion_protection ? "${local.name_prefix}-final-${formatdate("YYYYMMDD-hhmmss", timestamp())}" : null
   copy_tags_to_snapshot     = var.rds_copy_tags_to_snapshot
 
-  performance_insights_enabled    = true
-  enabled_cloudwatch_logs_exports = ["postgresql", "upgrade"]
-  auto_minor_version_upgrade      = true
+  iam_database_authentication_enabled   = var.rds_iam_authentication_enabled
+  performance_insights_enabled          = var.rds_performance_insights_enabled
+  performance_insights_kms_key_id       = var.rds_performance_insights_enabled && var.enable_customer_managed_key ? aws_kms_key.main[0].arn : null
+  performance_insights_retention_period = var.rds_performance_insights_enabled ? var.rds_performance_insights_retention_days : null
+  monitoring_interval                   = var.rds_enhanced_monitoring_interval
+  monitoring_role_arn                   = var.rds_enhanced_monitoring_interval > 0 ? aws_iam_role.rds_monitoring[0].arn : null
+  enabled_cloudwatch_logs_exports       = var.rds_enabled_cloudwatch_log_types
+  auto_minor_version_upgrade            = true
 
   tags = local.common_tags
 
@@ -1142,4 +1147,32 @@ resource "aws_s3_bucket_policy" "alb_logs" {
       Resource  = "${aws_s3_bucket.alb_logs[0].arn}/*"
     }]
   })
+}
+
+# ----- RDS enhanced monitoring IAM role (conditional) -----
+#
+# Only provisioned when var.rds_enhanced_monitoring_interval > 0.
+# CKV_AWS_118 wants this on production deployments; we keep it
+# opt-in because it adds ~$15/mo in CloudWatch ingestion at the
+# default 60-second interval.
+
+resource "aws_iam_role" "rds_monitoring" {
+  count = local.use_rds && var.rds_enhanced_monitoring_interval > 0 ? 1 : 0
+  name  = "${local.name_prefix}-rds-monitoring"
+  tags  = local.common_tags
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "monitoring.rds.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "rds_monitoring" {
+  count      = local.use_rds && var.rds_enhanced_monitoring_interval > 0 ? 1 : 0
+  role       = aws_iam_role.rds_monitoring[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
 }

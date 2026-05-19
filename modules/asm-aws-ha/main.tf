@@ -54,5 +54,12 @@ module "this" {
   enable_alb_access_logging      = var.enable_alb_access_logging
   alb_access_log_retention_days  = var.alb_access_log_retention_days
 
+  # RDS production hardening (opt-in)
+  rds_enhanced_monitoring_interval        = var.rds_enhanced_monitoring_interval
+  rds_enabled_cloudwatch_log_types        = var.rds_enabled_cloudwatch_log_types
+  rds_iam_authentication_enabled          = var.rds_iam_authentication_enabled
+  rds_performance_insights_enabled        = var.rds_performance_insights_enabled
+  rds_performance_insights_retention_days = var.rds_performance_insights_retention_days
+
   tags = var.tags
 }

@@ -264,6 +264,43 @@ variable "schema_version_endpoint_path" {
   default     = "/api/instance/schema-version"
 }
 
+
+# ----- RDS production-hardening (opt-in) -----
+
+variable "rds_enhanced_monitoring_interval" {
+  description = "RDS enhanced monitoring sample interval in seconds. 0 disables. Default 0; production typically 60. CKV_AWS_118."
+  type        = number
+  default     = 0
+  validation {
+    condition     = contains([0, 1, 5, 10, 15, 30, 60], var.rds_enhanced_monitoring_interval)
+    error_message = "rds_enhanced_monitoring_interval must be one of: 0, 1, 5, 10, 15, 30, 60."
+  }
+}
+
+variable "rds_enabled_cloudwatch_log_types" {
+  description = "RDS log types to export to CloudWatch. Empty list = none (cost-saving default). Production should set [\"postgresql\", \"upgrade\"]. CKV_AWS_129."
+  type        = list(string)
+  default     = []
+}
+
+variable "rds_iam_authentication_enabled" {
+  description = "Enable IAM database authentication on RDS. CKV_AWS_161."
+  type        = bool
+  default     = false
+}
+
+variable "rds_performance_insights_enabled" {
+  description = "Enable RDS Performance Insights. CKV_AWS_354."
+  type        = bool
+  default     = false
+}
+
+variable "rds_performance_insights_retention_days" {
+  description = "Performance Insights data retention. 7 = free tier (default); 731 = long-term."
+  type        = number
+  default     = 7
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
