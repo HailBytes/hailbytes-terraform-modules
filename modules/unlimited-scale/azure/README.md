@@ -22,6 +22,17 @@ flowchart TB
     Mon -.alerts.-> AG[Action Group<br/>email]
 ```
 
+## TLS termination
+
+The default frontend is the Standard Load Balancer, which does **TCP passthrough on 443** — the operator's browser terminates TLS directly against the VMSS instance's self-signed certificate. Because VMSS instances rotate on autoscale and rolling refresh, the cert CN is the per-instance hostname (generated on first boot from IMDS) and never matches the LB public IP or any DNS record you point at it. Operators see a browser warning on every visit, and the warning surface gets worse as instances roll.
+
+For production, pick one:
+
+- **Recommended.** Set `enable_application_gateway = true` and supply a valid PFX bundle via `appgw_tls_pfx_base64` / `appgw_tls_pfx_password`. App Gateway terminates TLS with your certificate; per-instance certs are no longer user-visible and rolling-refresh stops surfacing cert churn. This also unlocks `waf_policy_id` for WAF parity with the AWS ALB story.
+- Front the module with your own upstream L7 LB / reverse proxy (Azure Front Door, NGINX, etc.) that terminates TLS with a certificate matching the URL operators actually use.
+
+The default LB mode is appropriate for dev / PoC and for compliance-led deployments where the operator URL is a per-instance hostname inside a private vnet.
+
 ## Cost estimate (East US, pay-as-you-go, default sizing)
 
 Unlimited-scale on Azure is a fundamentally different cost shape from
