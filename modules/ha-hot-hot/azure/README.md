@@ -22,6 +22,17 @@ flowchart TB
     RC -.failover.-> RCS[(Replica in second zone)]
 ```
 
+## TLS termination
+
+The default frontend is the Standard Load Balancer, which does **TCP passthrough on 443** — the operator's browser terminates TLS directly against the VM's self-signed certificate. The marketplace AMI generates that certificate on first boot with the per-VM hostname as the CN, so it will **not** match the LB public IP nor any DNS record (Azure Private DNS, Route 53, etc.) you point at it. Browsers will warn on every visit.
+
+For production, pick one:
+
+- **Recommended.** Set `enable_application_gateway = true` and supply a valid PFX bundle via `appgw_tls_pfx_base64` / `appgw_tls_pfx_password`. App Gateway terminates TLS with your certificate; the backend hop to the VMs is not user-visible. This also unlocks `waf_policy_id` for WAF parity with the AWS ALB story.
+- Front the module with your own upstream L7 LB / reverse proxy (Azure Front Door, NGINX, etc.) that terminates TLS with a certificate matching the URL operators actually use.
+
+The default LB mode is appropriate for dev / PoC and for compliance-led deployments where the operator URL is the per-VM hostname inside a private vnet.
+
 ## Cost estimate (East US, pay-as-you-go)
 
 For the three-shape AWS comparison and the canonical procurement-grade
