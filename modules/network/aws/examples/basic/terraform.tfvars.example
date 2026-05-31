@@ -1,0 +1,4 @@
+region      = "us-east-1"
+name_prefix = "hailbytes-prod"
+az_count    = 2
+environment = "prod"
