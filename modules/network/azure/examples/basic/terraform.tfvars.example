@@ -1,0 +1,4 @@
+resource_group_name = "rg-hailbytes-prod"
+location            = "eastus"
+name_prefix         = "hailbytes-prod"
+environment         = "prod"
