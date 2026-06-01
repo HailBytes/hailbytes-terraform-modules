@@ -61,3 +61,8 @@ output "pre_patch_ssm_document_name" {
   value     = module.this.pre_patch_ssm_document_name
   sensitive = false
 }
+
+output "flow_log_group_name" {
+  value     = module.this.flow_log_group_name
+  sensitive = false
+}
