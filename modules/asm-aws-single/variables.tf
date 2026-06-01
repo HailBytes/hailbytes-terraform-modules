@@ -115,6 +115,12 @@ variable "backup_noncurrent_version_expiration_days" {
   default     = 365
 }
 
+variable "enable_flow_logs" {
+  description = "Enable VPC Flow Logs for the provided VPC, sending ALL traffic to a CloudWatch log group. Matches the default stated in SECURITY-DEFAULTS.md."
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   description = "Additional tags applied to every resource."
   type        = map(string)
