@@ -14,11 +14,13 @@ on:
   pull_request:
     paths:
       - 'modules/**'
+      - '.tflint.hcl'
       - '.github/workflows/ci.yml'
   push:
     branches: [main]
     paths:
       - 'modules/**'
+      - '.tflint.hcl'
       - '.github/workflows/ci.yml'
 
 permissions:
