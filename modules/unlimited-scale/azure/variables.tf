@@ -13,7 +13,14 @@ variable "location" { type = string }
 variable "vm_subnet_id" { type = string }
 variable "db_delegated_subnet_id" { type = string }
 variable "private_dns_zone_id" { type = string }
-variable "allowed_cidrs" { type = list(string) }
+variable "allowed_cidrs" {
+  description = "CIDR blocks permitted to reach the load balancer on port 443."
+  type        = list(string)
+  validation {
+    condition     = alltrue([for c in var.allowed_cidrs : can(cidrhost(c, 0))])
+    error_message = "Each entry in allowed_cidrs must be a valid CIDR block (e.g. 10.0.0.0/8)."
+  }
+}
 variable "admin_username" { type = string }
 variable "ssh_public_key" { type = string }
 
