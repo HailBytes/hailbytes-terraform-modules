@@ -29,7 +29,12 @@ variable "private_subnet_ids" {
 }
 
 variable "allowed_cidrs" {
-  type = list(string)
+  description = "CIDR blocks permitted to reach the ALB on port 443."
+  type        = list(string)
+  validation {
+    condition     = alltrue([for c in var.allowed_cidrs : can(cidrhost(c, 0))])
+    error_message = "Each entry in allowed_cidrs must be a valid CIDR block (e.g. 10.0.0.0/8)."
+  }
 }
 
 variable "acm_certificate_arn" {
