@@ -112,6 +112,47 @@ jobs:
         working-directory: modules/${{ matrix.module }}
         run: terraform validate -no-color
 
+  # ---------------------------------------------------------------------
+  # terraform test — Terraform native tests (.tftest.hcl) with mock
+  # providers.  validate proves the HCL parses; this proves each tier
+  # module produces a correct plan: minimal-input apply succeeds, every
+  # operator-facing output is populated, and conditional resources honour
+  # their feature flags (KMS/CMK, managed Redis, backup bucket, Multi-AZ /
+  # ZoneRedundant DB).  mock_provider stubs the cloud APIs entirely, so no
+  # AWS/Azure credentials are needed.
+  # ---------------------------------------------------------------------
+  terraform-test:
+    name: terraform test — ${{ matrix.module }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - single-vm/aws
+          - ha-hot-hot/aws
+          - unlimited-scale/aws
+          - single-vm/azure
+          - ha-hot-hot/azure
+          - unlimited-scale/azure
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform init (no backend)
+        working-directory: modules/${{ matrix.module }}
+        run: terraform init -backend=false -input=false
+
+      - name: terraform test
+        working-directory: modules/${{ matrix.module }}
+        run: terraform test -no-color
+
   tflint:
     name: tflint
     runs-on: ubuntu-24.04

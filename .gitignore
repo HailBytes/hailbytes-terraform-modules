@@ -1,6 +1,10 @@
 # Local .terraform directories
 **/.terraform/*
 
+# Provider dependency lock files — consumers pin their own; module dirs only
+# acquire one transiently during `terraform init` for validate/test in CI.
+**/.terraform.lock.hcl
+
 # .tfstate files
 *.tfstate
 *.tfstate.*
