@@ -1,18 +1,62 @@
-output "alb_dns_name" { value = aws_lb.main.dns_name }
-output "alb_zone_id" { value = aws_lb.main.zone_id }
-output "alb_arn" { value = aws_lb.main.arn }
+output "alb_dns_name" {
+  description = "Public DNS name of the ALB. Point your CNAME / Route 53 alias here."
+  value       = aws_lb.main.dns_name
+}
 
-output "autoscaling_group_name" { value = aws_autoscaling_group.main.name }
-output "autoscaling_group_arn" { value = aws_autoscaling_group.main.arn }
-output "launch_template_id" { value = aws_launch_template.main.id }
+output "alb_zone_id" {
+  description = "Hosted zone ID of the ALB, for Route 53 alias records."
+  value       = aws_lb.main.zone_id
+}
 
-output "db_endpoint" { value = aws_db_instance.primary.endpoint }
-output "db_read_endpoints" { value = aws_db_instance.replica[*].endpoint }
-output "db_secret_arn" { value = aws_secretsmanager_secret.db.arn }
+output "alb_arn" {
+  description = "ARN of the ALB. Use when attaching a WAFv2 web ACL or AWS Shield Advanced protection."
+  value       = aws_lb.main.arn
+}
 
-output "sns_alerts_topic_arn" { value = aws_sns_topic.alerts.arn }
-output "ami_id" { value = data.aws_ami.hailbytes.id }
-output "alb_access_logs_bucket" { value = aws_s3_bucket.alb_logs.id }
+output "autoscaling_group_name" {
+  description = "Name of the Auto Scaling Group. Use with the AWS CLI or console to trigger an instance refresh after an AMI update."
+  value       = aws_autoscaling_group.main.name
+}
+
+output "autoscaling_group_arn" {
+  description = "ARN of the Auto Scaling Group."
+  value       = aws_autoscaling_group.main.arn
+}
+
+output "launch_template_id" {
+  description = "ID of the EC2 launch template. Reference this when creating a new launch template version for an AMI update."
+  value       = aws_launch_template.main.id
+}
+
+output "db_endpoint" {
+  description = "Endpoint (host:port) of the primary RDS instance. Connection credentials are in Secrets Manager."
+  value       = aws_db_instance.primary.endpoint
+}
+
+output "db_read_endpoints" {
+  description = "List of endpoints (host:port) for each RDS read replica. Empty when var.db_read_replica_count is 0."
+  value       = aws_db_instance.replica[*].endpoint
+}
+
+output "db_secret_arn" {
+  description = "Secrets Manager ARN containing the Postgres credentials for the primary RDS instance."
+  value       = aws_secretsmanager_secret.db.arn
+}
+
+output "sns_alerts_topic_arn" {
+  description = "ARN of the SNS topic used for patching-tripwire and CloudWatch alarms. Subscribe an email or PagerDuty endpoint here."
+  value       = aws_sns_topic.alerts.arn
+}
+
+output "ami_id" {
+  description = "ID of the HailBytes AMI resolved at plan time. Record this alongside each deployment for rollback reference."
+  value       = data.aws_ami.hailbytes.id
+}
+
+output "alb_access_logs_bucket" {
+  description = "Name of the S3 bucket receiving ALB access logs."
+  value       = aws_s3_bucket.alb_logs.id
+}
 
 # ----- Patching and migration safety -----
 
