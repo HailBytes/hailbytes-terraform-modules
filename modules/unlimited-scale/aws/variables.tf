@@ -64,6 +64,10 @@ variable "redis_engine_version" {
 variable "redis_snapshot_retention_days" {
   type    = number
   default = 0
+  validation {
+    condition     = var.redis_snapshot_retention_days >= 0 && var.redis_snapshot_retention_days <= 35
+    error_message = "redis_snapshot_retention_days must be between 0 and 35 (ElastiCache limit)."
+  }
 }
 
 variable "redis_endpoint_override" {
@@ -75,6 +79,10 @@ variable "redis_endpoint_override" {
 variable "redis_endpoint_override_port" {
   type    = number
   default = 6379
+  validation {
+    condition     = var.redis_endpoint_override_port >= 1 && var.redis_endpoint_override_port <= 65535
+    error_message = "redis_endpoint_override_port must be a valid TCP port (1–65535)."
+  }
 }
 
 variable "redis_endpoint_override_tls" {
@@ -87,16 +95,28 @@ variable "redis_endpoint_override_tls" {
 variable "asg_min_size" {
   type    = number
   default = 3
+  validation {
+    condition     = var.asg_min_size >= 1
+    error_message = "asg_min_size must be at least 1."
+  }
 }
 
 variable "asg_max_size" {
   type    = number
   default = 20
+  validation {
+    condition     = var.asg_max_size >= 1
+    error_message = "asg_max_size must be at least 1."
+  }
 }
 
 variable "asg_desired_capacity" {
   type    = number
   default = 3
+  validation {
+    condition     = var.asg_desired_capacity >= 1
+    error_message = "asg_desired_capacity must be at least 1."
+  }
 }
 
 variable "instance_type" {
@@ -113,11 +133,19 @@ variable "enable_alb_deletion_protection" {
 variable "target_cpu_utilization" {
   type    = number
   default = 60
+  validation {
+    condition     = var.target_cpu_utilization >= 1 && var.target_cpu_utilization <= 100
+    error_message = "target_cpu_utilization must be between 1 and 100."
+  }
 }
 
 variable "target_request_count_per_target" {
   type    = number
   default = 500
+  validation {
+    condition     = var.target_request_count_per_target >= 1
+    error_message = "target_request_count_per_target must be at least 1."
+  }
 }
 
 # ----- DB sizing -----
@@ -130,11 +158,19 @@ variable "db_instance_class" {
 variable "db_allocated_storage_gb" {
   type    = number
   default = 200
+  validation {
+    condition     = var.db_allocated_storage_gb >= 20 && var.db_allocated_storage_gb <= 65536
+    error_message = "db_allocated_storage_gb must be between 20 and 65536 GB (RDS Postgres limits)."
+  }
 }
 
 variable "db_max_allocated_storage_gb" {
   type    = number
   default = 2000
+  validation {
+    condition     = var.db_max_allocated_storage_gb >= 21 && var.db_max_allocated_storage_gb <= 65536
+    error_message = "db_max_allocated_storage_gb must be between 21 and 65536 GB."
+  }
 }
 
 variable "db_engine_version" {
@@ -146,11 +182,19 @@ variable "db_backup_retention_days" {
   description = "Days RDS retains automated daily backups. 30 covers a typical monthly review cycle and aligns with the pre-patch on-demand snapshot lifecycle."
   type        = number
   default     = 30
+  validation {
+    condition     = var.db_backup_retention_days >= 0 && var.db_backup_retention_days <= 35
+    error_message = "db_backup_retention_days must be between 0 and 35 days (RDS limit)."
+  }
 }
 
 variable "db_read_replica_count" {
   type    = number
   default = 2
+  validation {
+    condition     = var.db_read_replica_count >= 0 && var.db_read_replica_count <= 5
+    error_message = "db_read_replica_count must be between 0 and 5."
+  }
 }
 
 variable "db_deletion_protection" {
@@ -188,6 +232,10 @@ variable "enable_flow_logs" {
 variable "access_log_retention_days" {
   type    = number
   default = 90
+  validation {
+    condition     = var.access_log_retention_days >= 1
+    error_message = "access_log_retention_days must be at least 1."
+  }
 }
 
 variable "marketplace_product_code" {
@@ -220,30 +268,50 @@ variable "backup_object_lock_retention_days" {
   description = "Object Lock (governance mode) retention period for backup objects. 30 days satisfies the procurement-grade safety net while still allowing privileged operator override for compaction."
   type        = number
   default     = 30
+  validation {
+    condition     = var.backup_object_lock_retention_days >= 1
+    error_message = "backup_object_lock_retention_days must be at least 1."
+  }
 }
 
 variable "backup_noncurrent_version_expiration_days" {
   description = "Expire noncurrent versions of backup objects after this many days. 365 retains a year of pre-patch bundles for rollback."
   type        = number
   default     = 365
+  validation {
+    condition     = var.backup_noncurrent_version_expiration_days >= 1
+    error_message = "backup_noncurrent_version_expiration_days must be at least 1."
+  }
 }
 
 variable "instance_refresh_min_healthy_percentage" {
   description = "Minimum percentage of the ASG that must remain healthy during an instance refresh. 50 drains one instance at a time on a 2-instance ASG; tune higher for larger fleets that can tolerate parallel replacement."
   type        = number
   default     = 50
+  validation {
+    condition     = var.instance_refresh_min_healthy_percentage >= 0 && var.instance_refresh_min_healthy_percentage <= 100
+    error_message = "instance_refresh_min_healthy_percentage must be between 0 and 100."
+  }
 }
 
 variable "instance_refresh_instance_warmup_seconds" {
   description = "Seconds the ASG considers a new instance 'warming up' before counting toward healthy_percentage. 120 is enough for the SAT marketplace AMI to pass the ALB /health probe; raise for slower boot images."
   type        = number
   default     = 120
+  validation {
+    condition     = var.instance_refresh_instance_warmup_seconds >= 0
+    error_message = "instance_refresh_instance_warmup_seconds must be non-negative."
+  }
 }
 
 variable "refresh_rollback_5xx_threshold_pct" {
   description = "Target-group 5xx rate (percent) above which the instance refresh auto-rollback alarm fires. Default 1% over 2 evaluation periods of 1 minute."
   type        = number
   default     = 1
+  validation {
+    condition     = var.refresh_rollback_5xx_threshold_pct >= 0 && var.refresh_rollback_5xx_threshold_pct <= 100
+    error_message = "refresh_rollback_5xx_threshold_pct must be between 0 and 100."
+  }
 }
 
 variable "waf_web_acl_arn" {
@@ -299,6 +367,10 @@ variable "rds_performance_insights_retention_days" {
   description = "Performance Insights data retention. 7 = free tier (default); 731 = long-term."
   type        = number
   default     = 7
+  validation {
+    condition     = contains([7, 731], var.rds_performance_insights_retention_days)
+    error_message = "rds_performance_insights_retention_days must be 7 (free tier) or 731 (long-term paid)."
+  }
 }
 
 variable "tags" {

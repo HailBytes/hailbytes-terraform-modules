@@ -54,12 +54,20 @@ variable "root_volume_size_gb" {
   description = "Root volume size in GB."
   type        = number
   default     = 50
+  validation {
+    condition     = var.root_volume_size_gb >= 8 && var.root_volume_size_gb <= 16384
+    error_message = "root_volume_size_gb must be between 8 and 16384 GB."
+  }
 }
 
 variable "data_volume_size_gb" {
   description = "Data volume size in GB. Attached as /dev/sdh; the marketplace image mounts and formats on first boot."
   type        = number
   default     = 200
+  validation {
+    condition     = var.data_volume_size_gb >= 1 && var.data_volume_size_gb <= 16384
+    error_message = "data_volume_size_gb must be between 1 and 16384 GB."
+  }
 }
 
 variable "enable_customer_managed_key" {
@@ -116,12 +124,20 @@ variable "backup_object_lock_retention_days" {
   description = "Object Lock (governance mode) retention period for backup objects."
   type        = number
   default     = 30
+  validation {
+    condition     = var.backup_object_lock_retention_days >= 1
+    error_message = "backup_object_lock_retention_days must be at least 1."
+  }
 }
 
 variable "backup_noncurrent_version_expiration_days" {
   description = "Expire noncurrent versions of backup objects after this many days."
   type        = number
   default     = 365
+  validation {
+    condition     = var.backup_noncurrent_version_expiration_days >= 1
+    error_message = "backup_noncurrent_version_expiration_days must be at least 1."
+  }
 }
 
 variable "tags" {
