@@ -136,7 +136,7 @@ variable "db_engine_version" {
 }
 
 variable "db_backup_retention_days" {
-  description = "Deprecated alias for rds_backup_retention_period. If both are set, rds_backup_retention_period wins. Kept for backward compatibility with pre-patching-safety configs."
+  description = "Deprecated alias for rds_backup_retention_period. When set (non-null), this value wins over rds_backup_retention_period. Leave null and use rds_backup_retention_period instead. Kept for backward compatibility with pre-patching-safety configs."
   type        = number
   default     = null
 }

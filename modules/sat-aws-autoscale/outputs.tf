@@ -86,3 +86,18 @@ output "waf_attached" {
   value     = module.this.waf_attached
   sensitive = false
 }
+
+output "post_patch_ssm_document_name" {
+  value     = module.this.post_patch_ssm_document_name
+  sensitive = false
+}
+
+output "redis_endpoint" {
+  value     = module.this.redis_endpoint
+  sensitive = false
+}
+
+output "redis_mode" {
+  value     = module.this.redis_mode
+  sensitive = false
+}

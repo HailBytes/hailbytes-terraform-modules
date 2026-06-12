@@ -297,7 +297,7 @@ resource "azurerm_storage_container" "backup" {
 
 resource "azurerm_storage_container_immutability_policy" "backup" {
   count                                 = local.create_backup_storage ? 1 : 0
-  storage_container_resource_manager_id = azurerm_storage_container.backup[0].resource_manager_id
+  storage_container_resource_manager_id = azurerm_storage_container.backup[0].id
   immutability_period_in_days           = var.backup_immutability_days
   protected_append_writes_all_enabled   = false
 }

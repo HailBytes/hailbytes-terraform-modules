@@ -101,6 +101,7 @@ module "hailbytes_asm_scale" {
 ```bash
 cd examples/basic
 cp terraform.tfvars.example terraform.tfvars
+# edit terraform.tfvars — replace every REPLACE placeholder before applying
 terraform init && terraform apply
 ```
 

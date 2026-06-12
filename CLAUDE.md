@@ -50,7 +50,7 @@ Run `terraform validate` and `tflint` locally before pushing.
 |------|---------|
 | Terraform | `>= 1.5.0` |
 | AWS provider | `>= 5.0` |
-| Azure provider | `>= 3.0` |
+| Azure provider | `>= 4.0, < 5.0` |
 
 GovCloud (AWS) and Azure Government are out of scope for v1.
 
