@@ -20,6 +20,7 @@ module "this" {
   name_prefix                      = var.name_prefix
   vm_size                          = var.vm_size
   data_disk_size_gb                = var.data_disk_size_gb
+  enable_customer_managed_key      = var.enable_customer_managed_key
   db_sku_name                      = var.db_sku_name
   db_storage_mb                    = var.db_storage_mb
   db_version                       = var.db_version
