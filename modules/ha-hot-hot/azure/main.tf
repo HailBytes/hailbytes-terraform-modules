@@ -126,6 +126,54 @@ resource "azurerm_key_vault_secret" "db" {
   depends_on = [azurerm_role_assignment.kv_secret_writer]
 }
 
+# ----- Disk encryption set (optional CMK) -----
+#
+# Mirrors the single-vm tier's enable_customer_managed_key option, but keys
+# live in this module's own Key Vault (purge protection is already on, as
+# disk encryption sets require).
+
+resource "azurerm_role_assignment" "kv_crypto_officer" {
+  count = var.enable_customer_managed_key ? 1 : 0
+
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Crypto Officer"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
+
+resource "azurerm_key_vault_key" "disk" {
+  count = var.enable_customer_managed_key ? 1 : 0
+
+  name         = "${local.name_prefix}-disk-key"
+  key_vault_id = azurerm_key_vault.main.id
+  key_type     = "RSA"
+  key_size     = 4096
+  key_opts     = ["decrypt", "encrypt", "sign", "unwrapKey", "verify", "wrapKey"]
+
+  depends_on = [azurerm_role_assignment.kv_crypto_officer]
+}
+
+resource "azurerm_disk_encryption_set" "vm" {
+  count = var.enable_customer_managed_key ? 1 : 0
+
+  name                = "${local.name_prefix}-des"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  key_vault_key_id    = azurerm_key_vault_key.disk[0].id
+  tags                = local.common_tags
+
+  identity {
+    type = "SystemAssigned"
+  }
+}
+
+resource "azurerm_role_assignment" "des_kv_crypto_user" {
+  count = var.enable_customer_managed_key ? 1 : 0
+
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Crypto Service Encryption User"
+  principal_id         = azurerm_disk_encryption_set.vm[0].identity[0].principal_id
+}
+
 # ----- NSG -----
 
 resource "azurerm_network_security_group" "lb" {
@@ -262,9 +310,10 @@ resource "azurerm_linux_virtual_machine" "vm" {
   }
 
   os_disk {
-    caching              = "ReadWrite"
-    storage_account_type = "Premium_LRS"
-    disk_size_gb         = 64
+    caching                = "ReadWrite"
+    storage_account_type   = "Premium_LRS"
+    disk_size_gb           = 64
+    disk_encryption_set_id = var.enable_customer_managed_key ? azurerm_disk_encryption_set.vm[0].id : null
   }
 
   source_image_reference {
@@ -305,20 +354,24 @@ resource "azurerm_linux_virtual_machine" "vm" {
     azurerm_postgresql_flexible_server.main,
     azurerm_linux_virtual_machine.db_vm,
     azurerm_redis_cache.main,
+    azurerm_role_assignment.des_kv_crypto_user,
   ]
 }
 
 resource "azurerm_managed_disk" "data" {
   count = local.vm_count
 
-  name                 = "${local.name_prefix}-data-${count.index + 1}"
-  resource_group_name  = var.resource_group_name
-  location             = var.location
-  storage_account_type = "Premium_LRS"
-  create_option        = "Empty"
-  disk_size_gb         = var.data_disk_size_gb
-  zone                 = local.vm_zones[count.index]
-  tags                 = local.common_tags
+  name                   = "${local.name_prefix}-data-${count.index + 1}"
+  resource_group_name    = var.resource_group_name
+  location               = var.location
+  storage_account_type   = "Premium_LRS"
+  create_option          = "Empty"
+  disk_size_gb           = var.data_disk_size_gb
+  zone                   = local.vm_zones[count.index]
+  disk_encryption_set_id = var.enable_customer_managed_key ? azurerm_disk_encryption_set.vm[0].id : null
+  tags                   = local.common_tags
+
+  depends_on = [azurerm_role_assignment.des_kv_crypto_user]
 }
 
 resource "azurerm_virtual_machine_data_disk_attachment" "data" {
@@ -467,15 +520,18 @@ resource "azurerm_network_interface_security_group_association" "db_vm" {
 }
 
 resource "azurerm_managed_disk" "db_data" {
-  count                = local.use_vm_db ? 1 : 0
-  name                 = "${local.name_prefix}-db-data"
-  resource_group_name  = var.resource_group_name
-  location             = var.location
-  storage_account_type = "Premium_LRS"
-  create_option        = "Empty"
-  disk_size_gb         = var.db_vm_data_disk_size_gb
-  zone                 = "1"
-  tags                 = local.common_tags
+  count                  = local.use_vm_db ? 1 : 0
+  name                   = "${local.name_prefix}-db-data"
+  resource_group_name    = var.resource_group_name
+  location               = var.location
+  storage_account_type   = "Premium_LRS"
+  create_option          = "Empty"
+  disk_size_gb           = var.db_vm_data_disk_size_gb
+  zone                   = "1"
+  disk_encryption_set_id = var.enable_customer_managed_key ? azurerm_disk_encryption_set.vm[0].id : null
+  tags                   = local.common_tags
+
+  depends_on = [azurerm_role_assignment.des_kv_crypto_user]
 }
 
 resource "azurerm_linux_virtual_machine" "db_vm" {
@@ -500,9 +556,10 @@ resource "azurerm_linux_virtual_machine" "db_vm" {
   }
 
   os_disk {
-    caching              = "ReadWrite"
-    storage_account_type = "Premium_LRS"
-    disk_size_gb         = 30
+    caching                = "ReadWrite"
+    storage_account_type   = "Premium_LRS"
+    disk_size_gb           = 30
+    disk_encryption_set_id = var.enable_customer_managed_key ? azurerm_disk_encryption_set.vm[0].id : null
   }
 
   source_image_reference {
@@ -572,6 +629,8 @@ resource "azurerm_linux_virtual_machine" "db_vm" {
       - /usr/local/sbin/hailbytes-init-postgres.sh
   EOC
   )
+
+  depends_on = [azurerm_role_assignment.des_kv_crypto_user]
 }
 
 resource "azurerm_virtual_machine_data_disk_attachment" "db_data" {
@@ -853,6 +912,17 @@ resource "azurerm_application_gateway" "main" {
     backend_address_pool_name  = "vms"
     backend_http_settings_name = "https-passthrough"
     priority                   = 100
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.appgw_subnet_id != null
+      error_message = "appgw_subnet_id is required when enable_application_gateway = true."
+    }
+    precondition {
+      condition     = var.appgw_tls_pfx_base64 != null && var.appgw_tls_pfx_password != null
+      error_message = "appgw_tls_pfx_base64 and appgw_tls_pfx_password are required when enable_application_gateway = true."
+    }
   }
 }
 

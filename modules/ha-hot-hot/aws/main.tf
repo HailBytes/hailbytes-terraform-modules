@@ -367,8 +367,25 @@ resource "aws_iam_role_policy" "db_ec2_backup" {
         Resource = aws_secretsmanager_secret.db.arn
       },
       {
+        Effect = "Allow"
+        Action = ["ec2:CreateSnapshot"]
+        Resource = [
+          aws_ebs_volume.db_data[0].arn,
+          "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:snapshot/*",
+        ]
+      },
+      {
         Effect   = "Allow"
-        Action   = ["ec2:CreateSnapshot", "ec2:CreateTags", "ec2:DescribeVolumes", "ec2:DescribeSnapshots"]
+        Action   = ["ec2:CreateTags"]
+        Resource = "arn:aws:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:snapshot/*"
+        Condition = {
+          StringEquals = { "ec2:CreateAction" = "CreateSnapshot" }
+        }
+      },
+      {
+        # Describe* actions do not support resource-level permissions.
+        Effect   = "Allow"
+        Action   = ["ec2:DescribeVolumes", "ec2:DescribeSnapshots"]
         Resource = "*"
       },
     ]

@@ -303,6 +303,7 @@ resource "azurerm_linux_virtual_machine_scale_set" "main" {
   depends_on = [
     azurerm_marketplace_agreement.hailbytes,
     azurerm_postgresql_flexible_server.primary,
+    azurerm_postgresql_flexible_server.replica,
   ]
 }
 
@@ -783,6 +784,17 @@ resource "azurerm_application_gateway" "main" {
     backend_address_pool_name  = "vmss"
     backend_http_settings_name = "https-passthrough"
     priority                   = 100
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.appgw_subnet_id != null
+      error_message = "appgw_subnet_id is required when enable_application_gateway = true."
+    }
+    precondition {
+      condition     = var.appgw_tls_pfx_base64 != null && var.appgw_tls_pfx_password != null
+      error_message = "appgw_tls_pfx_base64 and appgw_tls_pfx_password are required when enable_application_gateway = true."
+    }
   }
 }
 
