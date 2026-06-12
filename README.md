@@ -156,7 +156,7 @@ See [BILLING.md](BILLING.md) for the full model.
 
 | Module | Terraform | AWS provider | Azure provider | Tested clouds |
 |---|---|---|---|---|
-| All | `>= 1.5.0` | `>= 5.0` | `>= 3.0` | AWS commercial regions, Azure commercial regions |
+| All | `>= 1.5.0` | `>= 5.0` | `>= 4.0, < 5.0` | AWS commercial regions, Azure commercial regions |
 
 GovCloud (AWS) and Azure Government are out of scope for v1.
 
