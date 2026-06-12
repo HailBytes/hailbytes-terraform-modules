@@ -14,6 +14,12 @@ horizontally-scaling ASG. Each has fundamentally different cost
 behaviour, so they're not interpolatable: don't quote "2× a single
 instance" for HA, or "5× HA" for unlimited-scale.
 
+> **This table shows procurement-grade sizing (`m6i.large`), not the
+> module defaults.** A fresh `terraform apply` uses the cheaper starter
+> defaults (`t3.large`) — see
+> [Starter defaults vs procurement-grade sizing](#starter-defaults-vs-procurement-grade-sizing)
+> before quoting these numbers.
+
 | Shape | Module | Instances | Managed services | Infra | + per-vCore meter | **All-in (procurement-grade)** |
 |---|---|---|---|---|---|---|
 | **Single** | [`single-vm/aws`](modules/single-vm/aws) | 1× `m6i.large` | none | ~$84/mo | 2 vCPU × 730h × $0.24 = ~$350/mo | **~$435/mo** |

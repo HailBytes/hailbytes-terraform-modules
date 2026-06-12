@@ -88,6 +88,12 @@ variable "data_disk_size_gb" {
   default = 256
 }
 
+variable "enable_customer_managed_key" {
+  description = "Encrypt VM OS and data disks with a customer-managed key (RSA-4096 in this module's Key Vault, via a disk encryption set) instead of platform-managed keys. Matches the single-vm tier's CMK option."
+  type        = bool
+  default     = false
+}
+
 variable "db_sku_name" {
   description = "Flexible Server SKU (e.g. GP_Standard_D2ds_v5)."
   type        = string

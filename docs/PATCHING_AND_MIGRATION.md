@@ -118,7 +118,7 @@ also happens to be the disaster-recovery runbook.
 
    ```hcl
    module "hailbytes_sat_restore" {
-     source = "github.com/hailbytes/hailbytes-terraform-modules//modules/sat-aws-ha?ref=v1.1.0"
+     source = "github.com/hailbytes/hailbytes-terraform-modules//modules/sat-aws-ha?ref=v1.0.0"
 
      vpc_id              = var.vpc_id
      public_subnet_ids   = var.public_subnets
