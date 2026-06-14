@@ -27,8 +27,6 @@ mock_provider "azurerm" {
   }
 }
 
-mock_provider "random" {}
-
 variables {
   product             = "asm"
   resource_group_name = "rg-hailbytes-test"

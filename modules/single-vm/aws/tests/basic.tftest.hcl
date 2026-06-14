@@ -23,8 +23,6 @@ mock_provider "aws" {
   }
 }
 
-mock_provider "random" {}
-
 variables {
   product              = "asm"
   vpc_id               = "vpc-00000000000000001"
