@@ -2,7 +2,6 @@
 # checks; no credentials needed.
 
 mock_provider "azurerm" {}
-mock_provider "random" {}
 
 variables {
   product             = "asm"
