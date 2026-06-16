@@ -2,7 +2,6 @@
 # checks on resource counts, so no apply or credentials are needed.
 
 mock_provider "aws" {}
-mock_provider "random" {}
 
 variables {
   product       = "asm"
