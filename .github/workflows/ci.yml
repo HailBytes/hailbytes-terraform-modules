@@ -289,6 +289,7 @@ jobs:
           - single-vm/aws/examples/basic
           - single-vm/azure/examples/basic
           - ha-hot-hot/aws/examples/basic
+          - ha-hot-hot/aws/examples/complete
           - ha-hot-hot/azure/examples/basic
           - unlimited-scale/aws/examples/basic
           - unlimited-scale/azure/examples/basic
