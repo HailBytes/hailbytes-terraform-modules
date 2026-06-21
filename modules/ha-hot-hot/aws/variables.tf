@@ -223,9 +223,13 @@ variable "db_ec2_data_volume_size_gb" {
 }
 
 variable "rds_backup_retention_period" {
-  description = "Days RDS retains automated daily backups. 7 satisfies the procurement-grade baseline; raise for longer point-in-time-restore windows."
+  description = "Days RDS retains automated daily backups. 7 satisfies the procurement-grade baseline; raise for longer point-in-time-restore windows. AWS maximum is 35."
   type        = number
   default     = 7
+  validation {
+    condition     = var.rds_backup_retention_period >= 0 && var.rds_backup_retention_period <= 35
+    error_message = "rds_backup_retention_period must be between 0 and 35 (AWS RDS maximum)."
+  }
 }
 
 variable "rds_copy_tags_to_snapshot" {
@@ -317,6 +321,10 @@ variable "rds_performance_insights_retention_days" {
   description = "Performance Insights data retention. 7 = free tier (default); 731 = long-term retention (paid)."
   type        = number
   default     = 7
+  validation {
+    condition     = contains([7, 731], var.rds_performance_insights_retention_days)
+    error_message = "rds_performance_insights_retention_days must be 7 (free tier) or 731 (long-term)."
+  }
 }
 
 variable "tags" {

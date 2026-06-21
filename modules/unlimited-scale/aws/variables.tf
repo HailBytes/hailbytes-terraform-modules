@@ -166,9 +166,13 @@ variable "db_engine_version" {
 }
 
 variable "db_backup_retention_days" {
-  description = "Days RDS retains automated daily backups. 30 covers a typical monthly review cycle and aligns with the pre-patch on-demand snapshot lifecycle."
+  description = "Days RDS retains automated daily backups. 30 covers a typical monthly review cycle and aligns with the pre-patch on-demand snapshot lifecycle. AWS maximum is 35."
   type        = number
   default     = 30
+  validation {
+    condition     = var.db_backup_retention_days >= 0 && var.db_backup_retention_days <= 35
+    error_message = "db_backup_retention_days must be between 0 and 35 (AWS RDS maximum)."
+  }
 }
 
 variable "db_read_replica_count" {
@@ -330,6 +334,10 @@ variable "rds_performance_insights_retention_days" {
   description = "Performance Insights data retention. 7 = free tier (default); 731 = long-term."
   type        = number
   default     = 7
+  validation {
+    condition     = contains([7, 731], var.rds_performance_insights_retention_days)
+    error_message = "rds_performance_insights_retention_days must be 7 (free tier) or 731 (long-term)."
+  }
 }
 
 variable "tags" {
