@@ -1,18 +1,62 @@
-output "alb_dns_name" { value = aws_lb.main.dns_name }
-output "alb_zone_id" { value = aws_lb.main.zone_id }
-output "alb_arn" { value = aws_lb.main.arn }
+output "alb_dns_name" {
+  description = "DNS name of the Application Load Balancer. Use as the CNAME target (or Route 53 alias) for your custom domain."
+  value       = aws_lb.main.dns_name
+}
 
-output "autoscaling_group_name" { value = aws_autoscaling_group.main.name }
-output "autoscaling_group_arn" { value = aws_autoscaling_group.main.arn }
-output "launch_template_id" { value = aws_launch_template.main.id }
+output "alb_zone_id" {
+  description = "Route 53 hosted-zone ID of the ALB; required when creating an alias record in Route 53 instead of a CNAME."
+  value       = aws_lb.main.zone_id
+}
 
-output "db_endpoint" { value = aws_db_instance.primary.endpoint }
-output "db_read_endpoints" { value = aws_db_instance.replica[*].endpoint }
-output "db_secret_arn" { value = aws_secretsmanager_secret.db.arn }
+output "alb_arn" {
+  description = "ARN of the Application Load Balancer. Required for WAFv2 web-ACL association and other integrations."
+  value       = aws_lb.main.arn
+}
 
-output "sns_alerts_topic_arn" { value = aws_sns_topic.alerts.arn }
-output "ami_id" { value = data.aws_ami.hailbytes.id }
-output "alb_access_logs_bucket" { value = aws_s3_bucket.alb_logs.id }
+output "autoscaling_group_name" {
+  description = "Name of the Auto Scaling group. Use this to trigger manual instance refreshes or attach scheduled scaling actions."
+  value       = aws_autoscaling_group.main.name
+}
+
+output "autoscaling_group_arn" {
+  description = "ARN of the Auto Scaling group."
+  value       = aws_autoscaling_group.main.arn
+}
+
+output "launch_template_id" {
+  description = "ID of the EC2 launch template used by the ASG. Useful when inspecting or manually reproducing the instance configuration."
+  value       = aws_launch_template.main.id
+}
+
+output "db_endpoint" {
+  description = "Writer endpoint of the primary RDS instance (host:port). Use in application config for read/write connections."
+  value       = aws_db_instance.primary.endpoint
+}
+
+output "db_read_endpoints" {
+  description = "List of reader endpoints for any RDS read replicas (host:port each). Empty when replica_count = 0."
+  value       = aws_db_instance.replica[*].endpoint
+}
+
+output "db_secret_arn" {
+  description = "ARN of the Secrets Manager secret containing the database credentials. Grant read access to any IAM role that needs to connect to the DB."
+  value       = aws_secretsmanager_secret.db.arn
+}
+
+output "sns_alerts_topic_arn" {
+  description = "ARN of the SNS topic that receives CloudWatch alarm notifications. Subscribe your on-call email address or PagerDuty endpoint here."
+  value       = aws_sns_topic.alerts.arn
+}
+
+output "ami_id" {
+  description = "ID of the HailBytes Marketplace AMI resolved at plan time. Records which image version is deployed; useful for audit trails and rollback."
+  value       = data.aws_ami.hailbytes.id
+}
+
+output "alb_access_logs_bucket" {
+  description = "Name of the S3 bucket that receives ALB access logs. Attach additional lifecycle rules or cross-account replication here if needed."
+  value       = aws_s3_bucket.alb_logs.id
+}
 
 # ----- Patching and migration safety -----
 

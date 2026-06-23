@@ -1,7 +1,8 @@
 # ----- Required -----
 
 variable "product" {
-  type = string
+  description = "HailBytes product to deploy. Must be 'asm' (Attack Surface Management) or 'sat' (Security Awareness Training). Determines which Marketplace AMI is resolved."
+  type        = string
   validation {
     condition     = contains(["asm", "sat"], var.product)
     error_message = "product must be one of: asm, sat."
