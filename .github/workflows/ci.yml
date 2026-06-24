@@ -249,11 +249,17 @@ jobs:
         # but it bundles a Node 16 runtime that GitHub flags as deprecated.
         # tfsec itself (the binary) is fine — install it directly from the
         # GitHub release and we sidestep the action runtime entirely.
+        # The checksums.txt published alongside every tfsec release lets us
+        # verify the binary before executing it, consistent with the SHA-pinned
+        # GitHub Actions used in this workflow.
         run: |
           set -eo pipefail
-          curl -sSfL -o /usr/local/bin/tfsec \
+          curl -sSfL -o /tmp/tfsec-linux-amd64 \
             "https://github.com/aquasecurity/tfsec/releases/download/${TFSEC_VERSION}/tfsec-linux-amd64"
-          chmod +x /usr/local/bin/tfsec
+          curl -sSfL -o /tmp/tfsec-checksums.txt \
+            "https://github.com/aquasecurity/tfsec/releases/download/${TFSEC_VERSION}/checksums.txt"
+          cd /tmp && grep "tfsec-linux-amd64$" tfsec-checksums.txt | sha256sum --check
+          install -m 755 /tmp/tfsec-linux-amd64 /usr/local/bin/tfsec
           tfsec --version
 
       - name: Run tfsec (SARIF, no fail)
