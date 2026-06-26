@@ -1,0 +1,32 @@
+# Trivy IaC ignore list for hailbytes-terraform-modules
+#
+# Every entry below mirrors a suppression already documented and reviewed in
+# .checkov.yaml — same underlying control, different scanner. No finding here is
+# a new or untriaged risk; each is either a deliberate design choice, a
+# customer-governance knob exposed via a module variable, or a static-analysis
+# false positive that the equivalent Checkov rule also waives.
+#
+# When adding an entry: include the AVD ID, a one-line reason, and the matching
+# .checkov.yaml rule where one exists. PRs that add suppressions without
+# rationale will be rejected at review (same policy as .checkov.yaml).
+
+# ---- Deliberate design ----
+AVD-AWS-0104  # Unrestricted egress (0.0.0.0/0) on the VM/VMSS security group — required for marketplace metering, OS/package updates, and managed-DB egress. Documented inline in modules/*/aws/main.tf.
+
+# ---- Customer-governance knobs / cost tradeoffs (opt-in via module variables) ----
+AVD-AWS-0176  # RDS IAM authentication — opt-in via var.rds_iam_authentication_enabled (app must mint IAM tokens). Mirrors Checkov CKV_AWS_161.
+AVD-AZU-0060  # Storage account customer-managed key — opt-in via var.enable_customer_managed_key; platform-managed encryption otherwise. Mirrors Checkov CKV2_AZURE_1.
+AVD-AZU-0061  # Storage account infrastructure (double) encryption — opt-in; platform-managed encryption is in place by default. Same posture as CKV2_AZURE_1.
+AVD-AZU-0024  # PostgreSQL log_checkpoints server parameter — DB tuning/governance, not a sane module default; customers set per policy.
+AVD-AZU-0019  # PostgreSQL log_connections server parameter — same governance rationale as AZU-0024.
+AVD-AZU-0021  # PostgreSQL connection_throttling server parameter — same governance rationale as AZU-0024.
+
+# ---- Private-by-vnet-integration posture (not literal public exposure) ----
+AVD-AZU-0022  # Postgres Flexible Server "public network access" — we use vnet integration via delegated_subnet_id + private DNS, the recommended private posture for Flex Server. Mirrors Checkov CKV2_AZURE_57.
+AVD-AZU-0012  # Storage/Key Vault default network action — we rely on RBAC + vnet integration; explicit network ACLs are a customer-governance choice. Mirrors Checkov CKV_AZURE_109 / CKV_AZURE_189.
+AVD-AZU-0026  # Database minimum TLS version — Azure Postgres Flexible Server enforces TLS 1.2 by default at the service level; the literal attribute is not set on the resource.
+
+# ---- Static-analysis false positives ----
+AVD-AZU-0068  # VM NIC not associated with an NSG — VMs sit in private subnets with NSGs applied at the subnet/NIC layer per module; the LB public IP is a separate resource. Mirrors Checkov CKV_AZURE_119.
+AVD-AWS-0177  # RDS deletion protection — we set deletion_protection = var.db_deletion_protection (default true); the scanner can't trace the variable default through the conditional. Mirrors Checkov CKV_AWS_293.
+AVD-AZU-0057  # Storage account logging — emitted via the standard diagnostic_setting pattern, which the scanner doesn't link back to the storage account. Mirrors Checkov CKV2_AZURE_21.

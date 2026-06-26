@@ -222,57 +222,6 @@ jobs:
           echo "All required cost-shape markers present."
 
   # ---------------------------------------------------------------------
-  # tfsec — static security scan for the Terraform tree.  Catches
-  # encryption-off / public-by-default / IMDSv1-allowed / missing-KMS
-  # type bugs that terraform validate alone misses.  We pin a specific
-  # release and accept inline disables (#tfsec:ignore) where a finding
-  # is intentional (e.g. ALB SGs that *must* accept 0.0.0.0/0 because
-  # they're internet-facing by design).
-  # ---------------------------------------------------------------------
-  tfsec:
-    name: tfsec
-    runs-on: ubuntu-24.04
-    timeout-minutes: 6
-    permissions:
-      contents: read
-      # Upload SARIF for code-scanning UI.  Module authors get the
-      # findings in the PR file-view, not just the run summary.
-      security-events: write
-    env:
-      TFSEC_VERSION: v1.28.13
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Install tfsec
-        # aquasecurity/tfsec-sarif-action@v0.1.4 was the previous step here,
-        # but it bundles a Node 16 runtime that GitHub flags as deprecated.
-        # tfsec itself (the binary) is fine — install it directly from the
-        # GitHub release and we sidestep the action runtime entirely.
-        run: |
-          set -eo pipefail
-          curl -sSfL -o /usr/local/bin/tfsec \
-            "https://github.com/aquasecurity/tfsec/releases/download/${TFSEC_VERSION}/tfsec-linux-amd64"
-          chmod +x /usr/local/bin/tfsec
-          tfsec --version
-
-      - name: Run tfsec (SARIF, no fail)
-        run: tfsec modules --format sarif --out tfsec.sarif --soft-fail
-
-      - name: Upload SARIF to GitHub code-scanning
-        uses: github/codeql-action/upload-sarif@28deaeda66b76a05916b6923827895f2b14ab387 # v3.27.5
-        if: always()
-        with:
-          sarif_file: tfsec.sarif
-          category: tfsec-modules
-
-      - name: Hard gate on HIGH/CRITICAL findings
-        # The SARIF path uploads everything; here we re-run with --severity
-        # so the build fails on HIGH+ and tolerates MEDIUM/LOW that are
-        # already triaged.
-        run: tfsec modules --minimum-severity HIGH --format default --no-color
-
-  # ---------------------------------------------------------------------
   # Examples validation — every modules/*/aws/examples/* and
   # modules/*/azure/examples/* should `terraform validate` clean.  These
   # are the snippets customers copy-paste; a broken one is a worse first
