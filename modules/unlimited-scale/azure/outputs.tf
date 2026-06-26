@@ -2,16 +2,40 @@ output "load_balancer_public_ip" {
   description = "Public IP fronting the deployment. App Gateway IP when enable_application_gateway = true; Standard LB IP otherwise."
   value       = local.endpoint_ip
 }
-output "vmss_id" { value = azurerm_linux_virtual_machine_scale_set.main.id }
-output "vmss_name" { value = azurerm_linux_virtual_machine_scale_set.main.name }
+output "vmss_id" {
+  description = "Resource ID of the Virtual Machine Scale Set."
+  value       = azurerm_linux_virtual_machine_scale_set.main.id
+}
+
+output "vmss_name" {
+  description = "Name of the Virtual Machine Scale Set."
+  value       = azurerm_linux_virtual_machine_scale_set.main.name
+}
+
 output "application_gateway_id" {
   description = "ID of the Application Gateway when enable_application_gateway = true; empty otherwise."
   value       = local.enable_application_gateway ? azurerm_application_gateway.main[0].id : ""
 }
-output "postgres_primary_fqdn" { value = azurerm_postgresql_flexible_server.primary.fqdn }
-output "postgres_replica_fqdns" { value = [for r in azurerm_postgresql_flexible_server.replica : r.fqdn] }
-output "key_vault_uri" { value = azurerm_key_vault.main.vault_uri }
-output "action_group_id" { value = azurerm_monitor_action_group.alerts.id }
+
+output "postgres_primary_fqdn" {
+  description = "FQDN of the primary Azure PostgreSQL Flexible Server."
+  value       = azurerm_postgresql_flexible_server.primary.fqdn
+}
+
+output "postgres_replica_fqdns" {
+  description = "List of FQDNs for all PostgreSQL read replicas. Empty when postgres_replica_count is 0."
+  value       = [for r in azurerm_postgresql_flexible_server.replica : r.fqdn]
+}
+
+output "key_vault_uri" {
+  description = "URI of the Key Vault storing secrets and encryption keys."
+  value       = azurerm_key_vault.main.vault_uri
+}
+
+output "action_group_id" {
+  description = "Resource ID of the Azure Monitor action group for alert notifications."
+  value       = azurerm_monitor_action_group.alerts.id
+}
 
 # ----- Patching and migration safety -----
 
