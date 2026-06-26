@@ -35,6 +35,10 @@ variable "private_subnet_ids" {
 variable "allowed_cidrs" {
   description = "CIDR blocks permitted to reach the ALB on port 443."
   type        = list(string)
+  validation {
+    condition     = alltrue([for c in var.allowed_cidrs : can(cidrhost(c, 0))])
+    error_message = "All allowed_cidrs entries must be valid CIDR blocks (e.g. \"10.0.0.0/8\")."
+  }
 }
 
 variable "acm_certificate_arn" {
@@ -62,6 +66,10 @@ variable "instance_type" {
 variable "data_volume_size_gb" {
   type    = number
   default = 200
+  validation {
+    condition     = var.data_volume_size_gb >= 1
+    error_message = "data_volume_size_gb must be at least 1 GiB."
+  }
 }
 
 variable "key_name" {
@@ -98,6 +106,10 @@ variable "redis_snapshot_retention_days" {
   description = "Days ElastiCache retains daily snapshots. Sessions are recoverable from Postgres re-login, so this defaults to 0; raise if you want a Redis PITR window."
   type        = number
   default     = 0
+  validation {
+    condition     = var.redis_snapshot_retention_days >= 0 && var.redis_snapshot_retention_days <= 35
+    error_message = "redis_snapshot_retention_days must be between 0 and 35. Use 0 to disable snapshots."
+  }
 }
 
 variable "redis_endpoint_override" {
@@ -110,6 +122,10 @@ variable "redis_endpoint_override_port" {
   description = "Port on the customer-managed Redis endpoint. Ignored unless redis_endpoint_override is set."
   type        = number
   default     = 6379
+  validation {
+    condition     = var.redis_endpoint_override_port >= 1 && var.redis_endpoint_override_port <= 65535
+    error_message = "redis_endpoint_override_port must be between 1 and 65535."
+  }
 }
 
 variable "redis_endpoint_override_tls" {
@@ -121,6 +137,10 @@ variable "redis_endpoint_override_tls" {
 variable "db_allocated_storage_gb" {
   type    = number
   default = 100
+  validation {
+    condition     = var.db_allocated_storage_gb >= 20
+    error_message = "db_allocated_storage_gb must be at least 20 GiB (RDS minimum for gp3 storage)."
+  }
 }
 
 variable "db_max_allocated_storage_gb" {
@@ -154,6 +174,10 @@ variable "enable_customer_managed_key" {
 variable "alb_idle_timeout_seconds" {
   type    = number
   default = 120
+  validation {
+    condition     = var.alb_idle_timeout_seconds >= 1 && var.alb_idle_timeout_seconds <= 4000
+    error_message = "alb_idle_timeout_seconds must be between 1 and 4000 (ALB maximum)."
+  }
 }
 
 variable "enable_alb_deletion_protection" {
@@ -172,6 +196,10 @@ variable "alb_access_log_retention_days" {
   description = "Days to retain ALB access log objects before lifecycle expiration. Default 365 (one calendar year) — long enough for most compliance lookback windows."
   type        = number
   default     = 365
+  validation {
+    condition     = var.alb_access_log_retention_days >= 1
+    error_message = "alb_access_log_retention_days must be at least 1."
+  }
 }
 
 variable "alb_min_tls_version" {
@@ -220,12 +248,20 @@ variable "db_ec2_data_volume_size_gb" {
   description = "Size of the encrypted gp3 volume backing /var/lib/postgresql on the self-managed Postgres VM."
   type        = number
   default     = 200
+  validation {
+    condition     = var.db_ec2_data_volume_size_gb >= 1
+    error_message = "db_ec2_data_volume_size_gb must be at least 1 GiB."
+  }
 }
 
 variable "rds_backup_retention_period" {
   description = "Days RDS retains automated daily backups. 7 satisfies the procurement-grade baseline; raise for longer point-in-time-restore windows."
   type        = number
   default     = 7
+  validation {
+    condition     = var.rds_backup_retention_period >= 0 && var.rds_backup_retention_period <= 35
+    error_message = "rds_backup_retention_period must be between 0 and 35 (RDS maximum). Use 0 to disable automated backups."
+  }
 }
 
 variable "rds_copy_tags_to_snapshot" {
@@ -250,18 +286,30 @@ variable "backup_object_lock_retention_days" {
   description = "Object Lock (governance mode) retention period for backup objects."
   type        = number
   default     = 30
+  validation {
+    condition     = var.backup_object_lock_retention_days >= 1
+    error_message = "backup_object_lock_retention_days must be at least 1."
+  }
 }
 
 variable "backup_noncurrent_version_expiration_days" {
   description = "Expire noncurrent versions of backup objects after this many days."
   type        = number
   default     = 365
+  validation {
+    condition     = var.backup_noncurrent_version_expiration_days >= 1
+    error_message = "backup_noncurrent_version_expiration_days must be at least 1."
+  }
 }
 
 variable "refresh_rollback_5xx_threshold_pct" {
   description = "Target-group 5xx rate (percent) that trips the patching alarm. Default 1% over 2 evaluation periods of 1 minute."
   type        = number
   default     = 1
+  validation {
+    condition     = var.refresh_rollback_5xx_threshold_pct >= 0 && var.refresh_rollback_5xx_threshold_pct <= 100
+    error_message = "refresh_rollback_5xx_threshold_pct must be between 0 and 100."
+  }
 }
 
 variable "waf_web_acl_arn" {
@@ -317,6 +365,10 @@ variable "rds_performance_insights_retention_days" {
   description = "Performance Insights data retention. 7 = free tier (default); 731 = long-term retention (paid)."
   type        = number
   default     = 7
+  validation {
+    condition     = contains([7, 731], var.rds_performance_insights_retention_days)
+    error_message = "rds_performance_insights_retention_days must be either 7 (free tier) or 731 (long-term retention)."
+  }
 }
 
 variable "tags" {
