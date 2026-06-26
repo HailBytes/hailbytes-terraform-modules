@@ -19,16 +19,35 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      # The trivy-action (Docker) does not reliably apply the repo-root
+      # .trivyignore (it runs trivy in a context where neither auto-discovery nor
+      # a relative ignorefile path resolves). Install the trivy CLI directly and
+      # invoke it ourselves so --ignorefile is honored. The binary is checksum-
+      # verified before use, consistent with the SHA-pinned actions in this repo.
+      - name: Install Trivy
+        env:
+          TRIVY_VERSION: 0.70.0
+        run: |
+          set -eo pipefail
+          tarball="trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz"
+          curl -sSfL -o "/tmp/${tarball}" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/${tarball}"
+          curl -sSfL -o /tmp/trivy_checksums.txt \
+            "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_checksums.txt"
+          (cd /tmp && grep "${tarball}\$" trivy_checksums.txt | sha256sum --check)
+          tar -xzf "/tmp/${tarball}" -C /tmp trivy
+          sudo install -m 755 /tmp/trivy /usr/local/bin/trivy
+          trivy --version
+
+      # Produces SARIF for the code-scanning UI and fails the build (exit-code 1)
+      # on any MEDIUM+ misconfiguration not waived in .trivyignore.
       - name: Run Trivy IaC scan
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: config
-          scan-ref: modules/
-          format: sarif
-          output: trivy.sarif
-          severity: MEDIUM,HIGH,CRITICAL
-          exit-code: '1'
-          ignore-unfixed: true
+        run: |
+          trivy config modules/ \
+            --severity MEDIUM,HIGH,CRITICAL \
+            --ignorefile .trivyignore \
+            --format sarif --output trivy.sarif \
+            --exit-code 1 --skip-version-check
 
       - name: Upload Trivy SARIF to GitHub code scanning
         if: always()
