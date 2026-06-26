@@ -18,6 +18,7 @@ module "this" {
   allow_internet_ingress      = var.allow_internet_ingress
   enable_snapshots            = var.enable_snapshots
   marketplace_product_code    = var.marketplace_product_code
+  enable_flow_logs            = var.enable_flow_logs
 
   # Patching and migration safety
   create_backup_bucket                      = var.create_backup_bucket
