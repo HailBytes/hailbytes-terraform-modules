@@ -44,28 +44,49 @@ variable "associate_vm_subnet_nsg" {
 # ----- VMSS sizing -----
 
 variable "vmss_min_count" {
-  type    = number
-  default = 3
+  description = "Minimum number of VMSS instances."
+  type        = number
+  default     = 3
+  validation {
+    condition     = var.vmss_min_count >= 1
+    error_message = "vmss_min_count must be at least 1."
+  }
 }
 
 variable "vmss_max_count" {
-  type    = number
-  default = 20
+  description = "Maximum number of VMSS instances the autoscaler can scale out to."
+  type        = number
+  default     = 20
+  validation {
+    condition     = var.vmss_max_count >= 1
+    error_message = "vmss_max_count must be at least 1."
+  }
 }
 
 variable "vmss_default_count" {
-  type    = number
-  default = 3
+  description = "Starting instance count when the VMSS is created. Must be between vmss_min_count and vmss_max_count."
+  type        = number
+  default     = 3
+  validation {
+    condition     = var.vmss_default_count >= 1
+    error_message = "vmss_default_count must be at least 1."
+  }
 }
 
 variable "vm_size" {
-  type    = string
-  default = "Standard_D2s_v5"
+  description = "Azure VM size for VMSS instances. Standard_D2s_v5 is a balanced starting point; scale to Standard_D4s_v5 for larger tenants."
+  type        = string
+  default     = "Standard_D2s_v5"
 }
 
 variable "target_cpu_percent" {
-  type    = number
-  default = 60
+  description = "Target average CPU utilization (percent, 1-100) for the VMSS autoscale policy."
+  type        = number
+  default     = 60
+  validation {
+    condition     = var.target_cpu_percent >= 1 && var.target_cpu_percent <= 100
+    error_message = "target_cpu_percent must be between 1 and 100."
+  }
 }
 
 # ----- DB sizing -----
@@ -76,8 +97,13 @@ variable "db_sku_name" {
 }
 
 variable "db_storage_mb" {
-  type    = number
-  default = 262144
+  description = "Storage size in MiB for the PostgreSQL Flexible Server. Minimum 32768 MiB (32 GiB); autoscaling grows in 32 GiB increments."
+  type        = number
+  default     = 262144
+  validation {
+    condition     = var.db_storage_mb >= 32768
+    error_message = "db_storage_mb must be at least 32768 MiB (Azure Flexible Server minimum of 32 GiB)."
+  }
 }
 
 variable "db_version" {
@@ -86,13 +112,23 @@ variable "db_version" {
 }
 
 variable "db_backup_retention_days" {
-  type    = number
-  default = 30
+  description = "Days Azure Database for PostgreSQL retains automated backups. Azure Flexible Server enforces a minimum of 7 and a maximum of 35."
+  type        = number
+  default     = 30
+  validation {
+    condition     = var.db_backup_retention_days >= 7 && var.db_backup_retention_days <= 35
+    error_message = "db_backup_retention_days must be between 7 and 35 (Azure Flexible Server constraint)."
+  }
 }
 
 variable "db_replica_count" {
-  type    = number
-  default = 2
+  description = "Number of Azure Database for PostgreSQL read replicas."
+  type        = number
+  default     = 2
+  validation {
+    condition     = var.db_replica_count >= 0 && var.db_replica_count <= 5
+    error_message = "db_replica_count must be between 0 and 5."
+  }
 }
 
 # ----- Misc -----
