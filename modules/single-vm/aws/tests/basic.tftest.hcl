@@ -21,6 +21,14 @@ mock_provider "aws" {
       arn = "arn:aws:iam::123456789012:role/mock-role"
     }
   }
+
+  # aws_flow_log.vpc validates that log_destination is a well-formed ARN, so the
+  # mocked CloudWatch log group must carry one (the random mock token isn't).
+  mock_resource "aws_cloudwatch_log_group" {
+    defaults = {
+      arn = "arn:aws:logs:us-east-1:123456789012:log-group:/aws/vpc-flow-logs/mock:*"
+    }
+  }
 }
 
 variables {

@@ -73,3 +73,9 @@ output "pre_patch_ssm_document_name" {
   value       = module.this.pre_patch_ssm_document_name
   sensitive   = false
 }
+
+output "flow_log_group_name" {
+  description = "CloudWatch log group name receiving VPC Flow Logs. Empty string when enable_flow_logs is false."
+  value       = module.this.flow_log_group_name
+  sensitive   = false
+}

@@ -59,3 +59,8 @@ output "pre_patch_ssm_document_name" {
   description = "Name of the AWS Systems Manager Run Command document that triggers a pre-patch backup + EBS data-volume snapshot. Run from the Console under Systems Manager -> Run Command, targeting instances tagged hailbytes-<product>=true."
   value       = aws_ssm_document.pre_patch_backup.name
 }
+
+output "flow_log_group_name" {
+  description = "CloudWatch log group name receiving VPC Flow Logs. Empty string when enable_flow_logs is false."
+  value       = var.enable_flow_logs ? aws_cloudwatch_log_group.flow_logs[0].name : ""
+}
