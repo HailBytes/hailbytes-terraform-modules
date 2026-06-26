@@ -97,18 +97,30 @@ variable "asg_min_size" {
   description = "Minimum number of instances the ASG maintains."
   type        = number
   default     = 3
+  validation {
+    condition     = var.asg_min_size >= 1
+    error_message = "asg_min_size must be at least 1."
+  }
 }
 
 variable "asg_max_size" {
   description = "Maximum number of instances the ASG can scale out to."
   type        = number
   default     = 20
+  validation {
+    condition     = var.asg_max_size >= 1
+    error_message = "asg_max_size must be at least 1."
+  }
 }
 
 variable "asg_desired_capacity" {
   description = "Starting instance count when the ASG is created. Must be between asg_min_size and asg_max_size."
   type        = number
   default     = 3
+  validation {
+    condition     = var.asg_desired_capacity >= 1
+    error_message = "asg_desired_capacity must be at least 1."
+  }
 }
 
 variable "instance_type" {
@@ -151,12 +163,20 @@ variable "db_allocated_storage_gb" {
   description = "Initial allocated storage for the RDS instance in GiB."
   type        = number
   default     = 200
+  validation {
+    condition     = var.db_allocated_storage_gb >= 20
+    error_message = "db_allocated_storage_gb must be at least 20 GiB (RDS minimum for gp3 storage)."
+  }
 }
 
 variable "db_max_allocated_storage_gb" {
   description = "Upper limit for RDS storage autoscaling in GiB. Must be >= db_allocated_storage_gb."
   type        = number
   default     = 2000
+  validation {
+    condition     = var.db_max_allocated_storage_gb >= 20
+    error_message = "db_max_allocated_storage_gb must be at least 20 GiB."
+  }
 }
 
 variable "db_engine_version" {
@@ -169,12 +189,20 @@ variable "db_backup_retention_days" {
   description = "Days RDS retains automated daily backups. 30 covers a typical monthly review cycle and aligns with the pre-patch on-demand snapshot lifecycle."
   type        = number
   default     = 30
+  validation {
+    condition     = var.db_backup_retention_days >= 0 && var.db_backup_retention_days <= 35
+    error_message = "db_backup_retention_days must be between 0 and 35 (RDS maximum). Use 0 to disable automated backups."
+  }
 }
 
 variable "db_read_replica_count" {
   description = "Number of RDS read replicas to create. Replicas reduce read load and provide manual failover targets."
   type        = number
   default     = 2
+  validation {
+    condition     = var.db_read_replica_count >= 0 && var.db_read_replica_count <= 5
+    error_message = "db_read_replica_count must be between 0 and 5."
+  }
 }
 
 variable "db_deletion_protection" {
