@@ -9,11 +9,13 @@ variable "product" {
 }
 
 variable "vpc_id" {
-  type = string
+  description = "VPC to deploy into."
+  type        = string
 }
 
 variable "public_subnet_ids" {
-  type = list(string)
+  description = "At least two public subnet IDs in different AZs for the ALB."
+  type        = list(string)
   validation {
     condition     = length(var.public_subnet_ids) >= 2
     error_message = "At least two public subnets are required."
@@ -21,7 +23,8 @@ variable "public_subnet_ids" {
 }
 
 variable "private_subnet_ids" {
-  type = list(string)
+  description = "At least three private subnet IDs, one per AZ, for ASG instances, RDS, and ElastiCache."
+  type        = list(string)
   validation {
     condition     = length(var.private_subnet_ids) >= 3
     error_message = "At least three private subnets (one per AZ) are required for unlimited-scale."
@@ -29,11 +32,13 @@ variable "private_subnet_ids" {
 }
 
 variable "allowed_cidrs" {
-  type = list(string)
+  description = "CIDR blocks permitted to reach the ALB on port 443 (and port 80 when enable_http_redirect is true)."
+  type        = list(string)
 }
 
 variable "acm_certificate_arn" {
-  type = string
+  description = "ARN of an ACM certificate in the same region for the ALB HTTPS listener."
+  type        = string
 }
 
 variable "alert_email" {
@@ -57,13 +62,15 @@ variable "redis_node_type" {
 }
 
 variable "redis_engine_version" {
-  type    = string
-  default = "7.1"
+  description = "Redis engine version for the ElastiCache replication group."
+  type        = string
+  default     = "7.1"
 }
 
 variable "redis_snapshot_retention_days" {
-  type    = number
-  default = 0
+  description = "Days ElastiCache retains automatic snapshots. 0 disables snapshots."
+  type        = number
+  default     = 0
 }
 
 variable "redis_endpoint_override" {
@@ -73,35 +80,41 @@ variable "redis_endpoint_override" {
 }
 
 variable "redis_endpoint_override_port" {
-  type    = number
-  default = 6379
+  description = "TCP port for the customer-managed Redis endpoint supplied via redis_endpoint_override."
+  type        = number
+  default     = 6379
 }
 
 variable "redis_endpoint_override_tls" {
-  type    = bool
-  default = true
+  description = "Whether to connect to the customer-managed Redis endpoint over TLS."
+  type        = bool
+  default     = true
 }
 
 # ----- ASG sizing -----
 
 variable "asg_min_size" {
-  type    = number
-  default = 3
+  description = "Minimum number of instances the ASG maintains."
+  type        = number
+  default     = 3
 }
 
 variable "asg_max_size" {
-  type    = number
-  default = 20
+  description = "Maximum number of instances the ASG can scale out to."
+  type        = number
+  default     = 20
 }
 
 variable "asg_desired_capacity" {
-  type    = number
-  default = 3
+  description = "Starting instance count when the ASG is created. Must be between asg_min_size and asg_max_size."
+  type        = number
+  default     = 3
 }
 
 variable "instance_type" {
-  type    = string
-  default = "m6i.large"
+  description = "EC2 instance type for the ASG launch template. m6i.large is a balanced starting point; scale to m6i.xlarge for larger tenants."
+  type        = string
+  default     = "m6i.large"
 }
 
 variable "enable_alb_deletion_protection" {
@@ -111,35 +124,45 @@ variable "enable_alb_deletion_protection" {
 }
 
 variable "target_cpu_utilization" {
-  type    = number
-  default = 60
+  description = "Target average CPU utilization (percent, 1-100) for the ASG target-tracking scale-out policy."
+  type        = number
+  default     = 60
+  validation {
+    condition     = var.target_cpu_utilization >= 1 && var.target_cpu_utilization <= 100
+    error_message = "target_cpu_utilization must be between 1 and 100."
+  }
 }
 
 variable "target_request_count_per_target" {
-  type    = number
-  default = 500
+  description = "Target ALB request count per instance for the request-count scale-out policy."
+  type        = number
+  default     = 500
 }
 
 # ----- DB sizing -----
 
 variable "db_instance_class" {
-  type    = string
-  default = "db.r6g.large"
+  description = "RDS instance class. db.r6g.large handles up to ~200 concurrent connections; scale to r6g.xlarge for larger deployments."
+  type        = string
+  default     = "db.r6g.large"
 }
 
 variable "db_allocated_storage_gb" {
-  type    = number
-  default = 200
+  description = "Initial allocated storage for the RDS instance in GiB."
+  type        = number
+  default     = 200
 }
 
 variable "db_max_allocated_storage_gb" {
-  type    = number
-  default = 2000
+  description = "Upper limit for RDS storage autoscaling in GiB. Must be >= db_allocated_storage_gb."
+  type        = number
+  default     = 2000
 }
 
 variable "db_engine_version" {
-  type    = string
-  default = "16.4"
+  description = "PostgreSQL engine version. Pin to a specific minor version (e.g. 16.4) to prevent unexpected minor upgrades during terraform apply."
+  type        = string
+  default     = "16.4"
 }
 
 variable "db_backup_retention_days" {
@@ -149,45 +172,53 @@ variable "db_backup_retention_days" {
 }
 
 variable "db_read_replica_count" {
-  type    = number
-  default = 2
+  description = "Number of RDS read replicas to create. Replicas reduce read load and provide manual failover targets."
+  type        = number
+  default     = 2
 }
 
 variable "db_deletion_protection" {
-  type    = bool
-  default = true
+  description = "Enable RDS deletion protection. Default true; set false only in dev/test sandboxes where terraform destroy should succeed."
+  type        = bool
+  default     = true
 }
 
 # ----- Misc -----
 
 variable "environment" {
-  type    = string
-  default = "prod"
+  description = "Short environment label (e.g. prod, staging) appended to resource names and tags."
+  type        = string
+  default     = "prod"
 }
 
 variable "name_prefix" {
-  type    = string
-  default = null
+  description = "Optional prefix prepended to all resource names. Defaults to '<product>-unlimited-scale' when null."
+  type        = string
+  default     = null
 }
 
 variable "enable_customer_managed_key" {
-  type    = bool
-  default = true
+  description = "Create a KMS customer-managed key for encrypting RDS, ElastiCache, and S3 backup objects. Disable only if your organization manages keys externally."
+  type        = bool
+  default     = true
 }
 
 variable "alb_min_tls_version" {
-  type    = string
-  default = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  description = "ELBSecurityPolicy name defining the minimum TLS version and cipher suite for the ALB HTTPS listener."
+  type        = string
+  default     = "ELBSecurityPolicy-TLS13-1-2-2021-06"
 }
 
 variable "enable_flow_logs" {
-  type    = bool
-  default = true
+  description = "Publish VPC Flow Logs to CloudWatch. Recommended for production compliance."
+  type        = bool
+  default     = true
 }
 
 variable "access_log_retention_days" {
-  type    = number
-  default = 90
+  description = "CloudWatch log retention in days for ALB access logs and VPC Flow Logs."
+  type        = number
+  default     = 90
 }
 
 variable "marketplace_product_code" {
@@ -302,6 +333,7 @@ variable "rds_performance_insights_retention_days" {
 }
 
 variable "tags" {
-  type    = map(string)
-  default = {}
+  description = "Additional tags merged on to every taggable resource."
+  type        = map(string)
+  default     = {}
 }

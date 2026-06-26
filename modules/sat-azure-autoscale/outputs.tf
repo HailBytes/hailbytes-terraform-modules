@@ -66,3 +66,18 @@ output "application_gateway_id" {
   value     = module.this.application_gateway_id
   sensitive = false
 }
+
+output "post_patch_run_command_extension_name" {
+  value     = module.this.post_patch_run_command_extension_name
+  sensitive = false
+}
+
+output "redis_endpoint" {
+  value     = module.this.redis_endpoint
+  sensitive = false
+}
+
+output "redis_mode" {
+  value     = module.this.redis_mode
+  sensitive = false
+}

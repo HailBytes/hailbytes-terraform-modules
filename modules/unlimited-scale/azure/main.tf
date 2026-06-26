@@ -69,7 +69,7 @@ resource "azurerm_key_vault" "main" {
   sku_name                   = "standard"
   purge_protection_enabled   = true
   soft_delete_retention_days = 30
-  enable_rbac_authorization  = true
+  rbac_authorization_enabled = true
   tags                       = local.common_tags
 
   network_acls {
@@ -197,7 +197,7 @@ resource "azurerm_lb_rule" "https" {
   frontend_ip_configuration_name = "frontend"
   backend_address_pool_ids       = [azurerm_lb_backend_address_pool.main.id]
   probe_id                       = azurerm_lb_probe.https.id
-  enable_tcp_reset               = true
+  tcp_reset_enabled              = true
 }
 
 # ----- VMSS -----
@@ -303,6 +303,7 @@ resource "azurerm_linux_virtual_machine_scale_set" "main" {
   depends_on = [
     azurerm_marketplace_agreement.hailbytes,
     azurerm_postgresql_flexible_server.primary,
+    azurerm_postgresql_flexible_server.replica,
   ]
 }
 
@@ -584,7 +585,7 @@ resource "azurerm_storage_container" "backup" {
 
 resource "azurerm_storage_container_immutability_policy" "backup" {
   count                                 = local.create_backup_storage ? 1 : 0
-  storage_container_resource_manager_id = azurerm_storage_container.backup[0].resource_manager_id
+  storage_container_resource_manager_id = azurerm_storage_container.backup[0].id
   immutability_period_in_days           = var.backup_immutability_days
   protected_append_writes_all_enabled   = false
 }
@@ -707,7 +708,7 @@ resource "azurerm_application_gateway" "main" {
   resource_group_name = var.resource_group_name
   location            = var.location
   zones               = ["1", "2", "3"]
-  enable_http2        = true
+  http2_enabled       = true
   tags                = local.common_tags
 
   sku {
@@ -783,6 +784,17 @@ resource "azurerm_application_gateway" "main" {
     backend_address_pool_name  = "vmss"
     backend_http_settings_name = "https-passthrough"
     priority                   = 100
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.appgw_subnet_id != null
+      error_message = "appgw_subnet_id is required when enable_application_gateway = true."
+    }
+    precondition {
+      condition     = var.appgw_tls_pfx_base64 != null && var.appgw_tls_pfx_password != null
+      error_message = "appgw_tls_pfx_base64 and appgw_tls_pfx_password are required when enable_application_gateway = true."
+    }
   }
 }
 
