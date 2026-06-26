@@ -37,6 +37,12 @@ variable "lb_subnet_prefix" {
   default     = "10.30.0.0/24"
 }
 
+variable "associate_subnet_nsgs" {
+  description = "Associate the module-created baseline NSGs with the lb/workload/db subnets. Set to false when composing this module with a workload tier module that associates its own NSG to the same subnet (Azure allows only one NSG per subnet)."
+  type        = bool
+  default     = true
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
