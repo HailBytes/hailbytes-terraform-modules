@@ -22,6 +22,10 @@ variable "subnet_id" {
 variable "allowed_cidrs" {
   description = "CIDR blocks permitted to reach the VM on port 443. Use private CIDRs unless you also set allow_internet_ingress = true."
   type        = list(string)
+  validation {
+    condition     = alltrue([for c in var.allowed_cidrs : can(cidrhost(c, 0))])
+    error_message = "All allowed_cidrs entries must be valid CIDR blocks (e.g. \"10.0.0.0/8\")."
+  }
 }
 
 # ----- Optional -----

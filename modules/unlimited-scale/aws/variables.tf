@@ -34,6 +34,10 @@ variable "private_subnet_ids" {
 variable "allowed_cidrs" {
   description = "CIDR blocks permitted to reach the ALB on port 443 (and port 80 when enable_http_redirect is true)."
   type        = list(string)
+  validation {
+    condition     = alltrue([for c in var.allowed_cidrs : can(cidrhost(c, 0))])
+    error_message = "All allowed_cidrs entries must be valid CIDR blocks (e.g. \"10.0.0.0/8\")."
+  }
 }
 
 variable "acm_certificate_arn" {
