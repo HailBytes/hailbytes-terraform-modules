@@ -43,13 +43,13 @@ variable "ssh_public_key" {
 }
 
 variable "key_vault_network_default_action" {
-  description = "Default action for the Key Vault network ACL. 'Allow' preserves the pre-network-ACL behavior; set 'Deny' once you've added the operator IP to key_vault_ip_rules and the Microsoft.KeyVault service endpoint on vm_subnet_id."
+  description = "Default action for the Key Vault network ACL. 'Allow' preserves the pre-network-ACL behavior (public endpoint open, RBAC-gated); set 'Deny' once you've added the operator IP to key_vault_ip_rules and the Microsoft.KeyVault service endpoint on vm_subnet_id. AzureServices bypass is always on so the VMs' managed identities can read secrets either way."
   type        = string
   default     = "Allow"
 }
 
 variable "key_vault_ip_rules" {
-  description = "IPv4 addresses or CIDRs allowed to reach the Key Vault data plane. Required only when key_vault_network_default_action = Deny and you don't have Private Link configured."
+  description = "IPv4 addresses or CIDRs allowed to reach the Key Vault data plane (typically the operator IP running terraform apply, or your bastion's egress NAT). Required only when default_action = Deny and you don't have Private Link configured."
   type        = list(string)
   default     = []
 }
@@ -75,7 +75,7 @@ variable "data_disk_size_gb" {
 }
 
 variable "enable_customer_managed_key" {
-  description = "Encrypt VM OS and data disks with a customer-managed key (RSA-4096 in the module's Key Vault, via a disk encryption set) instead of platform-managed keys."
+  description = "Encrypt VM OS and data disks with a customer-managed key (RSA-4096 in this module's Key Vault, via a disk encryption set) instead of platform-managed keys. Matches the single-vm tier's CMK option."
   type        = bool
   default     = false
 }
@@ -127,7 +127,7 @@ variable "marketplace_image_version" {
 # ----- Patching and migration safety -----
 
 variable "db_mode" {
-  description = "Database backend. 'flexible_server' (default) or 'vm' for self-managed Postgres on a Linux VM."
+  description = "Database backend. 'flexible_server' (default) provisions Azure Database for PostgreSQL Flexible Server — recommended for production. 'vm' provisions a third Linux VM with self-managed Postgres 16 for customers that must keep data plane on a VM."
   type        = string
   default     = "flexible_server"
   validation {
@@ -155,19 +155,19 @@ variable "create_backup_storage_account" {
 }
 
 variable "backup_storage_account_name" {
-  description = "Name of an existing Storage Account to use."
+  description = "Name of an existing Storage Account to use. If null and create_backup_storage_account is true, the module names one."
   type        = string
   default     = null
 }
 
 variable "backup_storage_replication" {
-  description = "Replication type for the backup storage account."
+  description = "Replication type for the backup storage account. ZRS is the procurement-grade default."
   type        = string
   default     = "ZRS"
 }
 
 variable "backup_immutability_days" {
-  description = "Days the immutable blob policy keeps backup objects pinned."
+  description = "Days the immutable blob policy keeps backup objects pinned (unlocked mode so customers can extend later)."
   type        = number
   default     = 30
 }
@@ -185,45 +185,45 @@ variable "backup_blob_noncurrent_expiration_days" {
 }
 
 variable "enable_pre_patch_run_command" {
-  description = "Install an Azure Run Command document named RunPrePatchBackup."
+  description = "Install an Azure Run Command document named RunPrePatchBackup on the first SAT VM. Customers fire it from the Portal."
   type        = bool
   default     = true
 }
 
 variable "enable_application_gateway" {
-  description = "Front the LB topology with Azure Application Gateway (required for WAF parity with AWS ALB+WAF)."
+  description = "Front the LB topology with an Azure Application Gateway. Required if you want WAF parity with the AWS ALB+WAF story; the existing Standard LB is L4-only and cannot host WAF rules."
   type        = bool
   default     = false
 }
 
 variable "appgw_subnet_id" {
-  description = "Subnet for the Application Gateway. Required when enable_application_gateway = true."
+  description = "Subnet for the Application Gateway. Required when enable_application_gateway = true. Must be /24 or larger, in the same vnet as the VMs."
   type        = string
   default     = null
 }
 
 variable "appgw_tls_pfx_base64" {
-  description = "Base64-encoded PFX for the App Gateway HTTPS listener."
+  description = "Base64-encoded PFX bundle for the App Gateway HTTPS listener. Required when enable_application_gateway = true."
   type        = string
   default     = null
   sensitive   = true
 }
 
 variable "appgw_tls_pfx_password" {
-  description = "Password for the PFX bundle."
+  description = "Password for the PFX bundle. Required when enable_application_gateway = true if the PFX is encrypted."
   type        = string
   default     = null
   sensitive   = true
 }
 
 variable "appgw_backend_host_header" {
-  description = "Optional Host header App Gateway sends to the SAT backend."
+  description = "Optional Host header App Gateway sends to the SAT backend pool. Leave null to use the backend's IP."
   type        = string
   default     = null
 }
 
 variable "waf_policy_id" {
-  description = "Optional ID of an azurerm_web_application_firewall_policy to attach to the App Gateway."
+  description = "Optional ID of an azurerm_web_application_firewall_policy to attach to the App Gateway. HailBytes does not bundle a managed ruleset; most enterprises bring their own."
   type        = string
   default     = null
 }
@@ -235,19 +235,19 @@ variable "alert_email" {
 }
 
 variable "refresh_rollback_5xx_count_threshold" {
-  description = "Backend 5xx response count threshold for the App Gateway alarm."
+  description = "Backend 5xx response count over 5 minutes that trips the patching alarm on the Application Gateway. Tune for site traffic; the Azure metric is a count, not a rate."
   type        = number
   default     = 10
 }
 
 variable "schema_version_endpoint_path" {
-  description = "Path on the SAT API that returns the running schema version."
+  description = "Path on the SAT/ASM API that returns the running schema version."
   type        = string
   default     = "/api/instance/schema-version"
 }
 
 variable "enable_post_patch_run_command" {
-  description = "Install an Azure Run Command document named RunPostPatchVerify on each VM, mirroring the AWS sat-aws-ha aws_ssm_document.post_patch_verify."
+  description = "Install an Azure Run Command document named RunPostPatchVerify on each VM, mirroring the AWS aws_ssm_document.post_patch_verify in the SAT/ASM aws-ha modules. Customers fire it from the Portal after a Run Command-driven image swap."
   type        = bool
   default     = true
 }
@@ -261,7 +261,7 @@ variable "enable_managed_redis" {
 }
 
 variable "redis_sku_name" {
-  description = "Redis SKU. Standard delivers a primary/replica pair across two zones; Premium adds persistence and explicit zone selection. Basic is single-node and NOT a valid HA option."
+  description = "Redis SKU. Standard delivers a primary/replica pair across two zones; Premium adds persistence and explicit zone selection. Basic is single-node and NOT a valid HA option (validated)."
   type        = string
   default     = "Standard"
 }
@@ -273,7 +273,7 @@ variable "redis_family" {
 }
 
 variable "redis_capacity" {
-  description = "Redis capacity (size index). For SKU=Standard / family=C, valid values are 0 (250MB) through 6 (53GB). The procurement-friendly default is 1 (1GB)."
+  description = "Redis capacity (size index). For SKU=Standard / family=C, valid values are 0 (250MB) through 6 (53GB). cache.t4g.small-equivalent is 1 (1GB)."
   type        = number
   default     = 1
 }
@@ -285,25 +285,27 @@ variable "redis_endpoint_override" {
 }
 
 variable "redis_endpoint_override_port" {
-  type    = number
-  default = 6380
+  description = "Port on the customer-managed Redis endpoint. 6380 (TLS) is the Azure default. Ignored unless redis_endpoint_override is set."
+  type        = number
+  default     = 6380
 }
 
 variable "redis_endpoint_override_tls" {
-  type    = bool
-  default = true
+  description = "Whether the customer-managed Redis endpoint requires in-transit TLS. Ignored unless redis_endpoint_override is set."
+  type        = bool
+  default     = true
 }
 
 
 variable "db_secret_expiration_hours" {
-  description = "Hours until the Key Vault DB-password secret expires. Default 8760 = one calendar year."
+  description = "Hours until the Key Vault DB-password secret expires. Set on every apply via `timeadd(timestamp(), ...)` and then ignored on subsequent applies so a stale value doesn't show drift. Default 8760 = one calendar year — long enough that ops don't need to rotate weekly, short enough that the secret never lives unrotated past a year without operator attention."
   type        = number
   default     = 8760
 }
 
 
 variable "postgres_geo_redundant_backup_enabled" {
-  description = "Enable geo-redundant backup on Postgres Flexible Server. CKV_AZURE_136."
+  description = "Enable geo-redundant backup on the Postgres Flexible Server. Defaults to false; adds cross-region replication of backups for DR scenarios. CKV_AZURE_136."
   type        = bool
   default     = false
 }

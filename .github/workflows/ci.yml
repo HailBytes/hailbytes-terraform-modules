@@ -429,6 +429,12 @@ jobs:
           fi
           echo "All wrapper modules forward their core surface area cleanly."
 
+      # Non-blocking: warn (don't fail) when a forwarded variable's
+      # description/type/default has drifted from the core module, so the
+      # public-API docs stay faithful to the implementation.
+      - name: Warn on wrapper/core variable metadata drift
+        run: python3 .github/scripts/wrapper_drift_check.py
+
   # ---------------------------------------------------------------------
   # versions.tf existence + pinning.  Every module dir that has a *.tf
   # file should also have a versions.tf declaring required_providers

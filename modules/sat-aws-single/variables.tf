@@ -92,7 +92,7 @@ variable "marketplace_product_code" {
 # ----- Patching and migration safety -----
 
 variable "create_backup_bucket" {
-  description = "Provision an S3 bucket (versioning + object-lock governance + lifecycle to IA at 30d and Deep Archive at 90d) for pre-patch /api/instance/export bundles. The instance profile gets least-privilege PutObject on hailbytes-sat-*.tar.gz."
+  description = "Provision an S3 bucket (versioning + object-lock governance + lifecycle to IA at 30d and Deep Archive at 90d) for pre-patch /api/instance/export bundles. The instance profile gets least-privilege PutObject on hailbytes-*.tar.gz."
   type        = bool
   default     = true
 }

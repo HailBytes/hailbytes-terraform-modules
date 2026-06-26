@@ -3,11 +3,13 @@
 # which is hardcoded by this wrapper).
 
 variable "vpc_id" {
-  type = string
+  description = "VPC to deploy into."
+  type        = string
 }
 
 variable "public_subnet_ids" {
-  type = list(string)
+  description = "At least two public subnet IDs in different AZs for the ALB."
+  type        = list(string)
   validation {
     condition     = length(var.public_subnet_ids) >= 2
     error_message = "At least two public subnets are required."
@@ -15,7 +17,8 @@ variable "public_subnet_ids" {
 }
 
 variable "private_subnet_ids" {
-  type = list(string)
+  description = "At least three private subnet IDs, one per AZ, for ASG instances, RDS, and ElastiCache."
+  type        = list(string)
   validation {
     condition     = length(var.private_subnet_ids) >= 3
     error_message = "At least three private subnets (one per AZ) are required for unlimited-scale."
@@ -23,11 +26,13 @@ variable "private_subnet_ids" {
 }
 
 variable "allowed_cidrs" {
-  type = list(string)
+  description = "CIDR blocks permitted to reach the ALB on port 443 (and port 80 when enable_http_redirect is true)."
+  type        = list(string)
 }
 
 variable "acm_certificate_arn" {
-  type = string
+  description = "ARN of an ACM certificate in the same region for the ALB HTTPS listener."
+  type        = string
 }
 
 variable "alert_email" {
@@ -37,98 +42,117 @@ variable "alert_email" {
 }
 
 variable "asg_min_size" {
-  type    = number
-  default = 3
+  description = "Minimum number of instances the ASG maintains."
+  type        = number
+  default     = 3
 }
 
 variable "asg_max_size" {
-  type    = number
-  default = 20
+  description = "Maximum number of instances the ASG can scale out to."
+  type        = number
+  default     = 20
 }
 
 variable "asg_desired_capacity" {
-  type    = number
-  default = 3
+  description = "Starting instance count when the ASG is created. Must be between asg_min_size and asg_max_size."
+  type        = number
+  default     = 3
 }
 
 variable "instance_type" {
-  type    = string
-  default = "m6i.large"
+  description = "EC2 instance type for the ASG launch template. m6i.large is a balanced starting point; scale to m6i.xlarge for larger tenants."
+  type        = string
+  default     = "m6i.large"
 }
 
 variable "target_cpu_utilization" {
-  type    = number
-  default = 60
+  description = "Target average CPU utilization (percent, 1-100) for the ASG target-tracking scale-out policy."
+  type        = number
+  default     = 60
 }
 
 variable "target_request_count_per_target" {
-  type    = number
-  default = 500
+  description = "Target ALB request count per instance for the request-count scale-out policy."
+  type        = number
+  default     = 500
 }
 
 variable "db_instance_class" {
-  type    = string
-  default = "db.r6g.large"
+  description = "RDS instance class. db.r6g.large handles up to ~200 concurrent connections; scale to r6g.xlarge for larger deployments."
+  type        = string
+  default     = "db.r6g.large"
 }
 
 variable "db_allocated_storage_gb" {
-  type    = number
-  default = 200
+  description = "Initial allocated storage for the RDS instance in GiB."
+  type        = number
+  default     = 200
 }
 
 variable "db_max_allocated_storage_gb" {
-  type    = number
-  default = 2000
+  description = "Upper limit for RDS storage autoscaling in GiB. Must be >= db_allocated_storage_gb."
+  type        = number
+  default     = 2000
 }
 
 variable "db_engine_version" {
-  type    = string
-  default = "16.4"
+  description = "PostgreSQL engine version. Pin to a specific minor version (e.g. 16.4) to prevent unexpected minor upgrades during terraform apply."
+  type        = string
+  default     = "16.4"
 }
 
 variable "db_backup_retention_days" {
-  type    = number
-  default = 30
+  description = "Days RDS retains automated daily backups. 30 covers a typical monthly review cycle and aligns with the pre-patch on-demand snapshot lifecycle."
+  type        = number
+  default     = 30
 }
 
 variable "db_read_replica_count" {
-  type    = number
-  default = 2
+  description = "Number of RDS read replicas to create. Replicas reduce read load and provide manual failover targets."
+  type        = number
+  default     = 2
 }
 
 variable "db_deletion_protection" {
-  type    = bool
-  default = true
+  description = "Enable RDS deletion protection. Default true; set false only in dev/test sandboxes where terraform destroy should succeed."
+  type        = bool
+  default     = true
 }
 
 variable "environment" {
-  type    = string
-  default = "prod"
+  description = "Short environment label (e.g. prod, staging) appended to resource names and tags."
+  type        = string
+  default     = "prod"
 }
 
 variable "name_prefix" {
-  type    = string
-  default = null
+  description = "Optional prefix prepended to all resource names. Defaults to '<product>-unlimited-scale' when null."
+  type        = string
+  default     = null
 }
 
 variable "enable_customer_managed_key" {
-  type    = bool
-  default = true
+  description = "Create a KMS customer-managed key for encrypting RDS, ElastiCache, and S3 backup objects. Disable only if your organization manages keys externally."
+  type        = bool
+  default     = true
 }
 
 variable "alb_min_tls_version" {
-  type    = string
-  default = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  description = "ELBSecurityPolicy name defining the minimum TLS version and cipher suite for the ALB HTTPS listener."
+  type        = string
+  default     = "ELBSecurityPolicy-TLS13-1-2-2021-06"
 }
 
 variable "enable_flow_logs" {
-  type    = bool
-  default = true
+  description = "Publish VPC Flow Logs to CloudWatch. Recommended for production compliance."
+  type        = bool
+  default     = true
 }
 
 variable "access_log_retention_days" {
-  type    = number
-  default = 90
+  description = "CloudWatch log retention in days for ALB access logs and VPC Flow Logs."
+  type        = number
+  default     = 90
 }
 
 variable "marketplace_product_code" {
@@ -146,49 +170,49 @@ variable "enable_http_redirect" {
 # ----- Patching and migration safety -----
 
 variable "create_backup_bucket" {
-  description = "Provision an S3 bucket with versioning + object-lock + lifecycle for pre-patch /api/instance/export bundles."
+  description = "Provision an S3 bucket (versioning + object-lock governance + lifecycle to IA at 30d and Deep Archive at 90d) for pre-patch /api/instance/export bundles. The SAT instance profile gets least-privilege PutObject on hailbytes-*.tar.gz."
   type        = bool
   default     = true
 }
 
 variable "backup_bucket_name" {
-  description = "Name of an existing S3 bucket to use for pre-patch backups."
+  description = "Name of an existing S3 bucket to use for pre-patch backups. If null and create_backup_bucket is true, the module names one '<name_prefix>-backups-<account_id>'. If non-null and create_backup_bucket is false, the module only attaches the IAM PutObject policy to the existing bucket."
   type        = string
   default     = null
 }
 
 variable "backup_object_lock_retention_days" {
-  description = "Object Lock (governance mode) retention period for backup objects."
+  description = "Object Lock (governance mode) retention period for backup objects. 30 days satisfies the procurement-grade safety net while still allowing privileged operator override for compaction."
   type        = number
   default     = 30
 }
 
 variable "backup_noncurrent_version_expiration_days" {
-  description = "Expire noncurrent versions of backup objects after this many days."
+  description = "Expire noncurrent versions of backup objects after this many days. 365 retains a year of pre-patch bundles for rollback."
   type        = number
   default     = 365
 }
 
 variable "instance_refresh_min_healthy_percentage" {
-  description = "Minimum percentage of the ASG that must remain healthy during an instance refresh."
+  description = "Minimum percentage of the ASG that must remain healthy during an instance refresh. 50 drains one instance at a time on a 2-instance ASG; tune higher for larger fleets that can tolerate parallel replacement."
   type        = number
   default     = 50
 }
 
 variable "instance_refresh_instance_warmup_seconds" {
-  description = "Seconds the ASG considers a new instance 'warming up' before counting toward healthy_percentage."
+  description = "Seconds the ASG considers a new instance 'warming up' before counting toward healthy_percentage. 120 is enough for the SAT marketplace AMI to pass the ALB /health probe; raise for slower boot images."
   type        = number
   default     = 120
 }
 
 variable "refresh_rollback_5xx_threshold_pct" {
-  description = "Target-group 5xx rate (percent) that triggers instance-refresh auto-rollback."
+  description = "Target-group 5xx rate (percent) above which the instance refresh auto-rollback alarm fires. Default 1% over 2 evaluation periods of 1 minute."
   type        = number
   default     = 1
 }
 
 variable "waf_web_acl_arn" {
-  description = "Optional ARN of an existing WAFv2 web ACL to associate with the ALB."
+  description = "Optional ARN of an existing WAFv2 web ACL to associate with the ALB. Defaults to null (not attached). HailBytes does not bundle a managed ruleset; most enterprises bring their own."
   type        = string
   default     = null
 }
@@ -200,7 +224,7 @@ variable "rds_copy_tags_to_snapshot" {
 }
 
 variable "schema_version_endpoint_path" {
-  description = "Path on the SAT API that returns the running schema version."
+  description = "Path on the SAT/ASM API that returns the running schema version. Used by the schema_version_endpoint output that customer CI/CD curls in post-patch verification."
   type        = string
   default     = "/api/instance/schema-version"
 }
@@ -220,13 +244,15 @@ variable "redis_node_type" {
 }
 
 variable "redis_engine_version" {
-  type    = string
-  default = "7.1"
+  description = "Redis engine version for the ElastiCache replication group."
+  type        = string
+  default     = "7.1"
 }
 
 variable "redis_snapshot_retention_days" {
-  type    = number
-  default = 0
+  description = "Days ElastiCache retains automatic snapshots. 0 disables snapshots."
+  type        = number
+  default     = 0
 }
 
 variable "redis_endpoint_override" {
@@ -236,18 +262,20 @@ variable "redis_endpoint_override" {
 }
 
 variable "redis_endpoint_override_port" {
-  type    = number
-  default = 6379
+  description = "TCP port for the customer-managed Redis endpoint supplied via redis_endpoint_override."
+  type        = number
+  default     = 6379
 }
 
 variable "redis_endpoint_override_tls" {
-  type    = bool
-  default = true
+  description = "Whether to connect to the customer-managed Redis endpoint over TLS."
+  type        = bool
+  default     = true
 }
 
 
 variable "enable_alb_deletion_protection" {
-  description = "Enable deletion protection on the ALB. Default true."
+  description = "Enable deletion protection on the ALB. Default true; production deployments should keep this on. Set to false in dev/test sandboxes where `terraform destroy` should succeed without manual cleanup."
   type        = bool
   default     = true
 }
@@ -256,19 +284,19 @@ variable "enable_alb_deletion_protection" {
 # ----- RDS production-hardening (opt-in) -----
 
 variable "rds_enhanced_monitoring_interval" {
-  description = "RDS enhanced monitoring sample interval. 0 disables. CKV_AWS_118."
+  description = "RDS enhanced monitoring sample interval in seconds. 0 disables. Default 0; production typically 60. CKV_AWS_118."
   type        = number
   default     = 0
 }
 
 variable "rds_enabled_cloudwatch_log_types" {
-  description = "RDS log types to export to CloudWatch. CKV_AWS_129."
+  description = "RDS log types to export to CloudWatch. Empty list = none (cost-saving default). Production should set [\"postgresql\", \"upgrade\"]. CKV_AWS_129."
   type        = list(string)
   default     = []
 }
 
 variable "rds_iam_authentication_enabled" {
-  description = "Enable IAM DB authentication. CKV_AWS_161."
+  description = "Enable IAM database authentication on RDS. CKV_AWS_161."
   type        = bool
   default     = false
 }
@@ -280,12 +308,13 @@ variable "rds_performance_insights_enabled" {
 }
 
 variable "rds_performance_insights_retention_days" {
-  description = "Performance Insights retention. 7 = free tier; 731 = long-term."
+  description = "Performance Insights data retention. 7 = free tier (default); 731 = long-term."
   type        = number
   default     = 7
 }
 
 variable "tags" {
-  type    = map(string)
-  default = {}
+  description = "Additional tags merged on to every taggable resource."
+  type        = map(string)
+  default     = {}
 }
