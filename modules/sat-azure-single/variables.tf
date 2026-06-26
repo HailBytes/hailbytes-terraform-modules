@@ -107,25 +107,25 @@ variable "marketplace_image_version" {
 # ----- Patching and migration safety -----
 
 variable "create_backup_storage_account" {
-  description = "Provision a Storage Account + immutable container for pre-patch /api/instance/export bundles."
+  description = "Provision an Azure Storage Account + container (blob versioning + immutable WORM policy in unlocked mode + lifecycle to Cool at 30d and Archive at 90d) for pre-patch /api/instance/export bundles. The VM's system-assigned managed identity gets Storage Blob Data Contributor on the container only."
   type        = bool
   default     = true
 }
 
 variable "backup_storage_account_name" {
-  description = "Name of an existing Storage Account to use. If null and create_backup_storage_account is true, the module names one."
+  description = "Name of an existing Storage Account to use. If null and create_backup_storage_account is true, the module names one (lowercase, alphanumeric, max 24 chars). If non-null and create_backup_storage_account is false, the module only grants the managed identity blob writer perms on it."
   type        = string
   default     = null
 }
 
 variable "backup_storage_replication" {
-  description = "Replication type for the backup storage account. ZRS is the procurement-grade default."
+  description = "Replication type for the backup storage account. ZRS (zone-redundant) is the recommended default for procurement-grade durability. GRS adds cross-region replica."
   type        = string
   default     = "ZRS"
 }
 
 variable "backup_immutability_days" {
-  description = "Days the immutable blob policy keeps backup objects pinned (unlocked mode)."
+  description = "Days the immutable blob policy keeps backup objects pinned. Set in unlocked mode so customers can extend later through portal/CLI."
   type        = number
   default     = 30
 }
@@ -143,7 +143,7 @@ variable "backup_blob_noncurrent_expiration_days" {
 }
 
 variable "enable_pre_patch_run_command" {
-  description = "Install an Azure Run Command document named RunPrePatchBackup."
+  description = "Install an Azure Run Command document named RunPrePatchBackup. Customers can fire it from the Portal (VM -> Operations -> Run command) to take a pre-patch backup + managed-disk snapshot in one click. Disable if your AMI does not yet bundle ha-pre-patch-backup.sh."
   type        = bool
   default     = true
 }

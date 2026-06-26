@@ -83,7 +83,7 @@ variable "db_engine_version" {
 }
 
 variable "db_backup_retention_days" {
-  description = "Deprecated alias for rds_backup_retention_period. Kept for backward compatibility."
+  description = "Deprecated alias for rds_backup_retention_period. When set (non-null), this value wins over rds_backup_retention_period. Leave null and use rds_backup_retention_period instead. Kept for backward compatibility with pre-patching-safety configs."
   type        = number
   default     = null
 }
@@ -130,7 +130,7 @@ variable "enable_http_redirect" {
 # ----- Patching and migration safety -----
 
 variable "db_mode" {
-  description = "Database backend. 'rds' (default) provisions a Multi-AZ RDS instance. 'ec2' provisions a third EC2 with self-managed Postgres 16."
+  description = "Database backend. 'rds' (default) provisions a Multi-AZ RDS instance — recommended for production. 'ec2' provisions a third EC2 with self-managed Postgres 16 for customers that must keep data plane on EC2. Matches HAILBYTES_DB_MODE used by the Cloud Shell deploy scripts."
   type        = string
   default     = "rds"
   validation {
@@ -152,7 +152,7 @@ variable "db_ec2_data_volume_size_gb" {
 }
 
 variable "rds_backup_retention_period" {
-  description = "Days RDS retains automated daily backups."
+  description = "Days RDS retains automated daily backups. 7 satisfies the procurement-grade baseline; raise for longer point-in-time-restore windows."
   type        = number
   default     = 7
 }
@@ -164,13 +164,13 @@ variable "rds_copy_tags_to_snapshot" {
 }
 
 variable "create_backup_bucket" {
-  description = "Provision an S3 bucket with versioning + object-lock + lifecycle for pre-patch /api/instance/export bundles."
+  description = "Provision an S3 bucket (versioning + object-lock governance + lifecycle to IA at 30d and Deep Archive at 90d) for pre-patch /api/instance/export bundles. The SAT instance profile gets least-privilege PutObject on hailbytes-*.tar.gz."
   type        = bool
   default     = true
 }
 
 variable "backup_bucket_name" {
-  description = "Name of an existing S3 bucket to use for pre-patch backups."
+  description = "Name of an existing S3 bucket to use for pre-patch backups. If null and create_backup_bucket is true, the module names one '<name_prefix>-backups-<account_id>'. If non-null and create_backup_bucket is false, the module only attaches the IAM PutObject policy."
   type        = string
   default     = null
 }
@@ -188,13 +188,13 @@ variable "backup_noncurrent_version_expiration_days" {
 }
 
 variable "refresh_rollback_5xx_threshold_pct" {
-  description = "Target-group 5xx rate (percent) that trips the patching alarm."
+  description = "Target-group 5xx rate (percent) that trips the patching alarm. Default 1% over 2 evaluation periods of 1 minute."
   type        = number
   default     = 1
 }
 
 variable "waf_web_acl_arn" {
-  description = "Optional ARN of an existing WAFv2 web ACL to associate with the ALB. Defaults to null."
+  description = "Optional ARN of an existing WAFv2 web ACL to associate with the ALB. Defaults to null (not attached). HailBytes does not bundle a managed ruleset."
   type        = string
   default     = null
 }
@@ -206,7 +206,7 @@ variable "alert_email" {
 }
 
 variable "schema_version_endpoint_path" {
-  description = "Path on the SAT API that returns the running schema version."
+  description = "Path on the SAT/ASM API that returns the running schema version."
   type        = string
   default     = "/api/instance/schema-version"
 }
@@ -238,7 +238,7 @@ variable "redis_snapshot_retention_days" {
 }
 
 variable "redis_endpoint_override" {
-  description = "Host of a customer-managed Redis endpoint. When non-null, the module skips its own ElastiCache replication group and wires the VMs at this host instead. Pair with enable_managed_redis = false."
+  description = "Host of a customer-managed Redis endpoint (e.g. existing ElastiCache, MemoryDB, or self-managed Redis Sentinel). When non-null, the module skips its own ElastiCache replication group and wires the VMs at this host instead. Pair with enable_managed_redis = false."
   type        = string
   default     = null
 }
@@ -257,19 +257,19 @@ variable "redis_endpoint_override_tls" {
 
 
 variable "enable_alb_deletion_protection" {
-  description = "Enable deletion protection on the ALB. Default true; dev/test override to false to let `terraform destroy` succeed."
+  description = "Enable deletion protection on the ALB. Default true; production deployments should keep this on. Set to false in dev/test sandboxes where you want `terraform destroy` to succeed without manual cleanup."
   type        = bool
   default     = true
 }
 
 variable "enable_alb_access_logging" {
-  description = "Provision an S3 bucket for ALB access logs and enable the listener access_logs block."
+  description = "Provision an S3 bucket for ALB access logs and enable the listener access_logs block. Adds ~$1-5/mo storage cost depending on traffic; recommended for production deployments where the access log is part of the audit trail."
   type        = bool
   default     = false
 }
 
 variable "alb_access_log_retention_days" {
-  description = "Days to retain ALB access log objects."
+  description = "Days to retain ALB access log objects before lifecycle expiration. Default 365 (one calendar year) — long enough for most compliance lookback windows."
   type        = number
   default     = 365
 }
@@ -278,31 +278,31 @@ variable "alb_access_log_retention_days" {
 # ----- RDS production-hardening (opt-in) -----
 
 variable "rds_enhanced_monitoring_interval" {
-  description = "RDS enhanced monitoring sample interval. 0 disables. CKV_AWS_118."
+  description = "RDS enhanced monitoring sample interval in seconds (0, 1, 5, 10, 15, 30, 60). 0 disables enhanced monitoring. Default 0; production deployments typically set 60. CKV_AWS_118."
   type        = number
   default     = 0
 }
 
 variable "rds_enabled_cloudwatch_log_types" {
-  description = "RDS log types to export to CloudWatch. CKV_AWS_129."
+  description = "RDS log types to export to CloudWatch. Empty list = no log exports (cost-saving default). Production should set to [\"postgresql\", \"upgrade\"]. CKV_AWS_129."
   type        = list(string)
   default     = []
 }
 
 variable "rds_iam_authentication_enabled" {
-  description = "Enable IAM DB authentication. CKV_AWS_161."
+  description = "Enable IAM database authentication on the RDS instance. Adds app-side complexity (psql connections must mint IAM tokens) but eliminates long-lived passwords. CKV_AWS_161."
   type        = bool
   default     = false
 }
 
 variable "rds_performance_insights_enabled" {
-  description = "Enable RDS Performance Insights. CKV_AWS_354."
+  description = "Enable RDS Performance Insights. Adds ~$0/instance for 7-day retention (free tier); KMS-encrypted automatically when enable_customer_managed_key is also set. CKV_AWS_354."
   type        = bool
   default     = false
 }
 
 variable "rds_performance_insights_retention_days" {
-  description = "Performance Insights retention. 7 = free tier; 731 = long-term."
+  description = "Performance Insights data retention. 7 = free tier (default); 731 = long-term retention (paid)."
   type        = number
   default     = 7
 }
