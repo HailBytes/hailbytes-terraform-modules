@@ -38,6 +38,10 @@ variable "lb_subnet_id" {
 
 variable "allowed_cidrs" {
   type = list(string)
+  validation {
+    condition     = alltrue([for c in var.allowed_cidrs : can(cidrhost(c, 0))])
+    error_message = "All allowed_cidrs entries must be valid CIDR blocks (e.g. \"10.0.0.0/8\")."
+  }
 }
 
 variable "admin_username" {
@@ -103,6 +107,10 @@ variable "db_sku_name" {
 variable "db_storage_mb" {
   type    = number
   default = 131072
+  validation {
+    condition     = var.db_storage_mb >= 32768
+    error_message = "db_storage_mb must be at least 32768 MiB (Azure Flexible Server minimum of 32 GiB)."
+  }
 }
 
 variable "db_version" {
@@ -113,6 +121,10 @@ variable "db_version" {
 variable "db_backup_retention_days" {
   type    = number
   default = 14
+  validation {
+    condition     = var.db_backup_retention_days >= 7 && var.db_backup_retention_days <= 35
+    error_message = "db_backup_retention_days must be between 7 and 35 (Azure Flexible Server constraint)."
+  }
 }
 
 variable "db_high_availability_mode" {
@@ -254,6 +266,10 @@ variable "redis_endpoint_override_port" {
   description = "Port on the customer-managed Redis endpoint. 6380 (TLS) is the Azure default. Ignored unless redis_endpoint_override is set."
   type        = number
   default     = 6380
+  validation {
+    condition     = var.redis_endpoint_override_port >= 1 && var.redis_endpoint_override_port <= 65535
+    error_message = "redis_endpoint_override_port must be between 1 and 65535."
+  }
 }
 
 variable "redis_endpoint_override_tls" {
