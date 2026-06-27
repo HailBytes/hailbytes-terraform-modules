@@ -51,6 +51,17 @@ locals {
 
 data "azurerm_client_config" "current" {}
 
+# Cross-variable constraints that cannot be expressed inside individual variable
+# validation blocks (which only see the one variable being declared).
+resource "terraform_data" "validate_vmss_sizing" {
+  lifecycle {
+    precondition {
+      condition     = var.vmss_min_count <= var.vmss_default_count && var.vmss_default_count <= var.vmss_max_count
+      error_message = "vmss_default_count (${var.vmss_default_count}) must be between vmss_min_count (${var.vmss_min_count}) and vmss_max_count (${var.vmss_max_count})."
+    }
+  }
+}
+
 resource "azurerm_marketplace_agreement" "hailbytes" {
   count = var.accept_marketplace_terms ? 1 : 0
 
