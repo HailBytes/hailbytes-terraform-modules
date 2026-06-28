@@ -4,7 +4,8 @@ output "vpc_id" {
 }
 
 output "vpc_cidr" {
-  value = aws_vpc.main.cidr_block
+  description = "CIDR block of the VPC. Useful for allowlisting in security group rules outside this module."
+  value       = aws_vpc.main.cidr_block
 }
 
 output "public_subnet_ids" {
@@ -23,7 +24,8 @@ output "db_subnet_ids" {
 }
 
 output "availability_zones" {
-  value = data.aws_availability_zones.available.names
+  description = "Availability zone names actually used (length = az_count). Reference these when sizing resources to match the network topology."
+  value       = data.aws_availability_zones.available.names
 }
 
 output "nat_gateway_ids" {
@@ -37,5 +39,6 @@ output "nat_gateway_public_ips" {
 }
 
 output "internet_gateway_id" {
-  value = aws_internet_gateway.main.id
+  description = "ID of the Internet Gateway attached to the VPC. Useful for dependency ordering in custom route table rules."
+  value       = aws_internet_gateway.main.id
 }
