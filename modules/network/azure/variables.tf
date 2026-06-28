@@ -44,6 +44,7 @@ variable "associate_subnet_nsgs" {
 }
 
 variable "tags" {
-  type    = map(string)
-  default = {}
+  description = "Tags to apply to all network resources created by this module."
+  type        = map(string)
+  default     = {}
 }
