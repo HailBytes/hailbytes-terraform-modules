@@ -32,11 +32,13 @@ variable "enable_flow_logs" {
 }
 
 variable "flow_logs_retention_days" {
-  type    = number
-  default = 30
+  description = "Retention period in days for VPC Flow Logs in CloudWatch. Applies only when enable_flow_logs = true."
+  type        = number
+  default     = 30
 }
 
 variable "tags" {
-  type    = map(string)
-  default = {}
+  description = "Tags to apply to all network resources created by this module."
+  type        = map(string)
+  default     = {}
 }
