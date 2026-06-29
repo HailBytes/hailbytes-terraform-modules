@@ -432,6 +432,47 @@ jobs:
           fi
           echo "All wrapper modules forward their core surface area cleanly."
 
+      # The v0.3.x regression was missing outputs (post_patch_ssm_document_name,
+      # redis_endpoint, redis_mode) that operators read from the wrapper.  This
+      # step is the output-layer equivalent of the variable check above: if the
+      # core module adds a new output, the wrapper must re-export it too.
+      - name: Diff wrapper outputs against their core modules
+        run: |
+          set -eo pipefail
+          declare -A wrappers=(
+            ["sat-aws-single"]="single-vm/aws"
+            ["asm-aws-single"]="single-vm/aws"
+            ["sat-aws-ha"]="ha-hot-hot/aws"
+            ["asm-aws-ha"]="ha-hot-hot/aws"
+            ["sat-aws-autoscale"]="unlimited-scale/aws"
+            ["asm-aws-autoscale"]="unlimited-scale/aws"
+            ["sat-azure-single"]="single-vm/azure"
+            ["asm-azure-single"]="single-vm/azure"
+            ["sat-azure-ha"]="ha-hot-hot/azure"
+            ["asm-azure-ha"]="ha-hot-hot/azure"
+            ["sat-azure-autoscale"]="unlimited-scale/azure"
+            ["asm-azure-autoscale"]="unlimited-scale/azure"
+          )
+
+          fail=0
+          for wrapper in "${!wrappers[@]}"; do
+            core="${wrappers[$wrapper]}"
+            core_outputs=$(grep -h '^output ' "modules/${core}/outputs.tf" | awk '{print $2}' | tr -d '"' | sort)
+            wrapper_outputs=$(grep -h '^output ' "modules/${wrapper}/outputs.tf" | awk '{print $2}' | tr -d '"' | sort)
+            missing=$(comm -23 <(echo "$core_outputs") <(echo "$wrapper_outputs") || true)
+            if [ -n "$missing" ]; then
+              echo "::error::Wrapper modules/${wrapper} is missing outputs defined by core modules/${core}:"
+              echo "$missing" | sed 's|^|::error::  - |'
+              fail=1
+            fi
+          done
+
+          if [ "${fail}" = "1" ]; then
+            echo "::error::Wrappers must re-export every core output (the v0.3.x regression was exactly this class of omission)."
+            exit 1
+          fi
+          echo "All wrapper modules re-export their core output surface cleanly."
+
       # Non-blocking: warn (don't fail) when a forwarded variable's
       # description/type/default has drifted from the core module, so the
       # public-API docs stay faithful to the implementation.
