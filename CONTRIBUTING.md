@@ -33,8 +33,11 @@ with a few conventions worth knowing before you open one.
 3. **`tflint`** — recursive, with `terraform` + `aws` + `azurerm`
    plugins. Error severity gates the build; warnings surface in
    logs.
-4. **`tfsec`** — HIGH/CRITICAL findings fail the build; MEDIUM/LOW
-   land in the GitHub code-scanning UI without breaking the gate.
+4. **`tfsec`** — HIGH/CRITICAL findings fail the build; findings
+   appear as inline annotations in the GitHub code-scanning UI. The
+   `trivy-iac` workflow (a separate workflow) surfaces MEDIUM-severity
+   findings without gating the build; it also reads `#tfsec:ignore`
+   annotations.
    Inline `#tfsec:ignore` comments are accepted for intentional
    exceptions; document the reason in the same line.
 5. **`examples-validate`** — every `modules/*/{aws,azure}/examples/basic`

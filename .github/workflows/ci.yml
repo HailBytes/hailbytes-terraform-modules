@@ -183,6 +183,56 @@ jobs:
       - name: tflint — recursive
         run: tflint --recursive --format=compact --minimum-failure-severity=error
 
+  # ---------------------------------------------------------------------
+  # tfsec — static security analysis for Terraform. HIGH/CRITICAL
+  # findings fail the build; findings appear as inline annotations via
+  # GitHub code scanning. The companion trivy-iac workflow surfaces
+  # MEDIUM-severity findings and also honours #tfsec:ignore annotations.
+  # Run tfsec locally before pushing: tfsec modules/ --minimum-severity HIGH
+  # ---------------------------------------------------------------------
+  tfsec:
+    name: tfsec — HIGH/CRITICAL gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install tfsec
+        env:
+          TFSEC_VERSION: 1.28.11
+        run: |
+          set -eo pipefail
+          binary="tfsec-linux-amd64"
+          curl -sSfL -o "/tmp/${binary}" \
+            "https://github.com/aquasecurity/tfsec/releases/download/v${TFSEC_VERSION}/${binary}"
+          curl -sSfL -o "/tmp/${binary}.sha256" \
+            "https://github.com/aquasecurity/tfsec/releases/download/v${TFSEC_VERSION}/${binary}.sha256"
+          (cd /tmp && sha256sum --check "${binary}.sha256")
+          sudo install -m 755 "/tmp/${binary}" /usr/local/bin/tfsec
+          tfsec --version
+
+      - name: tfsec scan
+        run: |
+          # tfsec exits 1 when HIGH/CRITICAL findings are found; the SARIF
+          # file is always written before that exit so the upload step below
+          # captures the annotations regardless of gate outcome.
+          tfsec modules/ \
+            --minimum-severity HIGH \
+            --format sarif \
+            --out tfsec.sarif \
+            --no-color
+
+      - name: Upload tfsec SARIF to GitHub code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@28deaeda66b76a05916b6923827895f2b14ab387 # v3.27.5
+        with:
+          sarif_file: tfsec.sarif
+          category: tfsec
+
   cost-shapes-sync:
     name: COST_SHAPES.md sync check
     runs-on: ubuntu-24.04
