@@ -33,27 +33,33 @@ with a few conventions worth knowing before you open one.
 3. **`tflint`** — recursive, with `terraform` + `aws` + `azurerm`
    plugins. Error severity gates the build; warnings surface in
    logs.
-4. **`tfsec`** — HIGH/CRITICAL findings fail the build; MEDIUM/LOW
-   land in the GitHub code-scanning UI without breaking the gate.
-   Inline `#tfsec:ignore` comments are accepted for intentional
-   exceptions; document the reason in the same line.
-5. **`examples-validate`** — every `modules/*/{aws,azure}/examples/basic`
+4. **`checkov`** (`.github/workflows/checkov.yml`) — findings fail the
+   build unless waived in `.checkov.yaml`. New suppressions must add a
+   `skip-check` entry with the `CKV_*` ID, a category letter, and a
+   one-line rationale; PRs that suppress a finding without one are
+   rejected at review.
+5. **`trivy-iac`** (`.github/workflows/trivy-iac.yml`) — MEDIUM+
+   misconfigurations fail the build unless waived in `.trivyignore`.
+   New suppressions must add an entry with the `AVD-*` ID and a
+   one-line rationale, cross-referencing the matching `.checkov.yaml`
+   rule where one exists.
+6. **`examples-validate`** — every `modules/*/{aws,azure}/examples/basic`
    subtree must `terraform validate` clean. Customer copy-paste
    starting points stay buildable.
-6. **`marketplace-id-consistency`** — every `marketplace_product_codes`
+7. **`marketplace-id-consistency`** — every `marketplace_product_codes`
    use carries the canonical AWS AMI codes
    (`d19hjbz3gakqdlonlf8twdmll` for SAT,
    `1n57wg1f6735e30vj5fn420bp` for ASM) and the canonical Azure
    publisher / offer slugs. See **Cross-repo marketplace verification**
    below.
-7. **`wrapper-forwarding`** — every wrapper module declares the same
+8. **`wrapper-forwarding`** — every wrapper module declares the same
    variables as its core module, minus the intentionally-hidden
    `product`.
-8. **`versions-tf`** — every module dir with `.tf` files has a
+9. **`versions-tf`** — every module dir with `.tf` files has a
    `versions.tf` declaring `required_version` + `required_providers`.
-9. **`cost-shapes-sync`** — `COST_SHAPES.md` carries every canonical
-   marker (per-tier × per-cloud, per-vCore meter, Azure Cache
-   sizing). Fails fast on a partial edit that drops a section.
+10. **`cost-shapes-sync`** — `COST_SHAPES.md` carries every canonical
+    marker (per-tier × per-cloud, per-vCore meter, Azure Cache
+    sizing). Fails fast on a partial edit that drops a section.
 
 ## Cross-repo marketplace verification (release-time)
 
