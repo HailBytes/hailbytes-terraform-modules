@@ -22,6 +22,11 @@ mock_provider "aws" {
   mock_resource "aws_sns_topic" {
     defaults = { arn = "arn:aws:sns:us-east-1:123456789012:mock-topic" }
   }
+  mock_resource "aws_cloudwatch_log_group" {
+    defaults = {
+      arn = "arn:aws:logs:us-east-1:123456789012:log-group:/aws/vpc-flow-logs/mock:*"
+    }
+  }
 }
 
 mock_provider "random" {}
@@ -69,5 +74,10 @@ run "minimal_inputs_apply" {
   assert {
     condition     = output.redis_endpoint != ""
     error_message = "redis_endpoint output must be non-empty when managed Redis is enabled (the default)"
+  }
+
+  assert {
+    condition     = output.flow_log_group_name != ""
+    error_message = "flow_log_group_name output must be non-empty when enable_flow_logs is true (the default)"
   }
 }

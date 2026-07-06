@@ -90,3 +90,35 @@ run "redis_disabled_creates_nothing" {
     error_message = "redis_mode must be 'disabled' when managed Redis is off and no override is supplied."
   }
 }
+
+run "flow_logs_enabled_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(aws_flow_log.vpc) == 1
+    error_message = "enable_flow_logs defaults to true and must create exactly one VPC flow log."
+  }
+}
+
+run "flow_logs_disabled_creates_nothing" {
+  command = plan
+
+  variables {
+    enable_flow_logs = false
+  }
+
+  assert {
+    condition     = length(aws_flow_log.vpc) == 0
+    error_message = "enable_flow_logs = false must create zero VPC flow logs."
+  }
+
+  assert {
+    condition     = length(aws_cloudwatch_log_group.flow_logs) == 0
+    error_message = "enable_flow_logs = false must create zero flow-log CloudWatch log groups."
+  }
+
+  assert {
+    condition     = output.flow_log_group_name == ""
+    error_message = "flow_log_group_name must be empty string when enable_flow_logs is false."
+  }
+}

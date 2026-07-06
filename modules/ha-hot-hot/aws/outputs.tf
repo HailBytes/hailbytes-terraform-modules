@@ -96,3 +96,8 @@ output "redis_mode" {
   description = "How Redis is wired: 'managed' (this module provisioned ElastiCache), 'override' (customer-supplied endpoint), or 'disabled' (HA is not actually safe)."
   value       = local.provision_managed_redis ? "managed" : (var.redis_endpoint_override == null ? "disabled" : "override")
 }
+
+output "flow_log_group_name" {
+  description = "CloudWatch log group name receiving VPC Flow Logs. Empty string when enable_flow_logs is false."
+  value       = var.enable_flow_logs ? aws_cloudwatch_log_group.flow_logs[0].name : ""
+}

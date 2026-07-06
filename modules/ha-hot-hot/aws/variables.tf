@@ -171,6 +171,12 @@ variable "enable_customer_managed_key" {
   default = false
 }
 
+variable "enable_flow_logs" {
+  description = "Enable VPC Flow Logs for the provided VPC, sending ALL traffic to a CloudWatch log group named /aws/vpc-flow-logs/<name_prefix>. Matches the default stated in SECURITY-DEFAULTS.md."
+  type        = bool
+  default     = true
+}
+
 variable "alb_idle_timeout_seconds" {
   type    = number
   default = 120
