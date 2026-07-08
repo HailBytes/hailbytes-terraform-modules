@@ -26,6 +26,10 @@ terraform.rc
 # tflint
 .tflint.hcl.lock
 
+# Python bytecode (.github/scripts/*.py)
+__pycache__/
+*.pyc
+
 # IDE
 .idea/
 .vscode/
