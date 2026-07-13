@@ -1,0 +1,15 @@
+version: 2
+updates:
+  # Every workflow in .github/workflows pins actions by commit SHA
+  # (see ci.yml/checkov.yml/trivy-iac.yml). That's the right security
+  # posture, but nothing currently bumps those pins forward — Dependabot
+  # opens the PRs (with the SHA + version comment updated together) so
+  # security fixes and version bumps aren't missed silently.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
