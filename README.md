@@ -11,6 +11,10 @@
 
 ---
 
+## 🚀 Quickstart
+
+New here? [`quickstart/azure-ha`](quickstart/azure-ha) takes you from an empty subscription to a running HA deployment in one `terraform apply` (or one pasted Azure Cloud Shell command). It creates the networking prerequisites for you, so there is nothing to figure out before your first apply. Each workload module also ships an `examples/basic` config for teams composing into an existing landing zone.
+
 ## Overview
 
 These modules implement the HailBytes BYOC (Bring Your Own Cloud) deployment model. Your HailBytes instance runs in your own AWS or Azure account — your data never leaves your infrastructure.
