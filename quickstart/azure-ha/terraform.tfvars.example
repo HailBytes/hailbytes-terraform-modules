@@ -1,0 +1,14 @@
+# Copy to terraform.tfvars and fill in the two REPLACE values.
+# Everything else has a sensible default; override only if needed.
+
+# REQUIRED: who may reach the admin UI over HTTPS.
+allowed_cidrs = ["REPLACE.WITH.YOUR.IP/32"]
+
+# REQUIRED: contents of your SSH public key file.
+ssh_public_key = "ssh-ed25519 AAAA...REPLACE user@host"
+
+# Optional overrides:
+# resource_group_name = "rg-hailbytes-sat-prod"
+# location            = "northeurope"
+# admin_username      = "hbadmin"
+# environment         = "prod"
