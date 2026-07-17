@@ -68,9 +68,46 @@ module "hailbytes_sat_ha" {
 
 Each module README shows its own Starter vs Procurement-grade table.
 
+## Simplified SKUs → module configuration
+
+The channel price list quotes fixed annual plans (the "simplified SKUs").
+Each SKU's vCore count is the **total metered vCPU at steady state** —
+it maps onto a specific module + sizing overrides. Module defaults stay
+at the Starter shape; a SKU is fulfilled by applying the overrides below
+(runnable examples live in each module's `examples/` directory where
+noted).
+
+| SKU | Plan | Metered vCores | Module | Overrides vs defaults |
+|---|---|---|---|---|
+| `HB-ESS` | Essential | 8 | `single-vm/aws` | `instance_type = "m6i.2xlarge"` |
+| `HB-STD` | Standard | 12 | `unlimited-scale/aws` | `instance_type = "m6i.xlarge"`, `asg_min_size = asg_desired_capacity = 3`, `asg_max_size = 3` (raise only if the customer enables auto-scaling) |
+| `HB-PRO` | Professional | 16 | `single-vm/aws` | `instance_type = "m6i.4xlarge"` |
+| `HB-PRO-HA` | Professional HA | 16 (2 × 8) | `ha-hot-hot/aws` | `instance_type = "m6i.2xlarge"`, `db_instance_class = "db.m6g.large"` — see [`examples/hb-pro-ha`](modules/ha-hot-hot/aws/examples/hb-pro-ha) |
+| `HB-SCALE` | Consortium / national scale (500k+ users) | 48 (6 × 8) | `unlimited-scale/aws` | `instance_type = "m6i.2xlarge"`, `asg_min_size = asg_desired_capacity = 6`, `asg_max_size = 12`, `db_instance_class = "db.r6g.2xlarge"`, `redis_node_type = "cache.m6g.large"` — see [`examples/hb-scale`](modules/unlimited-scale/aws/examples/hb-scale) |
+
+Azure equivalents by VM size: `Standard_D8s_v5` (8 vCPU) for the
+`m6i.2xlarge` rows, `Standard_D4s_v5` for `m6i.xlarge`,
+`Standard_D16s_v5` for `m6i.4xlarge`.
+
+Notes:
+
+- **`HB-SCALE` is a partner-desk SKU**, not on the standard four-plan
+  price list — at the $0.24/vCPU-hr meter, 48 vCores is ~$8,400/mo of
+  metering alone, so it's always quoted as a custom agreement.
+  It matches the documented HB-SCALE-class operational profile in
+  `hailbytes-sat/docs/DATABASE_OPS.md` (50+ vCPU, 200-connection pool,
+  Postgres `max_connections ≥ 220`, one SMTP sending profile per member
+  organization).
+- SKU vCore counts assume steady state with auto-scaling off (the
+  price-list default). Enabling auto-scaling meters the extra instances
+  at the same per-vCore rate.
+- These overrides change instance/DB classes — applying them to an
+  existing deployment **replaces instances** (and can trigger an RDS
+  scale operation). Plan a maintenance window; don't re-apply blindly.
+
 ## EU / data-residency pricing note
 
-Asiera / HEAnet and other EU/EEA-resident deployments: prices in
+For EU/EEA-resident deployments (e.g. education-sector consortia): prices in
 `eu-west-1` (Dublin, recommended default) and `eu-central-1`
 (Frankfurt, fallback) are within roughly ±5% of `us-east-1`. The
 procurement-grade column above holds in either region. All managed

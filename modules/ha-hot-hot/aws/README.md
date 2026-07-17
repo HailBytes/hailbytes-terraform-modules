@@ -50,7 +50,7 @@ canonical procurement-grade source, see
 | **All-in (infra + meter)** | | **~$1,135/month** | | **~$1,215/month** |
 
 Single-instance reference (for the procurement delta the account team
-quotes — Asiera/HEAnet etc.): ~$420/month all-in (1× `m6i.large`,
+quotes): ~$420/month all-in (1× `m6i.large`,
 co-located Postgres, no ALB, no Redis, no managed DB). HA lands at
 roughly **2.2–2.6× a single-instance bill**.
 
@@ -90,6 +90,11 @@ cp terraform.tfvars.example terraform.tfvars
 # edit terraform.tfvars — replace every REPLACE placeholder before applying
 terraform init && terraform apply
 ```
+
+For the `HB-PRO-HA` catalog SKU (2 × 8 metered vCores), use
+[`examples/hb-pro-ha`](examples/hb-pro-ha) instead — same inputs, with
+the SKU's sizing overrides pre-applied. The full SKU → configuration
+mapping lives in [`COST_SHAPES.md`](../../../COST_SHAPES.md#simplified-skus--module-configuration).
 
 ## Post-deploy verification
 

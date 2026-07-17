@@ -3,7 +3,7 @@
 This page documents the procurement-grade safety net that every HailBytes
 Terraform module — AWS and Azure, single / HA / autoscale — ships with by
 default. It is the URL we send to enterprise procurement and security
-reviewers (Asiera, HEAnet) when they ask how patching, backups, and
+reviewers when they ask how patching, backups, and
 rollback are handled in a BYOC deployment of HailBytes SAT or ASM.
 
 The companion change in HailBytes SAT itself ships `/api/instance/export`,

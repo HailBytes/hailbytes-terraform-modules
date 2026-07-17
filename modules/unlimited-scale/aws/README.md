@@ -98,6 +98,13 @@ cp terraform.tfvars.example terraform.tfvars
 terraform init && terraform apply
 ```
 
+For consortium / national-scale deployments (`HB-SCALE`, 500k+ users,
+6 × `m6i.2xlarge` = 48 metered vCores), use
+[`examples/hb-scale`](examples/hb-scale) — it pre-applies the sizing this
+class is documented to need (`db.r6g.2xlarge`, larger Redis, 500 GB
+storage). The full SKU → configuration mapping lives in
+[`COST_SHAPES.md`](../../../COST_SHAPES.md#simplified-skus--module-configuration).
+
 ## Post-deploy verification
 
 ```bash
