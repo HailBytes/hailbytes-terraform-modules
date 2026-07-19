@@ -21,6 +21,8 @@ Opinionated VPC scaffolding for HailBytes workload modules. Three-tier subnet la
 
 ## Usage
 
+> No `v1.0.0` tag exists yet ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)); pin to a commit SHA instead of `?ref=v1.0.0` until a tagged release ships.
+
 ```hcl
 module "network" {
   source = "github.com/hailbytes/hailbytes-terraform-modules//modules/network/aws?ref=v1.0.0"

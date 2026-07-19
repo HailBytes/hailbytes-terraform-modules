@@ -96,6 +96,8 @@ Pick the module that matches your **product** × **cloud** × **tier**. Each mod
 
 ## Quick start
 
+> No `v1.0.0` tag has been cut on this repo yet (see [#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)). The `?ref=v1.0.0` pins below will fail `terraform init` with a "reference not found" error until a tag exists — pin to a commit SHA instead (e.g. `?ref=d0de3d5`) and update the pin once a tagged release ships.
+
 ### ASM on AWS (single VM)
 
 ```hcl
