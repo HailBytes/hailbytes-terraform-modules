@@ -6,6 +6,8 @@ Opinionated virtual network scaffolding for HailBytes workload modules. Vnet + w
 
 ## Usage
 
+> No `v1.0.0` tag exists yet ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)); pin to a commit SHA instead of `?ref=v1.0.0` until a tagged release ships.
+
 ```hcl
 resource "azurerm_resource_group" "main" {
   name     = "rg-hailbytes-prod"
