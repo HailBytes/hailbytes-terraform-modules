@@ -19,6 +19,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ### Documentation
 
 - `docs/PATCHING_AND_MIGRATION.md` referenced a nonexistent `v1.1.0` tag; now `v1.0.0` like every other doc. **A `v1.0.0` git tag must be cut on `main` before customers can use any README quickstart** — every snippet pins `?ref=v1.0.0`.
+- **README and `docs/PATCHING_AND_MIGRATION.md` now call out that no `v1.0.0` tag exists yet** ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)), so a customer copy-pasting a quickstart snippet sees a pin-to-commit-SHA workaround instead of a bare `terraform init` failure. Superseded by cutting the actual tag.
 - HA / autoscale READMEs now say to edit `terraform.tfvars` (replacing the `REPLACE` placeholders) before `terraform apply`.
 - `COST_SHAPES.md` labels the comparison table as procurement-grade sizing, not module defaults.
 - **Azure HA / autoscale: TLS termination tradeoff called out in READMEs.** In the default Standard LB mode the frontend is TCP passthrough on 443, so the browser terminates against the VM's self-signed certificate — and the certificate CN (now the per-VM IMDS hostname after the corresponding `hailbytes-asm` / `hailbytes-sat` `setup.sh` change) does not match the LB public IP nor any DNS record customers point at it. Production deployments should set `enable_application_gateway = true` with a real PFX, or front the module with their own upstream L7 LB. No code change; this documents an existing behavior that was previously silent.
