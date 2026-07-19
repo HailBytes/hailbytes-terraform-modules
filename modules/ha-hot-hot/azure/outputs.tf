@@ -4,7 +4,8 @@ output "load_balancer_public_ip" {
 }
 
 output "load_balancer_id" {
-  value = azurerm_lb.main.id
+  description = "Resource ID of the internal Azure Load Balancer. Not the primary endpoint when enable_application_gateway = true — use application_gateway_id in that case."
+  value       = azurerm_lb.main.id
 }
 
 output "application_gateway_id" {
@@ -18,7 +19,8 @@ output "vm_ids" {
 }
 
 output "vm_private_ips" {
-  value = azurerm_network_interface.vm[*].private_ip_address
+  description = "Private IP addresses of the two active/active VMs, in the same order as vm_ids."
+  value       = azurerm_network_interface.vm[*].private_ip_address
 }
 
 output "postgres_fqdn" {
