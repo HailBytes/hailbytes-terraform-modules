@@ -1,9 +1,11 @@
 output "vnet_id" {
-  value = azurerm_virtual_network.main.id
+  description = "Resource ID of the virtual network. Pass to workload modules that need to peer or reference the VNet."
+  value       = azurerm_virtual_network.main.id
 }
 
 output "vnet_name" {
-  value = azurerm_virtual_network.main.name
+  description = "Name of the virtual network. Required when creating VNet peerings or referencing subnets via the Azure portal."
+  value       = azurerm_virtual_network.main.name
 }
 
 output "workload_subnet_id" {
@@ -27,5 +29,6 @@ output "private_dns_zone_id" {
 }
 
 output "private_dns_zone_name" {
-  value = azurerm_private_dns_zone.postgres.name
+  description = "Name of the private DNS zone for Postgres (e.g. '<prefix>.postgres.database.azure.com'). Pass to var.private_dns_zone_name on ha-hot-hot / unlimited-scale."
+  value       = azurerm_private_dns_zone.postgres.name
 }

@@ -9,7 +9,8 @@ output "alb_zone_id" {
 }
 
 output "alb_arn" {
-  value = aws_lb.main.arn
+  description = "ARN of the Application Load Balancer. Use for attaching WAF web ACLs, Lambda triggers, or cross-account resource policies."
+  value       = aws_lb.main.arn
 }
 
 output "instance_ids" {
@@ -75,10 +76,12 @@ output "waf_attached" {
 }
 
 output "ami_id" {
-  value = data.aws_ami.hailbytes.id
+  description = "AMI ID resolved from the HailBytes Marketplace image for this product and version. Useful for audit logging and drift detection."
+  value       = data.aws_ami.hailbytes.id
 }
 
 output "security_group_ids" {
+  description = "Map of security group IDs keyed by role: alb, vm, db, redis. The redis key is null when Redis is not managed by this module."
   value = {
     alb   = aws_security_group.alb.id
     vm    = aws_security_group.vm.id
