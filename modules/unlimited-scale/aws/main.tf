@@ -38,6 +38,21 @@ locals {
 data "aws_region" "current" {}
 data "aws_caller_identity" "current" {}
 
+# Cross-variable constraints that cannot be expressed inside individual variable
+# validation blocks (which only see the one variable being declared).
+resource "terraform_data" "validate_asg_sizing" {
+  lifecycle {
+    precondition {
+      condition     = var.asg_min_size <= var.asg_desired_capacity && var.asg_desired_capacity <= var.asg_max_size
+      error_message = "asg_desired_capacity (${var.asg_desired_capacity}) must be between asg_min_size (${var.asg_min_size}) and asg_max_size (${var.asg_max_size})."
+    }
+    precondition {
+      condition     = var.db_max_allocated_storage_gb >= var.db_allocated_storage_gb
+      error_message = "db_max_allocated_storage_gb (${var.db_max_allocated_storage_gb}) must be >= db_allocated_storage_gb (${var.db_allocated_storage_gb})."
+    }
+  }
+}
+
 data "aws_ami" "hailbytes" {
   most_recent = true
   owners      = ["aws-marketplace"]
