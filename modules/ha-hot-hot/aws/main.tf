@@ -1199,3 +1199,73 @@ resource "aws_iam_role_policy_attachment" "rds_monitoring" {
   role       = aws_iam_role.rds_monitoring[0].name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonRDSEnhancedMonitoringRole"
 }
+
+# ----- VPC Flow Logs -----
+
+resource "aws_cloudwatch_log_group" "flow_logs" {
+  count             = var.enable_flow_logs ? 1 : 0
+  name              = "/aws/vpc-flow-logs/${local.name_prefix}"
+  retention_in_days = 30
+  kms_key_id        = var.enable_customer_managed_key ? aws_kms_key.main[0].arn : null
+  tags              = local.common_tags
+}
+
+resource "aws_iam_role" "flow_logs" {
+  count = var.enable_flow_logs ? 1 : 0
+  name  = "${local.name_prefix}-flow-logs"
+  tags  = local.common_tags
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "vpc-flow-logs.amazonaws.com" }
+    }]
+  })
+}
+
+# The flow-logs role's first statement is scoped to this module's single
+# flow_logs log-group ARN. The second statement uses Resource = "*" only for
+# logs:DescribeLogGroups, which the API itself requires — IAM rejects ARN
+# scoping on that action. The role can still neither read nor write any other
+# log group.
+#tfsec:ignore:aws-iam-no-policy-wildcards
+resource "aws_iam_role_policy" "flow_logs" {
+  count = var.enable_flow_logs ? 1 : 0
+  name  = "${local.name_prefix}-flow-logs"
+  role  = aws_iam_role.flow_logs[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+          "logs:DescribeLogStreams",
+        ]
+        Resource = [
+          aws_cloudwatch_log_group.flow_logs[0].arn,
+          "${aws_cloudwatch_log_group.flow_logs[0].arn}:*",
+        ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["logs:DescribeLogGroups"]
+        Resource = "*"
+      },
+    ]
+  })
+}
+
+resource "aws_flow_log" "vpc" {
+  count                = var.enable_flow_logs ? 1 : 0
+  iam_role_arn         = aws_iam_role.flow_logs[0].arn
+  log_destination      = aws_cloudwatch_log_group.flow_logs[0].arn
+  log_destination_type = "cloud-watch-logs"
+  traffic_type         = "ALL"
+  vpc_id               = var.vpc_id
+  tags                 = local.common_tags
+}

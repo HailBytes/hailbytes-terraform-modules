@@ -20,6 +20,7 @@ module "this" {
   db_backup_retention_days    = var.db_backup_retention_days
   db_deletion_protection      = var.db_deletion_protection
   enable_customer_managed_key = var.enable_customer_managed_key
+  enable_flow_logs            = var.enable_flow_logs
   alb_idle_timeout_seconds    = var.alb_idle_timeout_seconds
   alb_min_tls_version         = var.alb_min_tls_version
   enable_management_access    = var.enable_management_access

@@ -112,3 +112,9 @@ output "redis_mode" {
   value       = module.this.redis_mode
   sensitive   = false
 }
+
+output "flow_log_group_name" {
+  description = "CloudWatch log group name receiving VPC Flow Logs. Empty string when enable_flow_logs is false."
+  value       = module.this.flow_log_group_name
+  sensitive   = false
+}
