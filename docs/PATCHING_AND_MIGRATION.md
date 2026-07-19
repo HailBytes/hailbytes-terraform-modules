@@ -116,6 +116,8 @@ also happens to be the disaster-recovery runbook.
 
 1. Provision a fresh SAT stack via Terraform — same product, same tier:
 
+   > No `v1.0.0` tag exists yet ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)); pin to a commit SHA instead of `?ref=v1.0.0` until a tagged release ships.
+
    ```hcl
    module "hailbytes_sat_restore" {
      source = "github.com/hailbytes/hailbytes-terraform-modules//modules/sat-aws-ha?ref=v1.0.0"

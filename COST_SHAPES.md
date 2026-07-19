@@ -54,6 +54,8 @@ $1k/mo of budget. The procurement-grade numbers above use the larger
 sizing the account team and the SAT runbook quote. The variables to
 move from Starter → Procurement-grade in `ha-hot-hot/aws`:
 
+> No `v1.0.0` tag exists yet ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)); pin to a commit SHA instead of `?ref=v1.0.0` until a tagged release ships.
+
 ```hcl
 module "hailbytes_sat_ha" {
   source = "github.com/hailbytes/hailbytes-terraform-modules//modules/ha-hot-hot/aws?ref=v1.0.0"

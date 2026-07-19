@@ -65,6 +65,8 @@ meter and tier sizing are aligned.
 
 ## Usage
 
+> No `v1.0.0` tag exists yet ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)); pin to a commit SHA instead of `?ref=v1.0.0` until a tagged release ships.
+
 ```hcl
 module "hailbytes_asm_ha" {
   source = "github.com/hailbytes/hailbytes-terraform-modules//modules/ha-hot-hot/azure?ref=v1.0.0"

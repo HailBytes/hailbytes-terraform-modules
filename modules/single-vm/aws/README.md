@@ -46,6 +46,8 @@ procurement-grade pricing source.
 
 ## Usage
 
+> No `v1.0.0` tag exists yet ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)); pin to a commit SHA instead of `?ref=v1.0.0` until a tagged release ships.
+
 ```hcl
 module "hailbytes_asm" {
   source = "github.com/hailbytes/hailbytes-terraform-modules//modules/single-vm/aws?ref=v1.0.0"
