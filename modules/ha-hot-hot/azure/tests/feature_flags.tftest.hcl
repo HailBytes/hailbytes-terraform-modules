@@ -86,3 +86,56 @@ run "backup_storage_not_created_when_disabled" {
     error_message = "create_backup_storage_account = false must create zero backup Storage Accounts."
   }
 }
+
+# Regression test for #51: app VMs had no NSG at all when vm_subnet_id
+# differs from lb_subnet_id (the common case per the vm_subnet_id/lb_subnet_id
+# variable docs) — SECURITY-DEFAULTS.md's "deny all inbound" claim didn't hold.
+run "vm_nsg_created_and_associated_when_subnets_differ" {
+  command = plan
+
+  assert {
+    condition     = length(azurerm_network_security_group.vm) == 1
+    error_message = "A dedicated NSG must be created for vm_subnet_id when it differs from lb_subnet_id."
+  }
+
+  assert {
+    condition     = length(azurerm_subnet_network_security_group_association.vm) == 1
+    error_message = "The VM NSG must be associated with vm_subnet_id by default (associate_vm_subnet_nsg = true)."
+  }
+}
+
+run "vm_nsg_association_skipped_when_disabled" {
+  command = plan
+
+  variables {
+    associate_vm_subnet_nsg = false
+  }
+
+  assert {
+    condition     = length(azurerm_network_security_group.vm) == 1
+    error_message = "The VM NSG must still be created (and exported via vm_nsg_id) even when the association is opted out."
+  }
+
+  assert {
+    condition     = length(azurerm_subnet_network_security_group_association.vm) == 0
+    error_message = "associate_vm_subnet_nsg = false must skip the subnet association."
+  }
+}
+
+run "no_duplicate_vm_nsg_when_subnets_match" {
+  command = plan
+
+  variables {
+    lb_subnet_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.Network/virtualNetworks/vnet/subnets/vm"
+  }
+
+  assert {
+    condition     = length(azurerm_network_security_group.vm) == 0
+    error_message = "No second NSG should be created when vm_subnet_id == lb_subnet_id — a subnet can only have one associated NSG, and the lb NSG already covers it."
+  }
+
+  assert {
+    condition     = output.vm_nsg_id == ""
+    error_message = "vm_nsg_id must be empty when vm_subnet_id == lb_subnet_id."
+  }
+}
