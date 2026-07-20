@@ -16,6 +16,7 @@ module "this" {
   # Key Vault network ACL
   key_vault_network_default_action = var.key_vault_network_default_action
   key_vault_ip_rules               = var.key_vault_ip_rules
+  associate_vm_subnet_nsg          = var.associate_vm_subnet_nsg
   environment                      = var.environment
   name_prefix                      = var.name_prefix
   vm_size                          = var.vm_size

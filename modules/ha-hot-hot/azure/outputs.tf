@@ -8,6 +8,11 @@ output "load_balancer_id" {
   value       = azurerm_lb.main.id
 }
 
+output "vm_nsg_id" {
+  description = "ID of the NSG filtering vm_subnet_id to 443/allowed_cidrs. Empty when vm_subnet_id == lb_subnet_id (the lb NSG already covers that subnet) or when associate_vm_subnet_nsg = false was set while they differ (the NSG still exists but the caller supplied their own association)."
+  value       = length(azurerm_network_security_group.vm) > 0 ? azurerm_network_security_group.vm[0].id : ""
+}
+
 output "application_gateway_id" {
   description = "ID of the Application Gateway when enable_application_gateway = true; empty otherwise."
   value       = local.enable_application_gateway ? azurerm_application_gateway.main[0].id : ""

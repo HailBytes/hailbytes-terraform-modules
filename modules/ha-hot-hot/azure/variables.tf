@@ -44,6 +44,12 @@ variable "allowed_cidrs" {
   }
 }
 
+variable "associate_vm_subnet_nsg" {
+  description = "Associate the module-managed NSG (allow-https-* rules built from allowed_cidrs) with vm_subnet_id. Only applies when vm_subnet_id differs from lb_subnet_id (when they're the same subnet, the lb NSG already covers it). Set false if the subnet already has an NSG attached and your landing-zone tooling manages ingress; the NSG ID is still exported as vm_nsg_id for you to reference."
+  type        = bool
+  default     = true
+}
+
 variable "admin_username" {
   type = string
 }

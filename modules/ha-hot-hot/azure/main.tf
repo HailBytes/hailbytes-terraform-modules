@@ -207,6 +207,44 @@ resource "azurerm_subnet_network_security_group_association" "lb" {
   network_security_group_id = azurerm_network_security_group.lb.id
 }
 
+# A separate NSG for the VM subnet, created only when it differs from
+# lb_subnet_id (a subnet can have exactly one associated NSG — when the
+# two subnet variables point at the same subnet, azurerm_network_security_group.lb
+# above already filters it). Without this, a vm_subnet_id distinct from
+# lb_subnet_id got zero inbound filtering from this module: SECURITY-DEFAULTS.md
+# promises "deny all inbound" but nothing enforced it for the app VMs.
+resource "azurerm_network_security_group" "vm" {
+  count = var.vm_subnet_id != var.lb_subnet_id ? 1 : 0
+
+  name                = "${local.name_prefix}-vm-nsg"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  tags                = local.common_tags
+}
+
+resource "azurerm_network_security_rule" "vm_https_in" {
+  for_each = var.vm_subnet_id != var.lb_subnet_id ? { for i, c in var.allowed_cidrs : tostring(i) => c } : {}
+
+  name                        = "allow-https-${each.key}"
+  priority                    = 100 + tonumber(each.key)
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "443"
+  source_address_prefix       = each.value
+  destination_address_prefix  = "*"
+  resource_group_name         = var.resource_group_name
+  network_security_group_name = azurerm_network_security_group.vm[0].name
+}
+
+resource "azurerm_subnet_network_security_group_association" "vm" {
+  count = var.associate_vm_subnet_nsg && var.vm_subnet_id != var.lb_subnet_id ? 1 : 0
+
+  subnet_id                 = var.vm_subnet_id
+  network_security_group_id = azurerm_network_security_group.vm[0].id
+}
+
 # ----- Load Balancer -----
 
 resource "azurerm_public_ip" "lb" {
