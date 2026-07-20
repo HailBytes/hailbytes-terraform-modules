@@ -85,6 +85,11 @@ run "minimal_inputs_apply" {
   }
 
   assert {
+    condition     = output.vm_nsg_id != ""
+    error_message = "vm_nsg_id must be non-empty when vm_subnet_id differs from lb_subnet_id (the fixture default)"
+  }
+
+  assert {
     condition     = output.postgres_fqdn != ""
     error_message = "postgres_fqdn output must be non-empty in flexible_server mode (the default)"
   }
