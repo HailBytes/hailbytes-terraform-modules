@@ -48,6 +48,12 @@ variable "key_vault_network_default_action" {
   default     = "Allow"
 }
 
+variable "associate_vm_subnet_nsg" {
+  description = "Associate the module-managed NSG (allow-https-* rules built from allowed_cidrs) with vm_subnet_id. Only applies when vm_subnet_id differs from lb_subnet_id (when they're the same subnet, the lb NSG already covers it). Set false if the subnet already has an NSG attached and your landing-zone tooling manages ingress; the NSG ID is still exported as vm_nsg_id for you to reference."
+  type        = bool
+  default     = true
+}
+
 variable "key_vault_ip_rules" {
   description = "IPv4 addresses or CIDRs allowed to reach the Key Vault data plane (typically the operator IP running terraform apply, or your bastion's egress NAT). Required only when default_action = Deny and you don't have Private Link configured."
   type        = list(string)
