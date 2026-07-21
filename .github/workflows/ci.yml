@@ -138,6 +138,21 @@ jobs:
           # Shared infrastructure — foundational modules consumed by every tier
           - network/aws
           - network/azure
+          # Per-product wrappers (thin shims around the core modules above).
+          # Each asserts it re-exports every core-module output and that
+          # `product` is correctly hardcoded.
+          - sat-aws-single
+          - sat-aws-ha
+          - sat-aws-autoscale
+          - sat-azure-single
+          - sat-azure-ha
+          - sat-azure-autoscale
+          - asm-aws-single
+          - asm-aws-ha
+          - asm-aws-autoscale
+          - asm-azure-single
+          - asm-azure-ha
+          - asm-azure-autoscale
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
