@@ -99,9 +99,23 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
-      - name: terraform init (no backend, no providers download cache)
+      - name: Cache Terraform providers
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: ~/.terraform.d/plugin-cache
+          # No .terraform.lock.hcl is committed (versions.tf uses open
+          # ranges), so key on the version constraints themselves —
+          # they're what determines which provider versions get pulled.
+          key: tf-providers-${{ runner.os }}-${{ env.TERRAFORM_VERSION }}-${{ hashFiles('modules/**/versions.tf') }}
+          restore-keys: |
+            tf-providers-${{ runner.os }}-${{ env.TERRAFORM_VERSION }}-
+
+      - name: terraform init (no backend)
         working-directory: modules/${{ matrix.module }}
+        env:
+          TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform.d/plugin-cache
         run: |
+          mkdir -p "${TF_PLUGIN_CACHE_DIR}"
           # -backend=false skips remote state config — none of these
           # modules use a backend at the module level; consumers supply
           # one. -input=false fails fast on missing inputs instead of
@@ -148,9 +162,21 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
           terraform_wrapper: false
 
+      - name: Cache Terraform providers
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: ~/.terraform.d/plugin-cache
+          key: tf-providers-${{ runner.os }}-${{ env.TERRAFORM_VERSION }}-${{ hashFiles('modules/**/versions.tf') }}
+          restore-keys: |
+            tf-providers-${{ runner.os }}-${{ env.TERRAFORM_VERSION }}-
+
       - name: terraform init (no backend)
         working-directory: modules/${{ matrix.module }}
-        run: terraform init -backend=false -input=false
+        env:
+          TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform.d/plugin-cache
+        run: |
+          mkdir -p "${TF_PLUGIN_CACHE_DIR}"
+          terraform init -backend=false -input=false
 
       - name: terraform test
         working-directory: modules/${{ matrix.module }}
@@ -267,10 +293,23 @@ jobs:
             echo "::notice::modules/${{ matrix.example }} not present — skipping"
           fi
 
+      - name: Cache Terraform providers
+        if: steps.probe.outputs.exists == 'true'
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+        with:
+          path: ~/.terraform.d/plugin-cache
+          key: tf-providers-${{ runner.os }}-${{ env.TERRAFORM_VERSION }}-${{ hashFiles('modules/**/versions.tf') }}
+          restore-keys: |
+            tf-providers-${{ runner.os }}-${{ env.TERRAFORM_VERSION }}-
+
       - name: terraform init -backend=false
         if: steps.probe.outputs.exists == 'true'
         working-directory: modules/${{ matrix.example }}
-        run: terraform init -backend=false -input=false
+        env:
+          TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform.d/plugin-cache
+        run: |
+          mkdir -p "${TF_PLUGIN_CACHE_DIR}"
+          terraform init -backend=false -input=false
 
       - name: terraform validate
         if: steps.probe.outputs.exists == 'true'
