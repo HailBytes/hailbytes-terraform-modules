@@ -118,6 +118,13 @@ does not require any data to leave the customer VPC.
 
 ## Azure shapes (East US, pay-as-you-go, list price, rounded)
 
+> [!NOTE]
+> **For North Europe, use [`AZURE_COST_SHAPES.md`](AZURE_COST_SHAPES.md)**,
+> which carries EUR + USD figures pulled from the Azure Retail Prices API
+> rather than derived from the module READMEs, and flags the line items that
+> can't be verified. The table below is an East US summary; its Postgres
+> Zone-Redundant line in particular understates the verified cost.
+
 Azure parity of the three-shape AWS table. Cost lines are derived from
 the per-module Azure READMEs and aligned at procurement-grade sizing
 (same per-vCPU meter, same Multi-AZ / Zone-Redundant defaults). All
