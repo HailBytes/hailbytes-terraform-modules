@@ -12,9 +12,12 @@
 > query for each meter is given in [Reproducing these numbers](#reproducing-these-numbers).
 > Monthly figures are `unit price × 730 h`.
 >
-> **Figures that could NOT be verified are marked 🚩 and are excluded from the
-> subtotals.** They are not estimates; they are holes. Fill them before sending
-> a quote to procurement. See [Unverified line items](#unverified-line-items).
+> **Every fixed monthly charge in this document is verified.** The only figures
+> left open are genuinely usage-dependent (outbound data transfer, NAT data
+> processed, backup volume) — those get a rate card and worked examples in
+> [Usage-dependent charges](#usage-dependent-charges) rather than a guess.
+> Subtotals below are labelled **fixed monthly infrastructure** and are
+> complete for a running deployment at rest.
 
 ---
 
@@ -31,17 +34,17 @@ sizing and the starter defaults coincide at this tier.
 
 | Shape | Module | App instances | Managed services | Infra (verified) | + per-vCPU meter | **All-in** |
 |---|---|---|---|---|---|---|
-| **Single** | [`single-vm/azure`](modules/single-vm/azure) | 1× `Standard_D2s_v5` | none | €114 / $130 | 2 vCPU → €308 / $350 | **€422 / $480** |
-| **HA hot-hot** | [`ha-hot-hot/azure`](modules/ha-hot-hot/azure) | 2× `Standard_D2s_v5` | Standard LB 🚩 + Azure Cache for Redis (Standard C1) + PostgreSQL Flexible Server `GP_Standard_D2ds_v5` **ZoneRedundant HA** | €597 / $680 | 4 vCPU → €615 / $701 | **€1,212 / $1,380** |
-| **HA hot-hot, self-managed DB** (`db_mode = "vm"`) | [`ha-hot-hot/azure`](modules/ha-hot-hot/azure) | 2× app + 1× `Standard_D2s_v5` DB VM | Standard LB 🚩 + Redis Standard C1 | €421 / $479 | 6 vCPU → €923 / $1,051 | **€1,343 / $1,531** |
-| **Unlimited scale** | [`unlimited-scale/azure`](modules/unlimited-scale/azure) | 3× `Standard_D2s_v5` (VMSS min) | Standard LB 🚩 + Redis Standard C1 + Flexible Server `GP_Standard_D4ds_v5` ZoneRedundant primary + 2 read replicas | €1,441 / $1,641 | 6 vCPU → €923 / $1,051 | **€2,363 / $2,693 at min** |
+| **Single** | [`single-vm/azure`](modules/single-vm/azure) | 1× `Standard_D2s_v5` | NAT Gateway | €144 / $164 | 2 vCPU → €308 / $350 | **€451 / $514** |
+| **HA hot-hot** | [`ha-hot-hot/azure`](modules/ha-hot-hot/azure) | 2× `Standard_D2s_v5` | Standard LB + Azure Cache for Redis (Standard C1) + PostgreSQL Flexible Server `GP_Standard_D2ds_v5` **ZoneRedundant HA** | €642 / $732 | 4 vCPU → €615 / $701 | **€1,257 / $1,432** |
+| **HA hot-hot, self-managed DB** (`db_mode = "vm"`) | [`ha-hot-hot/azure`](modules/ha-hot-hot/azure) | 2× app + 1× `Standard_D2s_v5` DB VM | Standard LB + Redis Standard C1 | €467 / $532 | 6 vCPU → €923 / $1,051 | **€1,389 / $1,583** |
+| **Unlimited scale** | [`unlimited-scale/azure`](modules/unlimited-scale/azure) | 3× `Standard_D2s_v5` (VMSS min) | Standard LB + Redis Standard C1 + Flexible Server `GP_Standard_D4ds_v5` ZoneRedundant primary + 2 read replicas | €1,486 / $1,694 | 6 vCPU → €923 / $1,051 | **€2,409 / $2,745 at min** |
 
 ### Single-instance → HA multiplier
 
-**≈ 2.9× in both currencies** (€1,212 / €422 = 2.87; $1,380 / $480 = 2.87).
+**≈ 2.8× in both currencies** (€1,257 / €451 = 2.79; $1,432 / $514 = 2.79).
 
-The AWS doc's equivalent multiplier is **2.8×**. The two clouds land within
-~3% of each other on the multiplier, which is the number procurement actually
+The AWS doc's equivalent multiplier is also **2.8×**. The two clouds land
+within ~1% of each other on the multiplier, which is the number procurement actually
 argues about — the absolute all-in figures differ more (see
 [Cross-cloud comparison](#cross-cloud-comparison)).
 
@@ -49,7 +52,7 @@ The multiplier is *not* 2× because HA adds three things a single VM has none
 of: a zone-redundant database (which bills the standby at full compute +
 storage), a shared Redis, and a load balancer. It is *not* 6× either — the
 figure ARCHITECTURE.md quotes for the HA tier ("~6× cost of single-vm") is
-wrong at these SKUs and should be corrected to ~3×.
+wrong at these SKUs and should be corrected to ~2.8×.
 
 ---
 
@@ -67,9 +70,11 @@ here because a standalone VM needs an ingress path).
 | OS disk, Premium SSD P6 (64 GiB) | 1 | €8.96 / $10.21 per mo | 8.96 | 10.21 |
 | Data disk, Premium SSD P15 (256 GiB) | 1 | €33.36 / $38.01 per mo | 33.36 | 38.01 |
 | Public IP, Standard static IPv4 | 730 h | €0.0044 / $0.005 per h | 3.21 | 3.65 |
-| **Infra subtotal** | | | **€114.08** | **$129.98** |
+| NAT Gateway (required for outbound; see A4) | 730 h | €0.0395 / $0.045 per h | 28.84 | 32.85 |
+| Backup Storage Account, Cool ZRS | ~60 GB of bundles | €0.011 / $0.0125 per GB-mo | ~1 | ~1 |
+| **Fixed monthly infrastructure** | | | **€143.91** | **$163.83** |
 | HailBytes per-vCPU Marketplace meter | 2 vCPU × 730 h | $0.24 per vCPU-h | 307.5 🔸 | 350.40 |
-| **All-in** | | | **€421.6** | **$480.4** |
+| **All-in (at rest)** | | | **€451.4** | **$514.2** |
 
 🔸 EUR meter figures are converted, not quoted by Azure — see
 [The per-vCPU Marketplace meter](#the-per-vcpu-marketplace-meter).
@@ -92,18 +97,23 @@ Server `GP_Standard_D2ds_v5` (2 vCore) with `high_availability.mode =
 | Flexible Server compute, GP Ddsv5 `2 vCore` SKU, **×2 for ZoneRedundant HA** | 2 servers × 730 h | €0.1738 / $0.198 per h (whole 2-vCore SKU) | 253.75 | 289.08 |
 | Flexible Server storage, **×2 for ZoneRedundant HA** | 2 × 128 GiB | €0.111 / $0.1265 per GB-mo | 28.42 | 32.38 |
 | Key Vault Standard operations | ~nominal | €0.0263 / $0.03 per 10k ops | ~1 | ~1 |
-| **Infra subtotal (verified meters only)** | | | **€596.50** | **$679.50** |
-| Standard Load Balancer (rules + data processed) | | 🚩 unverified | — | — |
-| NAT Gateway / outbound egress path | | 🚩 not provisioned by the module | — | — |
-| Backup Storage Account (ZRS, Cool) + immutable blobs | | 🚩 usage-dependent | — | — |
+| Standard Load Balancer, base (covers the first 5 rules; module creates 1) | 730 h | €0.0219 / $0.025 per h | 15.99 | 18.25 |
+| NAT Gateway, base (required for outbound; see A4) | 730 h | €0.0395 / $0.045 per h | 28.84 | 32.85 |
+| Backup Storage Account, Cool ZRS | ~60 GB of bundles | €0.011 / $0.0125 per GB-mo | ~1 | ~1 |
+| **Fixed monthly infrastructure** | | | **€642.33** | **$731.61** |
 | HailBytes per-vCPU Marketplace meter | 4 vCPU × 730 h | $0.24 per vCPU-h | 615.0 🔸 | 700.80 |
-| **All-in** | | | **€1,211.5** | **$1,380.3** |
+| **All-in (at rest)** | | | **€1,257.3** | **$1,432.4** |
 
 **The single largest line is the database, not the VMs.** ZoneRedundant HA
 doubles both compute and storage: €282 / $321 per month, versus €141 / $161
-for the same server without HA. `db_high_availability_mode = "SameZone"`
-halves that line and lowers the SLA — it is the one lever that moves this
-shape materially without touching the vCPU meter.
+for the same server without HA.
+
+**`db_high_availability_mode = "SameZone"` is not a cost saving.** Azure bills
+2× compute and 2× storage for *both* HA modes — SameZone buys a lower-latency
+standby and a lower SLA at the same price. (An earlier revision of this document
+said it halved the line; that was wrong.) The levers that actually move this
+line are reserved capacity and right-sizing — see
+[Reducing the customer's Azure bill](#reducing-the-customers-azure-bill).
 
 ### Shape 2b — HA hot-hot with self-managed Postgres (`db_mode = "vm"`)
 
@@ -117,9 +127,10 @@ apt-installed PostgreSQL 16 on a 256 GiB Premium data disk.
 | DB VM `Standard_D2s_v5` | 68.55 | 78.11 |
 | DB VM OS disk P4 (30 GiB) + data disk P15 (256 GiB) | 37.99 | 43.29 |
 | Key Vault | ~1 | ~1 |
-| **Infra subtotal (verified meters only)** | **€420.9** | **$479.4** |
+| Standard Load Balancer base + NAT Gateway base + backup storage | 45.83 | 52.10 |
+| **Fixed monthly infrastructure** | **€466.70** | **$531.55** |
 | HailBytes per-vCPU meter (6 vCPU — the DB VM meters too) | 922.5 🔸 | 1,051.20 |
-| **All-in** | **€1,343** | **$1,531** |
+| **All-in (at rest)** | **€1,389** | **$1,583** |
 
 Cheaper infrastructure, **more expensive overall**: the DB VM is a HailBytes
 Marketplace image, so it carries the per-vCPU meter. Same inversion as the AWS
@@ -147,10 +158,11 @@ set HA on them).
 | 2× read replica compute, `4 vCore` SKU each | 2 servers × 730 h | €0.3475 / $0.396 per h | 507.35 | 578.16 |
 | 2× read replica storage | 2 × 256 GiB | €0.111 / $0.1265 per GB-mo | 56.83 | 64.77 |
 | Key Vault Standard | | | ~1 | ~1 |
-| **Infra subtotal (verified meters only)** | | | **€1,440.5** | **$1,641.4** |
+| Standard Load Balancer base + NAT Gateway base + backup storage | | | 45.83 | 52.10 |
+| **Fixed monthly infrastructure** | | | **€1,486.34** | **$1,693.51** |
 | HailBytes per-vCPU meter at VMSS min | 6 vCPU × 730 h | $0.24 per vCPU-h | 922.5 🔸 | 1,051.20 |
-| **All-in at `vmss_min_count = 3`** | | | **€2,363** | **$2,693** |
-| **All-in at 10 instances** (meter 20 vCPU; +7 VM + OS disk) | | | **€5,028** | **$5,729** |
+| **All-in at `vmss_min_count = 3`** | | | **€2,409** | **$2,745** |
+| **All-in at 10 instances** (meter 20 vCPU; +7 VM + OS disk) | | | **€5,074** | **$5,781** |
 
 At `vmss_max_count = 20` (the module default ceiling) the meter alone is
 40 vCPU × 730 h × $0.24 = **$7,008/mo**. Cap `vmss_max_count` to the number
@@ -231,40 +243,42 @@ verified North Europe unit prices in this document.
 
 | SKU | Module + sizing | Azure infra €/mo | Azure infra $/mo | Azure infra $/yr | Plan $/yr | **All-in $/yr** | Infra share |
 |---|---|---|---|---|---|---|---|
-| `HB-ESS` | `single-vm/azure`, 1× `Standard_D8s_v5` | €320 | $364 | $4,372 | $16,800 | **$21,172** | 21% |
-| `HB-STD` | `unlimited-scale/azure`, 3× `Standard_D4s_v5`, `GP_Standard_D4ds_v5` ZR + 2 replicas | €1,646 | $1,876 | $22,509 | $25,200 | **$47,709** | **47%** |
-| `HB-PRO` | `single-vm/azure`, 1× `Standard_D16s_v5` | €594 | $677 | $8,121 | $33,600 | **$41,721** | 19% |
-| `HB-PRO-HA` | `ha-hot-hot/azure`, 2× `Standard_D8s_v5`, module-default `GP_Standard_D2ds_v5` ZR | €1,008 | $1,148 | $13,778 | $33,600 | **$47,378** | 29% |
-| `HB-PRO-HA` | same, DB upsized to `GP_Standard_D4ds_v5` (the Azure analogue of the AWS mapping's `db.m6g.large`) | €1,261 | $1,437 | $17,247 | $33,600 | **$50,847** | 34% |
-| `HB-SCALE` | `unlimited-scale/azure`, 6× `Standard_D8s_v5`, `MO_Standard_E8ds_v5` ZR + 2 replicas, Redis Standard C3 | €5,042 | $5,746 | $68,947 | ~$100,915 🔸 | **~$169,862** | 41% |
+| `HB-ESS` | `single-vm/azure`, 1× `Standard_D8s_v5` | €350 | $398 | $4,778 | $16,800 | **$21,578** | 22% |
+| `HB-STD` | `unlimited-scale/azure`, 3× `Standard_D4s_v5`, `GP_Standard_D4ds_v5` ZR + 2 replicas | €1,692 | $1,928 | $23,134 | $25,200 | **$48,334** | **48%** |
+| `HB-PRO` | `single-vm/azure`, 1× `Standard_D16s_v5` | €624 | $711 | $8,527 | $33,600 | **$42,127** | 20% |
+| `HB-PRO-HA` | `ha-hot-hot/azure`, 2× `Standard_D8s_v5`, module-default `GP_Standard_D2ds_v5` ZR | €1,054 | $1,200 | $14,403 | $33,600 | **$48,003** | 30% |
+| `HB-PRO-HA` | same, DB upsized to `GP_Standard_D4ds_v5` (the Azure analogue of the AWS mapping's `db.m6g.large`) | €1,307 | $1,489 | $17,872 | $33,600 | **$51,472** | 35% |
+| `HB-SCALE` | `unlimited-scale/azure`, 6× `Standard_D8s_v5`, `MO_Standard_E8ds_v5` ZR + 2 replicas, Redis Standard C3 | €5,088 | $5,798 | $69,572 | ~$100,915 🔸 | **~$170,487** | 41% |
 
 🔸 `HB-SCALE` has no list price — it is always a custom agreement. The figure
 shown is the metered equivalent at 48 vCores, for scale only.
 
-All infra figures **exclude the 🚩 items** (Standard Load Balancer, NAT Gateway,
-backup storage, egress). They are floors. See
-[Unverified line items](#unverified-line-items).
+Infra figures are the **complete fixed monthly cost** — VMs, disks, public IP,
+Redis, database, Key Vault, Standard Load Balancer base, NAT Gateway base and
+backup storage — at rest. Add traffic from the
+[rate card](#usage-dependent-charges), and subtract reservations from
+[Reducing the customer's Azure bill](#reducing-the-customers-azure-bill).
 
 ### What this changes about how we quote
 
-1. **Azure infra is 19–47% of the first-year cost, and the spread is driven by
-   topology, not by size.** `HB-PRO` (16 vCore, single VM) carries $8.1k of
-   Azure; `HB-PRO-HA` (the same 16 vCore, two VMs) carries $13.8–17.2k. Quoting
+1. **Azure infra is 20–48% of the first-year cost, and the spread is driven by
+   topology, not by size.** `HB-PRO` (16 vCore, single VM) carries $8.5k of
+   Azure; `HB-PRO-HA` (the same 16 vCore, two VMs) carries $14.4–17.9k. Quoting
    the plan price alone understates a customer's first-year spend by a fifth to
    nearly a half. Give finance the all-in column.
 
 2. **`HB-STD` is the outlier and should be examined before it is quoted.** At
-   47%, Azure costs nearly as much as the plan. The cause is the
+   48%, Azure costs nearly as much as the plan. The cause is the
    `unlimited-scale` module's default `db_replica_count = 2`: two
    `GP_Standard_D4ds_v5` read replicas add **€564/$643 per month ($7,715/yr)**
    in compute + storage on top of an already zone-redundant primary. A
    12-vCore, three-instance deployment rarely needs two read replicas. Setting
-   `db_replica_count = 1` takes `HB-STD` all-in to **$43,851/yr**; `= 0` takes
-   it to **$39,994/yr** — a 16% reduction in the customer's total cost with no
+   `db_replica_count = 1` takes `HB-STD` all-in to **$44,477/yr**; `= 0` takes
+   it to **$40,619/yr** — a 16% reduction in the customer's total cost with no
    change to the metered capacity they bought. Make the replica count a
    deliberate choice per deal rather than a default.
 
-3. **`HB-PRO` vs `HB-PRO-HA` is a $5.7–9.1k/yr conversation, all of it Azure.**
+3. **`HB-PRO` vs `HB-PRO-HA` is a $5.9–9.3k/yr conversation, all of it Azure.**
    Both SKUs are the same 16 metered vCores and the same $33,600 plan price. The entire difference is infrastructure: a second VM, a shared Redis,
    and a zone-redundant database. That is the honest framing for "why does HA
    cost more if the licence is the same price" — and an easier conversation
@@ -341,7 +355,7 @@ front, which is what unlocks TLS termination with a real certificate and
 
 | Frontend | Fixed cost | Capacity units | EUR/mo at min 2 CU | USD/mo at min 2 CU |
 |---|---|---|---|---|
-| Standard Load Balancer (default) | 🚩 unverified | 🚩 unverified | 🚩 | 🚩 |
+| Standard Load Balancer (default) | €0.0219 / $0.025 per h | n/a (first 5 rules included) | €15.99 | $18.25 |
 | Application Gateway **Standard_v2** (no WAF policy) | €0.2106 / $0.24 per h | €0.007 / $0.008 per CU-h | €163.96 | $186.88 |
 | Application Gateway **WAF_v2** (`waf_policy_id` set) | €0.3791 / $0.432 per h | €0.0126 / $0.0144 per CU-h | €295.14 | $336.38 |
 
@@ -349,28 +363,209 @@ The module sets `autoscale_configuration { min_capacity = 2, max_capacity = 10 }
 so 2 capacity units is the floor and 10 the ceiling; at max capacity the WAF_v2
 capacity-unit line alone is €92 / $105 per month on top of the fixed cost.
 
-**Adding WAF_v2 to the HA shape takes it from €1,212 / $1,380 to roughly
-€1,507 / $1,717 per month** (+24%), before the unverified Standard LB line.
-Quote WAF as a distinct option, not as included.
+**Adding WAF_v2 to the HA shape takes it from €1,257 / $1,432 to €1,552 /
+$1,769 per month** (+23%). The Standard Load Balancer stays in the topology as
+an L4 backend-pool member, so its €15.99 / $18.25 is additive, not replaced —
+both lines are already in the shape subtotals. Quote WAF as a distinct option,
+not as included.
+
+At **18× the cost of the Standard Load Balancer**, App Gateway is the second
+Azure line worth challenging after the database: if the customer already runs
+Azure Front Door or their own reverse proxy with a real certificate, fronting
+the module with that instead of enabling App Gateway saves €295 / $336 per
+month. See [Reducing the customer's Azure bill](#reducing-the-customers-azure-bill).
 
 ---
 
-## Unverified line items
+## Usage-dependent charges
 
-Per the instruction not to estimate silently, these are the figures this
-document could **not** verify from the Azure Retail Prices API on 2026-07-26.
-They are excluded from every subtotal above, so **each subtotal is a floor,
-not a total**.
+Every fixed monthly charge is in the subtotals above. What remains varies with
+traffic, so it gets a **rate card** instead of a number. All rates verified
+from the Retail Prices API for North Europe on 2026-07-26.
 
-| 🚩 Item | Why unverified | What to do |
+| Charge | Rate (EUR) | Rate (USD) | Notes |
+|---|---|---|---|
+| Internet egress, first 100 GB/mo | free | free | Per subscription, not per deployment. |
+| Internet egress, 100 GB – 10 TB | €0.0702/GB | $0.08/GB | `Bandwidth - Routing Preference: Internet`, tiered. |
+| Internet egress, 10 – 50 TB | €0.057/GB | $0.065/GB | |
+| Internet egress, 50 – 150 TB | €0.0527/GB | $0.06/GB | |
+| Internet egress, > 150 TB | €0.0351/GB | $0.04/GB | |
+| **NAT Gateway data processed** | €0.0395/GB | $0.045/GB | **Charged on all traffic through the gateway, inbound and outbound, including traffic to Azure services.** Often larger than the egress line. |
+| Standard LB data processed | €0.0044/GB | $0.005/GB | First 5 rules are covered by the base charge already in the subtotals. |
+| Standard LB rule overage (> 5 rules) | €0.0088/h | $0.01/h | The modules create one rule, so this is zero unless you add listeners. |
+| Inter-availability-zone data out | €0.0088/GB | $0.01/GB | Applies to cross-zone traffic; a zone-redundant topology generates some by design (VM↔DB standby, VM↔Redis replica). |
+| Backup blob storage, Cool ZRS | €0.011/GB-mo | $0.0125/GB-mo | |
+| Backup blob write ops | €0.0878/10k | $0.10/10k | A 20 GB bundle in 4 MiB blocks is ~5k writes. Negligible. |
+| Backup blob read / retrieval | €0.0088/10k · €0.0088/GB | $0.01/10k · $0.01/GB | Only on restore. |
+| Backup blob early delete (< 30 days in Cool) | €0.011/GB | $0.0125/GB | The immutability policy already pins bundles for 30 days by default, so this rarely triggers. |
+
+### Worked examples
+
+| Monthly traffic | Egress | NAT data processed | Total (USD) |
+|---|---|---|---|
+| 250 GB (small agency, `HB-ESS`) | $12.00 | $11.25 | **~$23** |
+| 1 TB (`HB-PRO-HA` class) | $73.92 | $46.08 | **~$120** |
+| 10 TB (large campaign month) | $809.10 | $460.80 | **~$1,270** |
+| 30 TB (`HB-SCALE`, video-heavy) | $2,140.30 | $1,382.40 | **~$3,523** |
+
+**Two things to design around, not just to price:**
+
+1. **NAT data processing is charged on traffic to Azure's own services too.**
+   The VMs talk to Key Vault, the backup Storage Account and (once fixed)
+   Redis. Adding **service endpoints or private endpoints** for Storage and
+   Key Vault keeps that traffic off the NAT Gateway entirely and off this line
+   — a configuration change with no functional trade-off. Worth doing in the
+   module.
+2. **SAT serves training-module videos from the VM.** `content/M##/video.mp4`
+   is baked into the image and streamed to learners, so egress scales with
+   *learner count × modules watched*, not with admin activity. For a
+   600k-learner rollout this is the single largest usage line and it deserves a
+   real estimate from the customer's module plan — or a CDN / Azure Front Door
+   in front of the media, which is cheaper per GB than raw VM egress at that
+   volume. Model it explicitly; do not let it land as a surprise.
+
+### Still open
+
+| Item | Status |
+|---|---|
+| **EUR value of the $0.24/vCPU-hour meter** 🚩 | Marketplace meters bill in the customer's currency at Microsoft's conversion, which the retail price list does not expose. Quote USD, or get the EUR rate confirmed by the Microsoft account team. EUR figures here use the 0.8776 ratio implied by Azure's own dual-currency list prices. |
+| **Premium SSD "Disk Mount" meters** | Azure publishes a second per-disk meter (e.g. `P15 LRS Disk Mount`, €1.92 / $2.19 per month) alongside the disk meter; its trigger condition was not confirmed. Worst case it adds ~€2.4 / $2.7 per month to an HA deployment — 0.2% of the total. Immaterial; verify on the first invoice. |
+| **Log Analytics / Azure Monitor ingestion** | Nothing to price: the Azure modules create metric alerts (near-free) but no diagnostic settings and no workspace. That is a parity gap (B1/B2 in the audit), not a cost line — but closing it *will* add an ingestion charge, so re-price when it lands. |
+
+---
+
+## Reducing the customer's Azure bill
+
+**Why this section exists.** HailBytes revenue is the plan price, which is fixed
+at the licensed-VM vCore count. Azure infrastructure spend — the database above
+all — goes entirely to Microsoft. Cutting it is therefore **revenue-neutral for
+HailBytes and pure benefit to the customer**: a smaller total contract, an
+easier budget approval, and a better-looking renewal, at no cost to us. Every
+lever below is in that category unless flagged otherwise.
+
+Ordered by saving per unit of effort.
+
+### 1. Reserved capacity — the biggest lever, and nobody has to change anything
+
+Azure reserved capacity applies to **PostgreSQL Flexible Server compute** and
+to the **infrastructure portion of marketplace VMs** (the HailBytes software fee
+is billed separately and is unaffected). Verified discounts for North Europe:
+
+| Resource | 1-year reservation | 3-year reservation |
 |---|---|---|
-| **Standard Load Balancer** (hourly + rules + data processed) | No `Load Balancer` or matching `Virtual Network` meter is returned for `armRegionName eq 'northeurope'`. The region's `Virtual Network` service exposes only `IP Addresses`, `Public IP Prefix`, and `Global Virtual Network Peering`. | Read the figure off the Azure Pricing Calculator for North Europe, or off a real invoice, before quoting. Every shape in this doc includes a Standard LB. |
-| **NAT Gateway / outbound egress** | Same: no `NAT Gateway` meter returned for the region. **Also: the Azure modules do not provision one at all** (`modules/network/azure` has no NAT Gateway, unlike `modules/network/aws`, which has one per AZ). | Two problems, one line. Price it *and* decide whether the module should create it — the app VMs have no outbound path without one. Tracked in the Azure HA parity audit. |
-| **EUR value of the $0.24/vCPU-hour meter** | Marketplace meters bill in the customer's currency at Microsoft's conversion, which is not exposed in the retail price list. | Quote USD, or get the EUR rate confirmed by the Microsoft account team. The EUR figures here use the 0.8776 ratio implied by Azure's own dual-currency list prices. |
-| **Backup Storage Account** (ZRS, Cool tier, blob versioning, immutability) | Cost is a function of bundle size × retention × version count, none of which is known ahead of a deployment. | Size it from the customer's expected DB + uploads volume. For a 600k-learner tenant this is not a rounding error. |
-| **Outbound data transfer** | Depends entirely on campaign volume (SAT sends mail; ASM scans). | Model from the customer's expected send volume. |
-| **Premium SSD "Disk Mount" meters** | Azure publishes a second per-disk meter (e.g. `P15 LRS Disk Mount`, €1.92/mo) alongside the disk meter. Its exact applicability to an attached, running disk was not confirmed. | Verify against an invoice. If it applies, add ~€2.4 / $2.7 per month per HA deployment — immaterial, but don't be surprised by it. |
-| **Log Analytics / Azure Monitor ingestion** | The Azure modules create metric alerts (which are near-free) but no diagnostic settings or Log Analytics workspace, so there is nothing to price — and equally, no LB access logs or flow logs, unlike AWS. | Note the observability gap to the customer; it is a parity gap, not a cost line. |
+| Flexible Server compute (GP Ddsv5, MO Edsv5) | **−40%** | **−60%** |
+| VMs (Dsv5 series) | **−38%** | **−60%** |
+| Storage, Redis Standard, LB, NAT | not reservable | not reservable |
+
+What that is worth per SKU, compute only:
+
+| SKU | DB compute on-demand | 1-yr RI | 3-yr RI | VM compute on-demand | 1-yr RI | 3-yr RI | **3-yr total saving** |
+|---|---|---|---|---|---|---|---|
+| `HB-PRO-HA` (default DB) | $3,469 | $2,081 | $1,388 | $7,499 | $4,649 | $2,999 | **$6,580/yr** |
+| `HB-PRO-HA` (upsized DB) | $6,938 | $4,163 | $2,775 | $7,499 | $4,649 | $2,999 | **$8,663/yr** |
+| `HB-STD` | $13,876 | $8,326 | $5,550 | $5,624 | $3,487 | $2,250 | **$11,700/yr** |
+| `HB-SCALE` | $38,964 | $23,379 | $15,586 | $22,496 | $13,947 | $8,998 | **$36,876/yr** |
+
+`HB-SCALE` on 3-year reservations drops from **$69,572 to ~$32,696 of Azure per
+year — a 53% cut** with no change to the topology, the plan price, or anything
+the customer can see. This should be in every quote where the customer is
+committing for a term anyway, and it is the first thing to raise when Azure
+cost is the objection.
+
+Caveats worth stating honestly: a reservation is a commitment (Azure allows
+limited exchange/refund), it locks the SKU family and region, and it does not
+cover storage. Reserve the steady-state floor, not the peak.
+
+### 2. Right-size `db_replica_count` — the default is wrong for most deals
+
+`unlimited-scale/azure` defaults to `db_replica_count = 2`. Each replica is a
+full `GP_Standard_D4ds_v5` plus its own 256 GiB: **$321/mo, $3,858/yr each**.
+On `HB-STD` (three app instances) two read replicas is over-provisioned by
+default:
+
+| `db_replica_count` | Azure infra/yr | All-in/yr | vs default |
+|---|---|---|---|
+| 2 (module default) | $23,134 | $48,334 | — |
+| 1 | $19,277 | $44,477 | **−$3,857** |
+| 0 | $15,419 | $40,619 | **−$7,715 (−16%)** |
+
+Make this a per-deal decision. The read-replica connection string is only used
+if the application is configured to route reads to it.
+
+### 3. Check whether `HB-SCALE` actually needs memory-optimised
+
+`MO_Standard_E8ds_v5` is $811.76/mo per server against $578.16 for
+`GP_Standard_D8ds_v5` — a 40% premium. Across the primary, its standby and two
+replicas that is **$11,213/yr**. Memory-optimised is the right default only if
+the workload is genuinely memory-bound; test with General Purpose first on a
+non-production stack.
+
+### 4. Right-size storage at first apply — it cannot be shrunk
+
+Flexible Server storage can grow but **never shrink**. Day-1 over-provisioning
+is permanent for the life of the server, and HA doubles it. Module defaults are
+128 GiB (HA tier) and 256 GiB (autoscale tier); at 0.1265 $/GB-mo with the HA
+doubling, 256 GiB costs $64.77/mo where 128 GiB costs $32.38. Start at the
+smaller size with storage autogrow enabled and let it grow into the workload.
+
+Same logic for `db_backup_retention_days` (module default 14, Azure minimum 7):
+the free backup allowance equals 100% of provisioned storage, so retention only
+costs money above that — but where it does, halving retention halves the charge.
+
+### 5. Offer bring-your-own Postgres — the product gap worth closing
+
+The HA module lets a customer supply their own Redis
+(`redis_endpoint_override` + `enable_managed_redis = false`) but **has no
+equivalent for Postgres**: `db_mode` accepts only `flexible_server` or `vm`.
+
+For a customer who already operates Postgres at scale — which describes most
+consortium and national-scale education buyers — an `external` mode would
+remove the entire database line from their Azure bill: **$3,469–38,964/yr
+depending on SKU**, the largest single saving available, and again revenue-
+neutral for HailBytes. The asymmetry with Redis is hard to justify to a
+customer who asks.
+
+Recommended: add `db_mode = "external"` with `db_host` / `db_port` /
+`db_secret_name` inputs, validated to require TLS. Effort ~2 engineer-days;
+tracked as gap **B8** in
+[`docs/AZURE_HA_PARITY_AUDIT.md`](docs/AZURE_HA_PARITY_AUDIT.md).
+
+### 6. Keep NAT-bound traffic off the NAT Gateway
+
+Service endpoints or private endpoints for the backup Storage Account and Key
+Vault remove that traffic from the $0.045/GB NAT data-processing meter. Free to
+implement, and it tightens the network posture at the same time.
+
+### 7. Don't pay for App Gateway twice
+
+WAF_v2 is €295 / $336 per month — 18× the Standard Load Balancer. If the
+customer already runs Azure Front Door, an existing Application Gateway, or
+their own reverse proxy with a valid certificate, fronting the module with that
+(and leaving `enable_application_gateway = false`) delivers the same TLS and WAF
+posture for nothing extra. Only stand up a second gateway when there is nothing
+in front already.
+
+### 8. Serve training video from a CDN, not from the VM
+
+Specific to SAT at learner scale. `content/M##/video.mp4` is baked into the
+image and streamed from the VM, so egress scales with learners × modules
+watched. At `HB-SCALE` volumes that is the largest usage line in the whole bill
+(see the [worked examples](#worked-examples)). Azure Front Door or any CDN in
+front of the media is materially cheaper per GB at tens of terabytes, and it
+takes the load off the app tier at the same time.
+
+### What is *not* a saving
+
+- **`db_high_availability_mode = "SameZone"`.** Both HA modes bill 2× compute
+  and 2× storage. SameZone trades SLA for latency, not cost.
+- **`db_mode = "vm"`.** It removes the Flexible Server but adds a licensed VM.
+  Under metered billing that *increases* the customer's total because the DB VM
+  carries the per-vCPU meter; under a fixed plan it consumes vCores the customer
+  has already paid for, and it gives up automated backups, PITR and
+  zone-redundant failover. Choose it for compliance or BYO-DBA reasons, never
+  for cost.
+- **Dropping the Standard Load Balancer.** At $18.25/mo it is not worth
+  discussing, and there is no HA topology without it.
 
 ---
 
@@ -378,12 +573,12 @@ not a total**.
 
 | | AWS (`us-east-1`, from `COST_SHAPES.md`) | Azure (`northeurope`, verified here) |
 |---|---|---|
-| Single | ~$435/mo | $480/mo (€422) |
-| HA hot-hot | ~$1,215/mo | $1,380/mo (€1,212) |
-| HA multiplier | ≈ 2.8× | ≈ 2.9× |
-| Unlimited scale (min) | ~$2,250/mo | $2,693/mo (€2,363) |
+| Single | ~$435/mo | $514/mo (€451) |
+| HA hot-hot | ~$1,215/mo | $1,432/mo (€1,257) |
+| HA multiplier | ≈ 2.8× | ≈ 2.8× |
+| Unlimited scale (min) | ~$2,250/mo | $2,745/mo (€2,409) |
 
-Azure runs **roughly 10–20% higher** than the AWS list figures at the same
+Azure runs **roughly 18–22% higher** than the AWS list figures at the same
 shape and vCPU count. Two caveats before using that as a cloud-selection
 argument:
 
@@ -393,7 +588,9 @@ argument:
 2. The AWS column has **not** been re-verified against the AWS Price List API
    in this pass, and its Azure section understated the Flexible Server
    ZoneRedundant line (it quotes ~$260/mo for compute + storage where the
-   verified figure is ~$321 for compute alone). Do not treat the AWS numbers as
+   verified figure is ~$321 for compute alone). It also omits NAT Gateway and
+   load-balancer base charges, which the Azure column now includes — so part of
+   the apparent gap is completeness, not price. Do not treat the AWS numbers as
    equally trustworthy until they get the same treatment.
 
 The topology, security defaults, and per-vCPU meter are identical across
@@ -446,6 +643,11 @@ Swap `currencyCode=USD` for the dollar column. The other meters:
 | Flexible Server backup | same | `meterName == "Backup Storage LRS Data Stored"` |
 | Application Gateway | `serviceName eq 'Application Gateway'` | `productName == "Application Gateway WAF v2"` (note the separate `... WAF v2 - Discounted` product at a lower fixed cost — do not quote it unless the customer is eligible) |
 | Key Vault | `serviceName eq 'Key Vault'` | `skuName == "Standard"`, `meterName == "Operations"` |
+| **Standard Load Balancer** | `serviceName eq 'Load Balancer' and armRegionName eq 'Global'` | `meterName == "Standard Included LB Rules and Outbound Rules"`. **Note the region is `Global`, not `northeurope`** — a region-filtered query returns nothing, which is why this line was unverified in the first revision. |
+| **NAT Gateway** | `serviceName eq 'NAT Gateway'` | `armRegionName == "Global"`, `meterName == "Standard Gateway"` and `"Standard Data Processed"` |
+| Internet egress | `serviceName eq 'Bandwidth'` | `armRegionName == "northeurope"`, `productName == "Bandwidth - Routing Preference: Internet"`, `meterName == "Standard Data Transfer Out"` — tiered, read `tierMinimumUnits` |
+| Backup blob storage | `serviceName eq 'Storage' and contains(productName, 'Blob')` | `productName == "General Block Blob v2"`, `skuName == "Cool ZRS"` (not the `Hierarchical Namespace` variant — the module does not enable HNS) |
+| Reservations | any of the above | filter `type == "Reservation"` and read `reservationTerm`; the returned `retailPrice` is the **total for the whole term**, so divide by 1 or 3 to compare against an annualised on-demand figure |
 
 Re-run before every procurement cycle; Azure list prices carry
 `effectiveStartDate` / `effectiveEndDate` and do move.
@@ -454,16 +656,21 @@ Re-run before every procurement cycle; Azure list prices carry
 
 ## When prices change
 
-1. Re-run the queries above for `northeurope` in both currencies and update
-   the line-item tables.
-2. Recompute the three shape subtotals and the single→HA multiplier.
+1. Re-run the queries above for `northeurope` **and the `Global` region meters
+   (Load Balancer, NAT Gateway)** in both currencies, and update the line-item
+   tables.
+2. Recompute the three shape subtotals, the SKU table, and the single→HA
+   multiplier.
 3. Update the per-module Azure READMEs
    (`modules/{single-vm,ha-hot-hot,unlimited-scale}/azure/README.md`) — they
    currently quote East US figures.
 4. Reconcile with `COST_SHAPES.md`: its Azure section is East US and is
    superseded by this file for North Europe. If the per-vCPU meter rate itself
    changes, both files and the AWS meter table change together.
-5. Keep the 🚩 list honest. If a figure gets verified, move it into a subtotal
+5. Re-check the reservation discounts in
+   [Reducing the customer's Azure bill](#reducing-the-customers-azure-bill) —
+   they are a percentage of list, so they move when list moves.
+6. Keep the 🚩 list honest. If a figure gets verified, move it into a subtotal
    and say where the number came from.
 
 ## Related
