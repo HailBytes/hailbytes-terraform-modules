@@ -187,6 +187,123 @@ For customers on a Microsoft Azure Consumption Commitment (MACC) or an
 Enterprise Agreement, the account team can quote a private-offer rate on the
 meter; the list rate above is the procurement starting point.
 
+### The fixed annual channel SKUs are the same number as the meter
+
+The channel price list quotes a **fixed annual price per product** for each
+plan instead of a usage meter. Those prices are the $0.24/vCPU-hour meter
+annualised at 730 h/month and rounded down to a clean figure — **each plan
+matches its metered equivalent to within 0.1%.**
+
+| SKU | Plan | Metered vCores | Fixed list price | Meter equivalent (vCores × 730 h × $0.24 × 12) | Δ |
+|---|---|---|---|---|---|
+| `HB-ESS` | Essential | 8 | $16,800/yr · $1,400/mo | $16,819/yr | −0.1% |
+| `HB-STD` | Standard | 12 | $25,200/yr · $2,100/mo | $25,229/yr | −0.1% |
+| `HB-PRO` | Professional | 16 | $33,600/yr · $2,800/mo | $33,638/yr | −0.1% |
+| `HB-PRO-HA` | Professional HA | 16 (2 × 8) | $33,600/yr · $2,800/mo | $33,638/yr | −0.1% |
+| `HB-SCALE` | Consortium / national scale | 48 (6 × 8) | partner-desk quote | $100,915/yr | — |
+
+List prices are USD, per product (SAT **or** ASM), per year; both products
+together are quoted as a bundle at the combined plan level. Confirm against the
+current price schedule before quoting — the copy these figures come from is a
+point-in-time snapshot, and the partner desk owns the live version.
+
+Two consequences worth stating to a customer:
+
+- **Moving between marketplace metering and a catalog SKU does not change the
+  software price.** The SKU is a procurement convenience — one fixed annual
+  line item instead of a usage meter — not a different rate. That is a useful
+  thing to be able to say plainly in a public-sector procurement.
+- **The plan price and the Azure infrastructure bill are separate, and the
+  customer pays Azure directly.** Every plan is BYOC — installation into the
+  customer's own AWS or Azure account — so the plan price never includes VMs,
+  disks, the database, Redis, or the load balancer. The next section is the
+  part finance actually asks about.
+
+---
+
+## SKU → Azure sizing and total first-year cost
+
+This is the table to quote from for a new Azure customer. Sizing follows the
+`COST_SHAPES.md` § *Simplified SKUs → module configuration* mapping, converted
+to Azure VM sizes (`Standard_D8s_v5` for the 8-vCPU rows, `Standard_D4s_v5` for
+4 vCPU, `Standard_D16s_v5` for 16 vCPU). Infrastructure is computed from the
+verified North Europe unit prices in this document.
+
+| SKU | Module + sizing | Azure infra €/mo | Azure infra $/mo | Azure infra $/yr | Plan $/yr | **All-in $/yr** | Infra share |
+|---|---|---|---|---|---|---|---|
+| `HB-ESS` | `single-vm/azure`, 1× `Standard_D8s_v5` | €320 | $364 | $4,372 | $16,800 | **$21,172** | 21% |
+| `HB-STD` | `unlimited-scale/azure`, 3× `Standard_D4s_v5`, `GP_Standard_D4ds_v5` ZR + 2 replicas | €1,646 | $1,876 | $22,509 | $25,200 | **$47,709** | **47%** |
+| `HB-PRO` | `single-vm/azure`, 1× `Standard_D16s_v5` | €594 | $677 | $8,121 | $33,600 | **$41,721** | 19% |
+| `HB-PRO-HA` | `ha-hot-hot/azure`, 2× `Standard_D8s_v5`, module-default `GP_Standard_D2ds_v5` ZR | €1,008 | $1,148 | $13,778 | $33,600 | **$47,378** | 29% |
+| `HB-PRO-HA` | same, DB upsized to `GP_Standard_D4ds_v5` (the Azure analogue of the AWS mapping's `db.m6g.large`) | €1,261 | $1,437 | $17,247 | $33,600 | **$50,847** | 34% |
+| `HB-SCALE` | `unlimited-scale/azure`, 6× `Standard_D8s_v5`, `MO_Standard_E8ds_v5` ZR + 2 replicas, Redis Standard C3 | €5,042 | $5,746 | $68,947 | ~$100,915 🔸 | **~$169,862** | 41% |
+
+🔸 `HB-SCALE` has no list price — it is always a custom agreement. The figure
+shown is the metered equivalent at 48 vCores, for scale only.
+
+All infra figures **exclude the 🚩 items** (Standard Load Balancer, NAT Gateway,
+backup storage, egress). They are floors. See
+[Unverified line items](#unverified-line-items).
+
+### What this changes about how we quote
+
+1. **Azure infra is 19–47% of the first-year cost, and the spread is driven by
+   topology, not by size.** `HB-PRO` (16 vCore, single VM) carries $8.1k of
+   Azure; `HB-PRO-HA` (the same 16 vCore, two VMs) carries $13.8–17.2k. Quoting
+   the plan price alone understates a customer's first-year spend by a fifth to
+   nearly a half. Give finance the all-in column.
+
+2. **`HB-STD` is the outlier and should be examined before it is quoted.** At
+   47%, Azure costs nearly as much as the plan. The cause is the
+   `unlimited-scale` module's default `db_replica_count = 2`: two
+   `GP_Standard_D4ds_v5` read replicas add **€564/$643 per month ($7,715/yr)**
+   in compute + storage on top of an already zone-redundant primary. A
+   12-vCore, three-instance deployment rarely needs two read replicas. Setting
+   `db_replica_count = 1` takes `HB-STD` all-in to **$43,851/yr**; `= 0` takes
+   it to **$39,994/yr** — a 16% reduction in the customer's total cost with no
+   change to the metered capacity they bought. Make the replica count a
+   deliberate choice per deal rather than a default.
+
+3. **`HB-PRO` vs `HB-PRO-HA` is a $5.7–9.1k/yr conversation, all of it Azure.**
+   Both SKUs are the same 16 metered vCores and the same $33,600 plan price. The entire difference is infrastructure: a second VM, a shared Redis,
+   and a zone-redundant database. That is the honest framing for "why does HA
+   cost more if the licence is the same price" — and an easier conversation
+   than the multiplier.
+
+4. **The database, not the VMs, dominates every HA and autoscale row.** In
+   `HB-PRO-HA`, the app VMs are $625/mo and the zone-redundant Flexible Server
+   is $321/mo at default sizing, $611/mo upsized. In `HB-SCALE` the database
+   (primary + 2 replicas, memory-optimised) is **$3,506 of the $5,746 monthly
+   infra** — 61%. Any cost conversation that starts with VM size starts in the
+   wrong place.
+
+5. **`HB-PRO-HA` at 2 × 8 vCore does not match the module defaults.** The
+   `ha-hot-hot/azure` default is `Standard_D2s_v5` (2 vCPU), so fulfilling this
+   SKU means `vm_size = "Standard_D8s_v5"` — a 4× compute change. Applying that
+   to a running deployment **replaces both VMs**; see
+   [`docs/AZURE_PATCHING_AND_MIGRATION.md`](docs/AZURE_PATCHING_AND_MIGRATION.md#step-3--rolling-replace-one-vm-at-a-time)
+   for the one-at-a-time procedure. Size correctly at first apply.
+
+### Two price-list commitments the modules do not currently support
+
+Both are worth resolving before the next public-sector deal, because they are
+commitments in a channel catalog rather than internal notes:
+
+- **GovCloud / Azure Government at price parity.** `CLAUDE.md` states that AWS
+  GovCloud and Azure Government are **out of scope for v1**, and no module
+  carries a GovCloud or Azure Government provider configuration, endpoint
+  override, or region validation. The catalog commitment and the module scope
+  disagree. For Azure Government the marketplace offer must additionally be
+  published to the Azure Government marketplace — a separate Partner Center
+  listing, not a Terraform change.
+- **Optional auto-scaling, enabled on request.** True on
+  `unlimited-scale/azure` (VMSS autoscale, `vmss_max_count` default 20). Not
+  available on `single-vm` or `ha-hot-hot`, which is where `HB-ESS`, `HB-PRO`
+  and `HB-PRO-HA` land — three of the four plans. If a customer on `HB-PRO`
+  asks to turn auto-scaling on, the answer is a migration to a different module
+  and topology, not a flag. Scaling out past the plan's vCore count also meters
+  (or re-rates) the extra capacity.
+
 ---
 
 ## Azure Cache for Redis sizing

@@ -79,17 +79,26 @@ at the Starter shape; a SKU is fulfilled by applying the overrides below
 (runnable examples live in each module's `examples/` directory where
 noted).
 
-| SKU | Plan | Metered vCores | Module | Overrides vs defaults |
-|---|---|---|---|---|
-| `HB-ESS` | Essential | 8 | `single-vm/aws` | `instance_type = "m6i.2xlarge"` |
-| `HB-STD` | Standard | 12 | `unlimited-scale/aws` | `instance_type = "m6i.xlarge"`, `asg_min_size = asg_desired_capacity = 3`, `asg_max_size = 3` (raise only if the customer enables auto-scaling) |
-| `HB-PRO` | Professional | 16 | `single-vm/aws` | `instance_type = "m6i.4xlarge"` |
-| `HB-PRO-HA` | Professional HA | 16 (2 × 8) | `ha-hot-hot/aws` | `instance_type = "m6i.2xlarge"`, `db_instance_class = "db.m6g.large"` — see [`examples/hb-pro-ha`](modules/ha-hot-hot/aws/examples/hb-pro-ha) |
-| `HB-SCALE` | Consortium / national scale (500k+ users) | 48 (6 × 8) | `unlimited-scale/aws` | `instance_type = "m6i.2xlarge"`, `asg_min_size = asg_desired_capacity = 6`, `asg_max_size = 12`, `db_instance_class = "db.r6g.2xlarge"`, `redis_node_type = "cache.m6g.large"` — see [`examples/hb-scale`](modules/unlimited-scale/aws/examples/hb-scale) |
+| SKU | Plan | List price (per product) | Metered vCores | Module | Overrides vs defaults |
+|---|---|---|---|---|---|
+| `HB-ESS` | Essential | $16,800/yr · $1,400/mo | 8 | `single-vm/aws` | `instance_type = "m6i.2xlarge"` |
+| `HB-STD` | Standard | $25,200/yr · $2,100/mo | 12 | `unlimited-scale/aws` | `instance_type = "m6i.xlarge"`, `asg_min_size = asg_desired_capacity = 3`, `asg_max_size = 3` (raise only if the customer enables auto-scaling) |
+| `HB-PRO` | Professional | $33,600/yr · $2,800/mo | 16 | `single-vm/aws` | `instance_type = "m6i.4xlarge"` |
+| `HB-PRO-HA` | Professional HA | $33,600/yr · $2,800/mo | 16 (2 × 8) | `ha-hot-hot/aws` | `instance_type = "m6i.2xlarge"`, `db_instance_class = "db.m6g.large"` — see [`examples/hb-pro-ha`](modules/ha-hot-hot/aws/examples/hb-pro-ha) |
+| `HB-SCALE` | Consortium / national scale (500k+ users) | partner-desk quote | 48 (6 × 8) | `unlimited-scale/aws` | `instance_type = "m6i.2xlarge"`, `asg_min_size = asg_desired_capacity = 6`, `asg_max_size = 12`, `db_instance_class = "db.r6g.2xlarge"`, `redis_node_type = "cache.m6g.large"` — see [`examples/hb-scale`](modules/unlimited-scale/aws/examples/hb-scale) |
+
+Each fixed plan price is the per-vCPU meter annualised — vCores × 730 h ×
+$0.24 × 12 — matching to within 0.1% on every plan. So a customer moving
+between marketplace metering and a catalog SKU sees no change in software
+price; only the billing shape changes.
 
 Azure equivalents by VM size: `Standard_D8s_v5` (8 vCPU) for the
 `m6i.2xlarge` rows, `Standard_D4s_v5` for `m6i.xlarge`,
-`Standard_D16s_v5` for `m6i.4xlarge`.
+`Standard_D16s_v5` for `m6i.4xlarge`. For each SKU's **Azure infrastructure
+cost and all-in first-year total**, see
+[`AZURE_COST_SHAPES.md`](AZURE_COST_SHAPES.md#sku--azure-sizing-and-total-first-year-cost)
+— Azure infra runs 19–47% of first-year cost depending on topology, so the
+plan price alone is not a customer's total.
 
 Notes:
 
