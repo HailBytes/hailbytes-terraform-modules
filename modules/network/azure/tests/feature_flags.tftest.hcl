@@ -103,3 +103,43 @@ run "nat_gateway_disabled_creates_nothing" {
     error_message = "nat_gateway_public_ip must be empty when the gateway is disabled."
   }
 }
+
+# Regression: SECURITY-DEFAULTS.md claimed Azure flow logs were on by default.
+# They did not exist. Implemented as VNet flow logs, not NSG flow logs, because
+# NSG flow logs are being retired.
+run "flow_logs_enabled_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(azurerm_network_watcher_flow_log.vnet) == 1
+    error_message = "enable_flow_logs defaults to true and must create exactly one VNet flow log."
+  }
+
+  assert {
+    condition     = azurerm_network_watcher_flow_log.vnet[0].version == 2
+    error_message = "Flow logs must use format version 2."
+  }
+
+  assert {
+    condition     = azurerm_storage_account.flow_logs[0].shared_access_key_enabled == false
+    error_message = "The flow-log Storage Account must not accept shared-key auth."
+  }
+}
+
+run "flow_logs_disabled_creates_nothing" {
+  command = plan
+
+  variables {
+    enable_flow_logs = false
+  }
+
+  assert {
+    condition     = length(azurerm_network_watcher_flow_log.vnet) == 0
+    error_message = "enable_flow_logs = false must create zero flow logs."
+  }
+
+  assert {
+    condition     = length(azurerm_storage_account.flow_logs) == 0
+    error_message = "enable_flow_logs = false must not leave an orphaned Storage Account."
+  }
+}

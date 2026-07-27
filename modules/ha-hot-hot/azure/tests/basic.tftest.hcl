@@ -7,6 +7,9 @@
 # the mock provider cannot make known at plan time. See single-vm/azure tests.
 
 mock_provider "azurerm" {
+  mock_resource "azurerm_log_analytics_workspace" {
+    defaults = { id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.OperationalInsights/workspaces/mock-law" }
+  }
   # The azurerm provider parses referenced values as fully qualified Azure
   # resource IDs; the mock provider fills computed strings with short tokens.
   mock_resource "azurerm_network_interface" {

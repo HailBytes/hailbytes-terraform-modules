@@ -11,13 +11,13 @@ These modules ship with security-conservative defaults. You should have to expli
 | RDS / Azure DB for PostgreSQL storage | Encrypted | Customer-managed KMS/Key Vault key supported |
 | RDS / Azure DB backups | Encrypted | n/a (forced on) |
 | In-transit — client to LB | TLS 1.2+ required | `min_tls_version` (default `TLS_1_2`) |
-| In-transit — LB to VM | TLS terminated at LB; HTTP to VM over private subnet only | `backend_tls_enabled = true` for end-to-end TLS |
-| In-transit — VM to DB | TLS required (`rds.force_ssl=1`, Azure equivalent) | `require_db_tls = true` (default) |
+| In-transit — LB to VM | AWS: TLS to the instance on 443. Azure: the Standard LB is L4 passthrough; with `enable_application_gateway = true` the gateway terminates TLS and the backend hop defaults to HTTP inside the customer vnet | Azure: `appgw_backend_protocol = "Https"` for end-to-end TLS — requires `appgw_backend_root_cert_pem` and `appgw_backend_host_header`, because App Gateway v2 validates the backend certificate |
+| In-transit — VM to DB | TLS required (`rds.force_ssl=1`; `require_secure_transport=ON` on Azure) | Forced on. In `db_mode = "external"`, `external_db_sslmode` accepts only `require`/`verify-ca`/`verify-full` |
 
 ## Network
 
 - **Security groups / NSGs** default to **deny all** inbound. Required ports (443 for the LB, 5432 between VMs and DB) are opened only to the CIDRs you pass in `allowed_cidrs`. Wide-open `0.0.0.0/0` requires `allow_internet_ingress = true` and emits a deprecation warning.
-- **SSH** is **not** exposed by default. For break-glass access, prefer **AWS SSM Session Manager** (IAM-gated) or **Azure Bastion**. Modules wire these up when `enable_management_access = true`.
+- **SSH** is **not** exposed by default. For break-glass access, `enable_management_access = true` wires up **AWS SSM Session Manager** (IAM-gated, via `AmazonSSMManagedInstanceCore`) on AWS, and the **`AADSSHLoginForLinux`** extension on Azure — Entra-authenticated, RBAC-gated SSH through `az ssh vm` with no public IP. Azure Bastion is *not* provisioned by the modules; the extension is the lighter-weight equivalent, and operators still need the `Virtual Machine Administrator Login` or `Virtual Machine User Login` role granted to them.
 - **IMDSv2** is required on every EC2 launch (`http_tokens = "required"`).
 - **Public IPs** are off by default. The LB has a public DNS name; the VMs sit in private subnets.
 - VMs are tagged for AWS Inspector / Azure Defender for Servers auto-enrollment when those services are enabled at the account level.
@@ -40,8 +40,9 @@ These modules ship with security-conservative defaults. You should have to expli
 
 ## Logging & audit
 
-- VPC Flow Logs / Azure NSG Flow Logs are enabled by default (`enable_flow_logs = true`).
-- LB access logs land in an S3 bucket / Storage Account with versioning and a 90-day lifecycle policy (`access_log_retention_days = 90`).
+- **AWS:** VPC Flow Logs are enabled by default (`enable_flow_logs = true`), to a KMS-encrypted CloudWatch log group. ALB access logs are opt-in (`enable_alb_access_logging`) to a versioned, lifecycled S3 bucket.
+- **Azure:** VNet flow logs are enabled by default (`enable_flow_logs = true` on `network/azure`), to a Storage Account with shared-key auth disabled. Implemented as *VNet* flow logs rather than NSG flow logs, since NSG flow logs are being retired.
+- **Azure:** diagnostic settings for the load balancer, database, cache and (when enabled) Application Gateway go to a Log Analytics workspace by default (`enable_diagnostics = true`); pass `log_analytics_workspace_id` to use your landing zone's central workspace instead. Note a Standard Load Balancer is Layer 4 and has **no** request-level access log — `ApplicationGatewayAccessLog` is the closest analogue of AWS ALB access logs, and it only exists when `enable_application_gateway = true`.
 - CloudTrail / Azure Activity Log are **not** managed by these modules — those are account-level concerns and should be owned by your landing-zone tooling.
 
 ## Patching

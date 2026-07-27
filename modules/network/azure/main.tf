@@ -169,3 +169,57 @@ resource "azurerm_subnet_nat_gateway_association" "workload" {
   subnet_id      = azurerm_subnet.workload.id
   nat_gateway_id = azurerm_nat_gateway.main[0].id
 }
+
+# ----- VNet flow logs (gap B1) -----
+#
+# SECURITY-DEFAULTS.md claimed "VPC Flow Logs / Azure NSG Flow Logs are enabled
+# by default (enable_flow_logs = true)". The variable existed only in the AWS
+# modules; nothing on the Azure side produced a flow log at all.
+#
+# This implements VNet flow logs rather than NSG flow logs: Microsoft has
+# announced NSG flow logs' retirement in favour of VNet flow logs, so building
+# the NSG variant now would be building the deprecated one. Flow logs need a
+# Network Watcher in the region — Azure normally auto-creates one per region as
+# NetworkWatcherRG/NetworkWatcher_<region>, which is what network_watcher_name
+# and network_watcher_resource_group_name default to.
+
+resource "azurerm_storage_account" "flow_logs" {
+  count = var.enable_flow_logs ? 1 : 0
+
+  name                            = substr(replace("${var.name_prefix}flowlogs", "-", ""), 0, 24)
+  resource_group_name             = var.resource_group_name
+  location                        = var.location
+  account_tier                    = "Standard"
+  account_replication_type        = "LRS"
+  account_kind                    = "StorageV2"
+  min_tls_version                 = "TLS1_2"
+  shared_access_key_enabled       = false
+  allow_nested_items_to_be_public = false
+  public_network_access_enabled   = false
+  tags                            = local.common_tags
+
+  blob_properties {
+    delete_retention_policy {
+      days = var.flow_log_retention_days
+    }
+  }
+}
+
+resource "azurerm_network_watcher_flow_log" "vnet" {
+  count = var.enable_flow_logs ? 1 : 0
+
+  name                 = "${var.name_prefix}-vnet-flowlog"
+  network_watcher_name = coalesce(var.network_watcher_name, "NetworkWatcher_${var.location}")
+  resource_group_name  = var.network_watcher_resource_group_name
+  location             = var.location
+  target_resource_id   = azurerm_virtual_network.main.id
+  storage_account_id   = azurerm_storage_account.flow_logs[0].id
+  enabled              = true
+  version              = 2
+  tags                 = local.common_tags
+
+  retention_policy {
+    enabled = true
+    days    = var.flow_log_retention_days
+  }
+}

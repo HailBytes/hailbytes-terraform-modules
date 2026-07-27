@@ -220,3 +220,64 @@ run "external_db_still_provisions_the_app_tier" {
     error_message = "external mode must not disturb the shared session store."
   }
 }
+
+# Regression: SECURITY-DEFAULTS.md promised Azure diagnostic settings and
+# Bastion-style break-glass access. Neither existed.
+run "diagnostics_on_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(azurerm_monitor_diagnostic_setting.lb) == 1
+    error_message = "Load-balancer diagnostics must be enabled by default."
+  }
+
+  assert {
+    condition     = length(azurerm_monitor_diagnostic_setting.postgres) == 1
+    error_message = "Database diagnostics must be enabled by default in flexible_server mode."
+  }
+
+  assert {
+    condition     = length(azurerm_log_analytics_workspace.main) == 1
+    error_message = "A workspace must be created when none is supplied."
+  }
+}
+
+run "diagnostics_reuse_supplied_workspace" {
+  command = plan
+
+  variables {
+    log_analytics_workspace_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.OperationalInsights/workspaces/central"
+  }
+
+  assert {
+    condition     = length(azurerm_log_analytics_workspace.main) == 0
+    error_message = "Supplying a workspace must not create a second one — enterprises centralise these."
+  }
+
+  assert {
+    condition     = length(azurerm_monitor_diagnostic_setting.lb) == 1
+    error_message = "Diagnostics must still be wired when the workspace is supplied."
+  }
+}
+
+run "management_access_is_opt_in" {
+  command = plan
+
+  assert {
+    condition     = length(azurerm_virtual_machine_extension.aad_ssh_login) == 0
+    error_message = "Break-glass SSH access must be opt-in, not on by default."
+  }
+}
+
+run "management_access_installs_on_every_vm" {
+  command = plan
+
+  variables {
+    enable_management_access = true
+  }
+
+  assert {
+    condition     = length(azurerm_virtual_machine_extension.aad_ssh_login) == 2
+    error_message = "Break-glass access is useless on only one of two VMs."
+  }
+}

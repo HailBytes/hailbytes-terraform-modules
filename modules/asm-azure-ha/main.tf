@@ -82,4 +82,9 @@ module "this" {
   appgw_backend_port          = var.appgw_backend_port
   appgw_backend_root_cert_pem = var.appgw_backend_root_cert_pem
 
+  enable_diagnostics         = var.enable_diagnostics
+  log_analytics_workspace_id = var.log_analytics_workspace_id
+  diagnostics_retention_days = var.diagnostics_retention_days
+  enable_management_access   = var.enable_management_access
+
 }

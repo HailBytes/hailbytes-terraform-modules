@@ -82,6 +82,8 @@ locals {
   create_redis_dns_zone   = local.provision_managed_redis && var.redis_private_dns_zone_id == null
   effective_redis_zone_id = local.provision_managed_redis ? (local.create_redis_dns_zone ? azurerm_private_dns_zone.redis[0].id : var.redis_private_dns_zone_id) : null
 
+  effective_workspace_id = var.enable_diagnostics ? coalesce(var.log_analytics_workspace_id, one(azurerm_log_analytics_workspace.main[*].id)) : null
+
   # The vnet that owns vm_subnet_id, needed to link the private DNS zone.
   vm_vnet_id = regex("^(/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.Network/virtualNetworks/[^/]+)/subnets/", var.vm_subnet_id)[0]
 }
@@ -1239,4 +1241,106 @@ resource "azurerm_monitor_metric_alert" "appgw_5xx" {
   }
 
   tags = local.common_tags
+}
+
+# ----- Observability: diagnostic settings (gap B2) -----
+#
+# The AWS module ships optional ALB access logs to a versioned, lifecycled S3
+# bucket; SECURITY-DEFAULTS.md claimed the Azure equivalent existed. It did
+# not — there was no azurerm_monitor_diagnostic_setting anywhere in the Azure
+# modules, and no destination for one. This sends the load balancer, the
+# database and (when enabled) the Application Gateway to a Log Analytics
+# workspace, which is where an Azure security reviewer expects to find them.
+
+resource "azurerm_log_analytics_workspace" "main" {
+  count = var.enable_diagnostics && var.log_analytics_workspace_id == null ? 1 : 0
+
+  name                = "${local.name_prefix}-law"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  sku                 = "PerGB2018"
+  retention_in_days   = var.diagnostics_retention_days
+  tags                = local.common_tags
+}
+
+resource "azurerm_monitor_diagnostic_setting" "lb" {
+  count = var.enable_diagnostics ? 1 : 0
+
+  name                       = "${local.name_prefix}-lb-diag"
+  target_resource_id         = azurerm_lb.main.id
+  log_analytics_workspace_id = local.effective_workspace_id
+
+  enabled_metric {
+    category = "AllMetrics"
+  }
+}
+
+resource "azurerm_monitor_diagnostic_setting" "postgres" {
+  count = var.enable_diagnostics && local.use_flexible_server ? 1 : 0
+
+  name                       = "${local.name_prefix}-pg-diag"
+  target_resource_id         = azurerm_postgresql_flexible_server.main[0].id
+  log_analytics_workspace_id = local.effective_workspace_id
+
+  enabled_log {
+    category = "PostgreSQLLogs"
+  }
+
+  enabled_metric {
+    category = "AllMetrics"
+  }
+}
+
+resource "azurerm_monitor_diagnostic_setting" "redis" {
+  count = var.enable_diagnostics && local.provision_managed_redis ? 1 : 0
+
+  name                       = "${local.name_prefix}-redis-diag"
+  target_resource_id         = azurerm_redis_cache.main[0].id
+  log_analytics_workspace_id = local.effective_workspace_id
+
+  enabled_metric {
+    category = "AllMetrics"
+  }
+}
+
+resource "azurerm_monitor_diagnostic_setting" "appgw" {
+  count = var.enable_diagnostics && local.enable_application_gateway ? 1 : 0
+
+  name                       = "${local.name_prefix}-appgw-diag"
+  target_resource_id         = azurerm_application_gateway.main[0].id
+  log_analytics_workspace_id = local.effective_workspace_id
+
+  # The closest Azure analogue of ALB access logs. Only the App Gateway has
+  # request-level logs; a Standard Load Balancer is L4 and has none, which is
+  # worth knowing before promising "LB access logs" to a reviewer.
+  enabled_log {
+    category = "ApplicationGatewayAccessLog"
+  }
+
+  enabled_log {
+    category = "ApplicationGatewayFirewallLog"
+  }
+
+  enabled_metric {
+    category = "AllMetrics"
+  }
+}
+
+# ----- Break-glass management access (gap B3) -----
+#
+# SECURITY-DEFAULTS.md promised "Modules wire these up when
+# enable_management_access = true" and named Azure Bastion. Nothing did. The
+# AAD-login extension is the lighter-weight half of that promise: it gives
+# Entra-authenticated, RBAC-gated SSH without a public IP and without the
+# ~$140/month a Bastion host costs, and it pairs with `az ssh vm`.
+resource "azurerm_virtual_machine_extension" "aad_ssh_login" {
+  count = var.enable_management_access ? local.vm_count : 0
+
+  name                       = "AADSSHLoginForLinux"
+  virtual_machine_id         = azurerm_linux_virtual_machine.vm[count.index].id
+  publisher                  = "Microsoft.Azure.ActiveDirectory"
+  type                       = "AADSSHLoginForLinux"
+  type_handler_version       = "1.0"
+  auto_upgrade_minor_version = true
+  tags                       = local.common_tags
 }
