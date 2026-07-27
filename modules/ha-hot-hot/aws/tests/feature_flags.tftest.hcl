@@ -122,3 +122,60 @@ run "flow_logs_disabled_creates_nothing" {
     error_message = "flow_log_group_name must be empty string when enable_flow_logs is false."
   }
 }
+
+# db_mode = "external": the customer already runs Postgres, so we provision
+# none. Same escape hatch as redis_endpoint_override.
+run "external_db_provisions_no_database" {
+  command = plan
+
+  variables {
+    db_mode              = "external"
+    external_db_host     = "pg.internal.example.org"
+    external_db_password = "not-a-real-password"
+  }
+
+  assert {
+    condition     = length(aws_db_instance.main) == 0
+    error_message = "db_mode = external must create zero RDS instances."
+  }
+
+  assert {
+    condition     = length(aws_instance.db_ec2) == 0
+    error_message = "db_mode = external must create zero database EC2 instances."
+  }
+
+  assert {
+    condition     = output.db_is_customer_managed == true
+    error_message = "db_is_customer_managed must be true in external mode."
+  }
+
+  assert {
+    condition     = length(aws_instance.vm) == 2
+    error_message = "external mode changes only the database; the two app instances remain."
+  }
+}
+
+run "external_db_requires_host_and_password" {
+  command = plan
+
+  variables {
+    db_mode = "external"
+  }
+
+  expect_failures = [random_password.db]
+}
+
+# TLS to RDS is enforced with the rds.force_ssl parameter, not with a client-side
+# connection string: with force_ssl = 0 a misconfigured client silently
+# downgrades to plaintext inside the VPC.
+# https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/PostgreSQL.Concepts.General.SSL.html
+run "database_tls_is_enforced_server_side" {
+  command = plan
+
+  assert {
+    condition = one([
+      for p in aws_db_parameter_group.main[0].parameter : p.value if p.name == "rds.force_ssl"
+    ]) == "1"
+    error_message = "rds.force_ssl must be 1; without it a client can silently connect in plaintext."
+  }
+}

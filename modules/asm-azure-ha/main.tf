@@ -14,6 +14,9 @@ module "this" {
   ssh_public_key         = var.ssh_public_key
 
   # Key Vault network ACL
+  db_log_min_duration_ms           = var.db_log_min_duration_ms
+  enable_db_delete_lock            = var.enable_db_delete_lock
+  key_vault_name                   = var.key_vault_name
   key_vault_network_default_action = var.key_vault_network_default_action
   key_vault_ip_rules               = var.key_vault_ip_rules
   associate_vm_subnet_nsg          = var.associate_vm_subnet_nsg
@@ -66,5 +69,25 @@ module "this" {
 
   postgres_geo_redundant_backup_enabled = var.postgres_geo_redundant_backup_enabled
 
-  tags = var.tags
+  tags                             = var.tags
+  redis_private_dns_zone_id        = var.redis_private_dns_zone_id
+  redis_private_endpoint_subnet_id = var.redis_private_endpoint_subnet_id
+  admin_port                       = var.admin_port
+
+  external_db_host     = var.external_db_host
+  external_db_port     = var.external_db_port
+  external_db_name     = var.external_db_name
+  external_db_username = var.external_db_username
+  external_db_password = var.external_db_password
+  external_db_sslmode  = var.external_db_sslmode
+
+  appgw_backend_protocol      = var.appgw_backend_protocol
+  appgw_backend_port          = var.appgw_backend_port
+  appgw_backend_root_cert_pem = var.appgw_backend_root_cert_pem
+
+  enable_diagnostics         = var.enable_diagnostics
+  log_analytics_workspace_id = var.log_analytics_workspace_id
+  diagnostics_retention_days = var.diagnostics_retention_days
+  enable_management_access   = var.enable_management_access
+
 }

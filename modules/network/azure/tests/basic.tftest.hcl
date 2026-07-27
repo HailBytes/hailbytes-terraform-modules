@@ -12,6 +12,15 @@
 # ID format; the mock provider's random token would otherwise fail that check.
 
 mock_provider "azurerm" {
+  mock_resource "azurerm_storage_account" {
+    defaults = { id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.Storage/storageAccounts/mockflowlogs" }
+  }
+  mock_resource "azurerm_nat_gateway" {
+    defaults = { id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.Network/natGateways/mock-nat" }
+  }
+  mock_resource "azurerm_public_ip" {
+    defaults = { id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.Network/publicIPAddresses/mock-nat-pip" }
+  }
   mock_resource "azurerm_virtual_network" {
     defaults = {
       id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.Network/virtualNetworks/mock-vnet"

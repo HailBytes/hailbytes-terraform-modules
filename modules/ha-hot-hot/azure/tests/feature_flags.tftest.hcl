@@ -60,6 +60,24 @@ run "managed_redis_by_default" {
   }
 }
 
+run "redis_private_link_uses_supplied_zone" {
+  command = plan
+
+  variables {
+    redis_private_dns_zone_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.Network/privateDnsZones/privatelink.redis.cache.windows.net"
+  }
+
+  assert {
+    condition     = length(azurerm_private_dns_zone.redis) == 0
+    error_message = "Supplying redis_private_dns_zone_id must not create a second zone — zone names are unique per resource group and would collide."
+  }
+
+  assert {
+    condition     = length(azurerm_private_endpoint.redis) == 1
+    error_message = "The private endpoint is still required when the caller supplies the DNS zone."
+  }
+}
+
 run "redis_disabled_creates_nothing" {
   command = plan
 
@@ -75,6 +93,16 @@ run "redis_disabled_creates_nothing" {
   assert {
     condition     = output.redis_mode == "disabled"
     error_message = "redis_mode must be 'disabled' when managed Redis is off and no override is supplied."
+  }
+
+  assert {
+    condition     = length(azurerm_private_endpoint.redis) == 0
+    error_message = "No managed Redis means no private endpoint and no access-key secret."
+  }
+
+  assert {
+    condition     = length(azurerm_key_vault_secret.redis) == 0
+    error_message = "No managed Redis means no access-key secret."
   }
 }
 
@@ -137,5 +165,119 @@ run "no_duplicate_vm_nsg_when_subnets_match" {
   assert {
     condition     = output.vm_nsg_id == ""
     error_message = "vm_nsg_id must be empty when vm_subnet_id == lb_subnet_id."
+  }
+}
+
+# db_mode = "external": the customer already runs Postgres, so we provision
+# none. Removes the largest single Azure line item from their bill and hands
+# them responsibility for availability and backups.
+run "external_db_provisions_no_database" {
+  command = plan
+
+  variables {
+    db_mode              = "external"
+    external_db_host     = "pg.internal.example.org"
+    external_db_password = "not-a-real-password"
+  }
+
+  assert {
+    condition     = length(azurerm_postgresql_flexible_server.main) == 0
+    error_message = "db_mode = external must create zero Flexible Servers."
+  }
+
+  assert {
+    condition     = length(azurerm_linux_virtual_machine.db_vm) == 0
+    error_message = "db_mode = external must create zero database VMs."
+  }
+
+  assert {
+    condition     = output.postgres_fqdn == "pg.internal.example.org"
+    error_message = "postgres_fqdn must report the customer-supplied host in external mode."
+  }
+
+  assert {
+    condition     = output.db_is_customer_managed == true
+    error_message = "db_is_customer_managed must be true in external mode — it gates the backup guarantees we advertise."
+  }
+}
+
+run "external_db_still_provisions_the_app_tier" {
+  command = plan
+
+  variables {
+    db_mode              = "external"
+    external_db_host     = "pg.internal.example.org"
+    external_db_password = "not-a-real-password"
+  }
+
+  assert {
+    condition     = length(azurerm_linux_virtual_machine.vm) == 2
+    error_message = "external mode changes only the database; the two app VMs remain."
+  }
+
+  assert {
+    condition     = length(azurerm_redis_cache.main) == 1
+    error_message = "external mode must not disturb the shared session store."
+  }
+}
+
+# Regression: SECURITY-DEFAULTS.md promised Azure diagnostic settings and
+# Bastion-style break-glass access. Neither existed.
+run "diagnostics_on_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(azurerm_monitor_diagnostic_setting.lb) == 1
+    error_message = "Load-balancer diagnostics must be enabled by default."
+  }
+
+  assert {
+    condition     = length(azurerm_monitor_diagnostic_setting.postgres) == 1
+    error_message = "Database diagnostics must be enabled by default in flexible_server mode."
+  }
+
+  assert {
+    condition     = length(azurerm_log_analytics_workspace.main) == 1
+    error_message = "A workspace must be created when none is supplied."
+  }
+}
+
+run "diagnostics_reuse_supplied_workspace" {
+  command = plan
+
+  variables {
+    log_analytics_workspace_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.OperationalInsights/workspaces/central"
+  }
+
+  assert {
+    condition     = length(azurerm_log_analytics_workspace.main) == 0
+    error_message = "Supplying a workspace must not create a second one — enterprises centralise these."
+  }
+
+  assert {
+    condition     = length(azurerm_monitor_diagnostic_setting.lb) == 1
+    error_message = "Diagnostics must still be wired when the workspace is supplied."
+  }
+}
+
+run "management_access_is_opt_in" {
+  command = plan
+
+  assert {
+    condition     = length(azurerm_virtual_machine_extension.aad_ssh_login) == 0
+    error_message = "Break-glass SSH access must be opt-in, not on by default."
+  }
+}
+
+run "management_access_installs_on_every_vm" {
+  command = plan
+
+  variables {
+    enable_management_access = true
+  }
+
+  assert {
+    condition     = length(azurerm_virtual_machine_extension.aad_ssh_login) == 2
+    error_message = "Break-glass access is useless on only one of two VMs."
   }
 }

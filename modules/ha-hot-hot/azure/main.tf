@@ -38,8 +38,20 @@ locals {
 
   use_flexible_server = var.db_mode == "flexible_server"
   use_vm_db           = var.db_mode == "vm"
+  use_external_db     = var.db_mode == "external"
 
-  db_host = local.use_flexible_server ? one(azurerm_postgresql_flexible_server.main[*].fqdn) : one(azurerm_linux_virtual_machine.db_vm[*].private_ip_address)
+  db_host = local.use_flexible_server ? one(azurerm_postgresql_flexible_server.main[*].fqdn) : (
+    local.use_vm_db ? one(azurerm_linux_virtual_machine.db_vm[*].private_ip_address) : var.external_db_host
+  )
+  db_port = local.use_external_db ? var.external_db_port : 5432
+  db_name = local.use_external_db ? var.external_db_name : "hailbytes"
+  db_user = local.use_external_db ? var.external_db_username : "hailbytes"
+
+  # In external mode the customer owns the server, so the password is theirs
+  # rather than one we generate. It still lands in this module's Key Vault
+  # under the same secret name, so the marketplace image's bootstrap path is
+  # byte-identical across all three modes.
+  db_password = local.use_external_db ? var.external_db_password : random_password.db.result
 
   create_backup_storage       = var.create_backup_storage_account
   backup_storage_account_name = local.create_backup_storage ? azurerm_storage_account.backup[0].name : var.backup_storage_account_name
@@ -56,6 +68,24 @@ locals {
   provision_managed_redis = var.enable_managed_redis && var.redis_endpoint_override == null
   effective_redis_host    = local.provision_managed_redis ? one(azurerm_redis_cache.main[*].hostname) : var.redis_endpoint_override
   effective_redis_port    = local.provision_managed_redis ? 6380 : var.redis_endpoint_override_port
+
+  # Azure Cache for Redis always requires an access key (or Entra auth); unlike
+  # ElastiCache there is no "no-auth inside the VNet" mode. The key is written
+  # to the same Key Vault as the DB password and the VMs fetch it by name.
+  redis_secret_name = "hailbytes-redis-access-key"
+
+  # Private Link for the cache. public_network_access_enabled = false means the
+  # cache has no reachable endpoint at all without one, and VNet injection is a
+  # Premium-tier feature, so Private Link is the only option that works on the
+  # default Standard SKU. Callers composing this module with network/azure can
+  # pass a shared zone; standalone deployments get one created here.
+  create_redis_dns_zone   = local.provision_managed_redis && var.redis_private_dns_zone_id == null
+  effective_redis_zone_id = local.provision_managed_redis ? (local.create_redis_dns_zone ? azurerm_private_dns_zone.redis[0].id : var.redis_private_dns_zone_id) : null
+
+  effective_workspace_id = var.enable_diagnostics ? coalesce(var.log_analytics_workspace_id, one(azurerm_log_analytics_workspace.main[*].id)) : null
+
+  # The vnet that owns vm_subnet_id, needed to link the private DNS zone.
+  vm_vnet_id = regex("^(/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.Network/virtualNetworks/[^/]+)/subnets/", var.vm_subnet_id)[0]
 }
 
 resource "azurerm_marketplace_agreement" "hailbytes" {
@@ -71,7 +101,7 @@ resource "azurerm_marketplace_agreement" "hailbytes" {
 data "azurerm_client_config" "current" {}
 
 resource "azurerm_key_vault" "main" {
-  name                       = substr(replace("${local.name_prefix}-kv", "-", ""), 0, 24)
+  name                       = coalesce(var.key_vault_name, substr(replace("${local.name_prefix}-kv", "-", ""), 0, 24))
   resource_group_name        = var.resource_group_name
   location                   = var.location
   tenant_id                  = data.azurerm_client_config.current.tenant_id
@@ -94,7 +124,21 @@ resource "azurerm_key_vault" "main" {
   }
 }
 
+# Validation for db_mode = "external". A lifecycle precondition on a
+# null_resource-free anchor: random_password always exists, so this fires on
+# every plan regardless of which db_mode is selected.
 resource "random_password" "db" {
+  lifecycle {
+    precondition {
+      condition     = var.db_mode != "external" || (var.external_db_host != null && var.external_db_password != null)
+      error_message = "db_mode = \"external\" requires both external_db_host and external_db_password."
+    }
+    precondition {
+      condition     = var.db_mode == "external" || (var.external_db_host == null && var.external_db_password == null)
+      error_message = "external_db_host / external_db_password are only used when db_mode = \"external\"; unset them or switch db_mode."
+    }
+  }
+
   length           = 32
   special          = true
   override_special = "!@#$%^&*()-_=+"
@@ -108,7 +152,7 @@ resource "azurerm_role_assignment" "kv_secret_writer" {
 
 resource "azurerm_key_vault_secret" "db" {
   name         = "hailbytes-db-password"
-  value        = random_password.db.result
+  value        = local.db_password
   key_vault_id = azurerm_key_vault.main.id
   # Content type satisfies CKV_AZURE_114 (identify secret semantics for
   # rotation tooling) and expiration_date satisfies CKV_AZURE_41 (every
@@ -172,6 +216,36 @@ resource "azurerm_role_assignment" "des_kv_crypto_user" {
   scope                = azurerm_key_vault.main.id
   role_definition_name = "Key Vault Crypto Service Encryption User"
   principal_id         = azurerm_disk_encryption_set.vm[0].identity[0].principal_id
+}
+
+# CMK for the managed services — Flexible Server and the backup Storage Account
+# (gap B6). Both require a *user-assigned* managed identity; neither accepts a
+# system-assigned one, which is why the disk encryption set above cannot be
+# reused. Microsoft's Flexible Server requirement is explicit: "Grant the Azure
+# Database for PostgreSQL flexible server's user assigned managed identity
+# access to the key", with the RBAC path being the Key Vault Crypto Service
+# Encryption User role.
+#
+# The same RSA-4096 key backs disks, database and backups. One CMK per
+# deployment is the normal shape — the point of CMK is that the customer can
+# revoke access to their data, and one key does that for all three at once.
+#
+# https://learn.microsoft.com/en-us/azure/postgresql/security/security-data-encryption
+resource "azurerm_user_assigned_identity" "cmk" {
+  count = var.enable_customer_managed_key ? 1 : 0
+
+  name                = "${local.name_prefix}-cmk-id"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  tags                = local.common_tags
+}
+
+resource "azurerm_role_assignment" "cmk_kv_crypto_user" {
+  count = var.enable_customer_managed_key ? 1 : 0
+
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Crypto Service Encryption User"
+  principal_id         = azurerm_user_assigned_identity.cmk[0].principal_id
 }
 
 # ----- NSG -----
@@ -379,13 +453,35 @@ resource "azurerm_linux_virtual_machine" "vm" {
       key_vault_uri      = azurerm_key_vault.main.vault_uri
       db_secret_name     = azurerm_key_vault_secret.db.name
       db_fqdn            = local.db_host
+      db_port            = local.db_port
+      db_name            = local.db_name
+      db_user            = local.db_user
+      db_sslmode         = local.use_external_db ? var.external_db_sslmode : "require"
       product            = var.product
       cluster_member_idx = count.index
       redis_host         = local.effective_redis_host
       redis_port         = local.effective_redis_port
       redis_tls          = local.provision_managed_redis ? true : var.redis_endpoint_override_tls
+      # Azure Cache for Redis requires an access key. The VM reads it from the
+      # same Key Vault as the DB password; only the secret name travels here.
+      redis_secret_name = local.provision_managed_redis ? local.redis_secret_name : null
     }
   }))
+
+  # Both attributes force replacement, and `count` means a single apply would
+  # replace BOTH app VMs at once — a full outage of a topology whose entire
+  # purpose is not having one. marketplace_image_version defaults to "latest",
+  # so an unrelated apply (a tag change, a new allowed CIDR) picks up whatever
+  # version Microsoft published since and takes the deployment down without the
+  # operator ever asking for an upgrade.
+  #
+  # Image rotation is therefore explicit and one VM at a time:
+  #   terraform apply -replace='module.sat.azurerm_linux_virtual_machine.vm[0]'
+  # which is exactly the rolling procedure in docs/AZURE_PATCHING_AND_MIGRATION.md.
+  # This mirrors ignore_changes = [ami, user_data] on the AWS side.
+  lifecycle {
+    ignore_changes = [source_image_reference, custom_data]
+  }
 
   depends_on = [
     azurerm_marketplace_agreement.hailbytes,
@@ -394,6 +490,19 @@ resource "azurerm_linux_virtual_machine" "vm" {
     azurerm_redis_cache.main,
     azurerm_role_assignment.des_kv_crypto_user,
   ]
+}
+
+# The app VMs' managed identities must be able to read the DB password (and
+# the Redis key) from Key Vault — custom_data points them at the vault, but
+# the vault is rbac_authorization_enabled so without this role assignment they
+# get 403 and the deployment cannot start. This is the Azure counterpart of
+# aws_iam_role_policy.secrets in the AWS module.
+resource "azurerm_role_assignment" "vm_kv_secrets_user" {
+  count = local.vm_count
+
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_linux_virtual_machine.vm[count.index].identity[0].principal_id
 }
 
 resource "azurerm_managed_disk" "data" {
@@ -451,6 +560,72 @@ resource "azurerm_redis_cache" "main" {
   }
 }
 
+# ----- Redis reachability: Private Link -----
+#
+# Without this the cache is provisioned but unreachable: the module sets
+# public_network_access_enabled = false, and VNet injection needs Premium.
+# Private Link works on Standard, so this is what makes the default SKU usable.
+
+resource "azurerm_private_dns_zone" "redis" {
+  count = local.create_redis_dns_zone ? 1 : 0
+
+  name                = "privatelink.redis.cache.windows.net"
+  resource_group_name = var.resource_group_name
+  tags                = local.common_tags
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "redis" {
+  count = local.create_redis_dns_zone ? 1 : 0
+
+  name                  = "${local.name_prefix}-redis-link"
+  resource_group_name   = var.resource_group_name
+  private_dns_zone_name = azurerm_private_dns_zone.redis[0].name
+  virtual_network_id    = local.vm_vnet_id
+  registration_enabled  = false
+  tags                  = local.common_tags
+}
+
+resource "azurerm_private_endpoint" "redis" {
+  count = local.provision_managed_redis ? 1 : 0
+
+  name                = "${local.name_prefix}-redis-pe"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  subnet_id           = coalesce(var.redis_private_endpoint_subnet_id, var.vm_subnet_id)
+  tags                = local.common_tags
+
+  private_service_connection {
+    name                           = "${local.name_prefix}-redis-psc"
+    private_connection_resource_id = azurerm_redis_cache.main[0].id
+    subresource_names              = ["redisCache"]
+    is_manual_connection           = false
+  }
+
+  private_dns_zone_group {
+    name                 = "redis"
+    private_dns_zone_ids = [local.effective_redis_zone_id]
+  }
+}
+
+# The access key the VMs authenticate with, alongside the DB password in the
+# same vault. Rotating the cache regenerates the key; re-running apply
+# refreshes this secret.
+resource "azurerm_key_vault_secret" "redis" {
+  count = local.provision_managed_redis ? 1 : 0
+
+  name            = local.redis_secret_name
+  value           = azurerm_redis_cache.main[0].primary_access_key
+  key_vault_id    = azurerm_key_vault.main.id
+  content_type    = "application/x-redis-access-key"
+  expiration_date = timeadd(timestamp(), "${var.db_secret_expiration_hours}h")
+
+  lifecycle {
+    ignore_changes = [expiration_date]
+  }
+
+  depends_on = [azurerm_role_assignment.kv_secret_writer]
+}
+
 # ----- Postgres backend (Flexible Server in default mode; self-managed VM in 'vm' mode) -----
 #
 # Flexible Server is the recommended production backend. Customers who must
@@ -471,7 +646,7 @@ resource "azurerm_postgresql_flexible_server" "main" {
   storage_mb = var.db_storage_mb
 
   administrator_login    = "hailbytes"
-  administrator_password = random_password.db.result
+  administrator_password = random_password.db.result # never local.db_password: external mode creates no server
 
   delegated_subnet_id = var.db_delegated_subnet_id
   private_dns_zone_id = var.private_dns_zone_id
@@ -483,11 +658,51 @@ resource "azurerm_postgresql_flexible_server" "main" {
     mode = var.db_high_availability_mode
   }
 
+  # CMK (gap B6). Two Microsoft constraints shape this block:
+  #
+  # 1. "You can configure customer managed key encryption only during creation
+  #    of a new server, not as an update to an existing" server — and it cannot
+  #    be reverted either. So flipping enable_customer_managed_key on an
+  #    existing deployment REPLACES the database. See the precondition below.
+  # 2. The key URI is deliberately versionless (versionless_id, not id). With a
+  #    versioned URI the server pins to that version and goes Inaccessible when
+  #    it expires; versionless enables automatic key version updates, which is
+  #    what Microsoft recommends and what makes Key Vault autorotation safe.
+  dynamic "identity" {
+    for_each = var.enable_customer_managed_key ? [1] : []
+    content {
+      type         = "UserAssigned"
+      identity_ids = [azurerm_user_assigned_identity.cmk[0].id]
+    }
+  }
+
+  dynamic "customer_managed_key" {
+    for_each = var.enable_customer_managed_key ? [1] : []
+    content {
+      key_vault_key_id                  = azurerm_key_vault_key.disk[0].versionless_id
+      primary_user_assigned_identity_id = azurerm_user_assigned_identity.cmk[0].id
+    }
+  }
+
   tags = local.common_tags
 
   lifecycle {
     ignore_changes = [administrator_password, zone, high_availability[0].standby_availability_zone]
+
+    # Geo-redundant backup with CMK needs a SECOND key, in a second Key Vault,
+    # in the geo-paired region, reached by a SECOND user-assigned identity that
+    # Microsoft documents cannot be the same one: "You can't use the same
+    # user-managed identity to authenticate for the primary database's Key Vault
+    # instance and the Key Vault instance that holds the encryption key for
+    # geo-redundant backup." This module provisions one vault in one region, so
+    # the combination is refused at plan time rather than failing mid-apply.
+    precondition {
+      condition     = !(var.enable_customer_managed_key && var.postgres_geo_redundant_backup_enabled)
+      error_message = "enable_customer_managed_key and postgres_geo_redundant_backup_enabled cannot both be set: Azure requires a separate key, Key Vault and user-assigned identity in the geo-paired region for the geo-backup, which this module does not provision. Pick one, or supply the geo-region key vault yourself outside the module."
+    }
   }
+
+  depends_on = [azurerm_role_assignment.cmk_kv_crypto_user]
 }
 
 resource "azurerm_postgresql_flexible_server_configuration" "require_ssl" {
@@ -495,6 +710,37 @@ resource "azurerm_postgresql_flexible_server_configuration" "require_ssl" {
   name      = "require_secure_transport"
   server_id = azurerm_postgresql_flexible_server.main[0].id
   value     = "ON"
+}
+
+# Slow-query logging, the Azure counterpart of the AWS parameter group's
+# log_min_duration_statement (gap C4). Without it the diagnostic setting added
+# for B2 ships PostgreSQLLogs to Log Analytics with nothing interesting in them:
+# Flexible Server's default is -1, which logs no statement durations at all.
+# 1000 ms matches the AWS side so a triage runbook reads the same on both
+# clouds.
+resource "azurerm_postgresql_flexible_server_configuration" "log_min_duration_statement" {
+  count     = local.use_flexible_server ? 1 : 0
+  name      = "log_min_duration_statement"
+  server_id = azurerm_postgresql_flexible_server.main[0].id
+  value     = tostring(var.db_log_min_duration_ms)
+}
+
+# Deletion protection. Azure has no `deletion_protection` argument on Flexible
+# Server the way RDS does, so a CanNotDelete management lock is the equivalent —
+# it blocks deletion of the server (and its backups) by anyone, including the
+# operator running `terraform destroy`, until the lock is removed.
+#
+# Off by default *because* it is effective: with the lock in place
+# `terraform destroy` fails partway through and leaves a half-destroyed stack,
+# which is a worse first experience for a PoC than an accidental delete. Turn it
+# on for production, and remove it deliberately before a planned teardown:
+#   terraform apply -var='enable_db_delete_lock=false' && terraform destroy
+resource "azurerm_management_lock" "db" {
+  count      = local.use_flexible_server && var.enable_db_delete_lock ? 1 : 0
+  name       = "${local.name_prefix}-pg-no-delete"
+  scope      = azurerm_postgresql_flexible_server.main[0].id
+  lock_level = "CanNotDelete"
+  notes      = "HailBytes ${var.product} database. Remove this lock deliberately before a planned teardown; see enable_db_delete_lock."
 }
 
 resource "azurerm_postgresql_flexible_server_database" "main" {
@@ -668,6 +914,16 @@ resource "azurerm_linux_virtual_machine" "db_vm" {
   EOC
   )
 
+  # source_image_reference.version is "latest" here too, and this VM holds the
+  # database on an attached data disk. An implicit replacement would detach the
+  # disk and re-run initdb's guard against a volume that already has a cluster
+  # on it — recoverable, but only after an outage nobody scheduled. Ubuntu
+  # security patching happens in-guest via unattended-upgrades, not by replacing
+  # the VM. Mirrors ignore_changes = [ami, user_data] on aws_instance.db_ec2.
+  lifecycle {
+    ignore_changes = [source_image_reference, custom_data]
+  }
+
   depends_on = [azurerm_role_assignment.des_kv_crypto_user]
 }
 
@@ -714,6 +970,28 @@ resource "azurerm_storage_account" "backup" {
       days = var.backup_blob_soft_delete_days
     }
   }
+
+  # CMK for the pre-patch backup bundles (gap B6). Unlike Flexible Server this
+  # one is switchable on an existing account — Azure Storage rewraps the account
+  # DEK with the new key and the data stays encrypted throughout — so no
+  # precondition is needed here.
+  dynamic "identity" {
+    for_each = var.enable_customer_managed_key ? [1] : []
+    content {
+      type         = "UserAssigned"
+      identity_ids = [azurerm_user_assigned_identity.cmk[0].id]
+    }
+  }
+
+  dynamic "customer_managed_key" {
+    for_each = var.enable_customer_managed_key ? [1] : []
+    content {
+      key_vault_key_id          = azurerm_key_vault_key.disk[0].versionless_id
+      user_assigned_identity_id = azurerm_user_assigned_identity.cmk[0].id
+    }
+  }
+
+  depends_on = [azurerm_role_assignment.cmk_kv_crypto_user]
 }
 
 resource "azurerm_storage_management_policy" "backup" {
@@ -790,6 +1068,32 @@ resource "azurerm_virtual_machine_run_command" "pre_patch_backup" {
       export AZURE_STORAGE_ACCOUNT='${local.backup_storage_account_name == null ? "" : local.backup_storage_account_name}'
       export AZURE_STORAGE_CONTAINER='${local.backup_container_name}'
       export AZURE_BLOB_PREFIX="hailbytes-${var.product}-$${TS}"
+
+      # The script needs libpq coordinates and a password, or it exits 1 before
+      # pg_dump runs. The password comes from the same Key Vault secret the app
+      # reads, via this VM's managed identity.
+      export HAILBYTES_SAT_DB_HOST='${local.db_host}'
+      export HAILBYTES_SAT_DB_PORT='${local.db_port}'
+      export HAILBYTES_SAT_DB_USER='${local.db_user}'
+      export HAILBYTES_SAT_DB_NAME='${local.db_name}'
+      KV_TOKEN=$(curl -sS -H Metadata:true -m 10 \
+        "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://vault.azure.net" \
+        | jq -r .access_token)
+      if [ -z "$KV_TOKEN" ] || [ "$KV_TOKEN" = "null" ]; then
+        echo "ERROR: could not obtain a managed-identity token for Key Vault." >&2
+        exit 1
+      fi
+      PGPASSWORD=$(curl -sS -m 10 -H "Authorization: Bearer $KV_TOKEN" \
+        "${azurerm_key_vault.main.vault_uri}secrets/${azurerm_key_vault_secret.db.name}?api-version=7.4" \
+        | jq -r .value)
+      if [ -z "$PGPASSWORD" ] || [ "$PGPASSWORD" = "null" ]; then
+        echo "ERROR: could not read the DB password from Key Vault. Confirm this VM's" >&2
+        echo "       identity holds the Key Vault Secrets User role on the vault." >&2
+        exit 1
+      fi
+      export PGPASSWORD
+      unset KV_TOKEN
+
       if [ -x /opt/hailbytes/bin/ha-pre-patch-backup.sh ]; then
         sudo -E /opt/hailbytes/bin/ha-pre-patch-backup.sh
       else
@@ -797,8 +1101,14 @@ resource "azurerm_virtual_machine_run_command" "pre_patch_backup" {
         echo "       Rebuild the marketplace image from main; provision.sh installs the script." >&2
         exit 1
       fi
-      az login --identity --allow-no-subscriptions >/dev/null
       DB_MODE='${var.db_mode}'
+      if [ "$DB_MODE" = "external" ]; then
+        echo "NOTE: db_mode=external — the database is customer-managed, so this"
+        echo "      Run Command takes no server-side snapshot. Ensure your own"
+        echo "      backup or PITR covers the patch window before proceeding."
+        exit 0
+      fi
+      az login --identity --allow-no-subscriptions >/dev/null
       if [ "$DB_MODE" = "flexible_server" ]; then
         az postgres flexible-server backup create \
           --resource-group '${var.resource_group_name}' \
@@ -835,8 +1145,10 @@ resource "azurerm_virtual_machine_run_command" "post_patch_verify" {
       #!/bin/bash
       set -euo pipefail
       export HAILBYTES_SCHEMA_VERSION_PATH='${var.schema_version_endpoint_path}'
+      # The verifier takes the admin host as a positional argument and exits 1
+      # on the usage check without one. Running on-box, that is localhost.
       if [ -x /opt/hailbytes/bin/ha-post-patch-verify.sh ]; then
-        sudo -E /opt/hailbytes/bin/ha-post-patch-verify.sh
+        sudo -E /opt/hailbytes/bin/ha-post-patch-verify.sh 127.0.0.1 ${var.admin_port}
       else
         echo "ERROR: /opt/hailbytes/bin/ha-post-patch-verify.sh not present on this VM image." >&2
         echo "       Rebuild the marketplace image from main; provision.sh installs the script." >&2
@@ -908,25 +1220,45 @@ resource "azurerm_application_gateway" "main" {
     ip_addresses = azurerm_network_interface.vm[*].private_ip_address
   }
 
+  # Backend hop. See the A6 note in docs/AZURE_HA_PARITY_AUDIT.md: App Gateway
+  # v2 validates the backend certificate. Per Microsoft's end-to-end TLS
+  # documentation, a self-signed backend certificate — which is exactly what the
+  # marketplace image generates on first boot — requires its root uploaded as a
+  # trusted root certificate, AND the backend settings' host must match the
+  # certificate's CN. Without both, the gateway marks the pool unhealthy and
+  # returns 502. var.appgw_backend_protocol = "Http" is the other supported
+  # path: terminate TLS at the gateway and use the private VNet hop in clear.
   backend_http_settings {
-    name                                = "https-passthrough"
+    name                                = "backend"
     cookie_based_affinity               = "Enabled"
-    port                                = 443
-    protocol                            = "Https"
+    port                                = var.appgw_backend_port
+    protocol                            = var.appgw_backend_protocol
     request_timeout                     = 60
     pick_host_name_from_backend_address = false
-    probe_name                          = "https-health"
+    host_name                           = var.appgw_backend_host_header
+    probe_name                          = "backend-health"
+
+    trusted_root_certificate_names = (
+      var.appgw_backend_protocol == "Https" && var.appgw_backend_root_cert_pem != null
+    ) ? ["backend-root"] : []
+  }
+
+  dynamic "trusted_root_certificate" {
+    for_each = var.appgw_backend_protocol == "Https" && var.appgw_backend_root_cert_pem != null ? [1] : []
+    content {
+      name = "backend-root"
+      data = var.appgw_backend_root_cert_pem
+    }
   }
 
   probe {
-    name                                      = "https-health"
-    protocol                                  = "Https"
+    name                                      = "backend-health"
+    protocol                                  = var.appgw_backend_protocol
     path                                      = "/health"
     interval                                  = 15
     timeout                                   = 5
     unhealthy_threshold                       = 3
-    pick_host_name_from_backend_http_settings = false
-    host                                      = var.appgw_backend_host_header
+    pick_host_name_from_backend_http_settings = true
   }
 
   ssl_certificate {
@@ -960,6 +1292,30 @@ resource "azurerm_application_gateway" "main" {
     precondition {
       condition     = var.appgw_tls_pfx_base64 != null && var.appgw_tls_pfx_password != null
       error_message = "appgw_tls_pfx_base64 and appgw_tls_pfx_password are required when enable_application_gateway = true."
+    }
+    # Application Gateway v2 validates the backend certificate: a self-signed
+    # or unknown-CA backend needs its root uploaded, and the backend host must
+    # match the certificate CN. Refuse to build a topology Microsoft documents
+    # as returning 502 rather than shipping it and letting the customer find
+    # out during a patch window.
+    precondition {
+      condition = var.appgw_backend_protocol != "Https" || (
+        var.appgw_backend_root_cert_pem != null && var.appgw_backend_host_header != null
+      )
+      error_message = <<-EOM
+        appgw_backend_protocol = "Https" needs BOTH appgw_backend_root_cert_pem
+        and appgw_backend_host_header. Application Gateway v2 validates the
+        backend certificate against an uploaded trusted root and checks that the
+        backend host matches the certificate's CN; without both it marks the
+        pool unhealthy and serves 502.
+
+        The marketplace image generates a self-signed certificate on first boot
+        with CN "hailbytes-sat-admin", so either:
+          * set appgw_backend_root_cert_pem to that certificate (it is its own
+            root) and appgw_backend_host_header = "hailbytes-sat-admin"; or
+          * set appgw_backend_protocol = "Http" to terminate TLS at the gateway
+            and use the private VNet hop in clear.
+      EOM
     }
   }
 }
@@ -1033,4 +1389,106 @@ resource "azurerm_monitor_metric_alert" "appgw_5xx" {
   }
 
   tags = local.common_tags
+}
+
+# ----- Observability: diagnostic settings (gap B2) -----
+#
+# The AWS module ships optional ALB access logs to a versioned, lifecycled S3
+# bucket; SECURITY-DEFAULTS.md claimed the Azure equivalent existed. It did
+# not — there was no azurerm_monitor_diagnostic_setting anywhere in the Azure
+# modules, and no destination for one. This sends the load balancer, the
+# database and (when enabled) the Application Gateway to a Log Analytics
+# workspace, which is where an Azure security reviewer expects to find them.
+
+resource "azurerm_log_analytics_workspace" "main" {
+  count = var.enable_diagnostics && var.log_analytics_workspace_id == null ? 1 : 0
+
+  name                = "${local.name_prefix}-law"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  sku                 = "PerGB2018"
+  retention_in_days   = var.diagnostics_retention_days
+  tags                = local.common_tags
+}
+
+resource "azurerm_monitor_diagnostic_setting" "lb" {
+  count = var.enable_diagnostics ? 1 : 0
+
+  name                       = "${local.name_prefix}-lb-diag"
+  target_resource_id         = azurerm_lb.main.id
+  log_analytics_workspace_id = local.effective_workspace_id
+
+  enabled_metric {
+    category = "AllMetrics"
+  }
+}
+
+resource "azurerm_monitor_diagnostic_setting" "postgres" {
+  count = var.enable_diagnostics && local.use_flexible_server ? 1 : 0
+
+  name                       = "${local.name_prefix}-pg-diag"
+  target_resource_id         = azurerm_postgresql_flexible_server.main[0].id
+  log_analytics_workspace_id = local.effective_workspace_id
+
+  enabled_log {
+    category = "PostgreSQLLogs"
+  }
+
+  enabled_metric {
+    category = "AllMetrics"
+  }
+}
+
+resource "azurerm_monitor_diagnostic_setting" "redis" {
+  count = var.enable_diagnostics && local.provision_managed_redis ? 1 : 0
+
+  name                       = "${local.name_prefix}-redis-diag"
+  target_resource_id         = azurerm_redis_cache.main[0].id
+  log_analytics_workspace_id = local.effective_workspace_id
+
+  enabled_metric {
+    category = "AllMetrics"
+  }
+}
+
+resource "azurerm_monitor_diagnostic_setting" "appgw" {
+  count = var.enable_diagnostics && local.enable_application_gateway ? 1 : 0
+
+  name                       = "${local.name_prefix}-appgw-diag"
+  target_resource_id         = azurerm_application_gateway.main[0].id
+  log_analytics_workspace_id = local.effective_workspace_id
+
+  # The closest Azure analogue of ALB access logs. Only the App Gateway has
+  # request-level logs; a Standard Load Balancer is L4 and has none, which is
+  # worth knowing before promising "LB access logs" to a reviewer.
+  enabled_log {
+    category = "ApplicationGatewayAccessLog"
+  }
+
+  enabled_log {
+    category = "ApplicationGatewayFirewallLog"
+  }
+
+  enabled_metric {
+    category = "AllMetrics"
+  }
+}
+
+# ----- Break-glass management access (gap B3) -----
+#
+# SECURITY-DEFAULTS.md promised "Modules wire these up when
+# enable_management_access = true" and named Azure Bastion. Nothing did. The
+# AAD-login extension is the lighter-weight half of that promise: it gives
+# Entra-authenticated, RBAC-gated SSH without a public IP and without the
+# ~$140/month a Bastion host costs, and it pairs with `az ssh vm`.
+resource "azurerm_virtual_machine_extension" "aad_ssh_login" {
+  count = var.enable_management_access ? local.vm_count : 0
+
+  name                       = "AADSSHLoginForLinux"
+  virtual_machine_id         = azurerm_linux_virtual_machine.vm[count.index].id
+  publisher                  = "Microsoft.Azure.ActiveDirectory"
+  type                       = "AADSSHLoginForLinux"
+  type_handler_version       = "1.0"
+  auto_upgrade_minor_version = true
+  tags                       = local.common_tags
 }

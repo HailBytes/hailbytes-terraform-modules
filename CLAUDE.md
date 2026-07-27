@@ -58,8 +58,12 @@ GovCloud (AWS) and Azure Government are out of scope for v1.
 
 - [ARCHITECTURE.md](ARCHITECTURE.md) — per-tier diagrams, shared responsibility model
 - [BILLING.md](BILLING.md) — marketplace billing model, why no containers
-- [COST_SHAPES.md](COST_SHAPES.md) — three deployment shapes side-by-side with pricing
+- [COST_SHAPES.md](COST_SHAPES.md) — three deployment shapes side-by-side with pricing (AWS-first)
+- [AZURE_COST_SHAPES.md](AZURE_COST_SHAPES.md) — Azure/North Europe pricing in EUR + USD, verified against the Azure Retail Prices API
 - [SECURITY-DEFAULTS.md](SECURITY-DEFAULTS.md) — security controls baked into all modules
-- [docs/PATCHING_AND_MIGRATION.md](docs/PATCHING_AND_MIGRATION.md) — pre-patch backups, rolling-replace, auto-rollback
+- [docs/PATCHING_AND_MIGRATION.md](docs/PATCHING_AND_MIGRATION.md) — pre-patch backups, rolling-replace, auto-rollback (AWS)
+- [docs/AZURE_PATCHING_AND_MIGRATION.md](docs/AZURE_PATCHING_AND_MIGRATION.md) — the Azure procedure, incl. Postgres advisory-lock migration serialisation
+- [docs/AZURE_HA_PARITY_AUDIT.md](docs/AZURE_HA_PARITY_AUDIT.md) — Azure-vs-AWS HA gap table with effort estimates
+- [docs/MARKETPLACE_IMAGE_ACCESS_AUDIT.md](docs/MARKETPLACE_IMAGE_ACCESS_AUDIT.md) — no-retained-access claims, verified per claim
 - [CONTRIBUTING.md](CONTRIBUTING.md) — PR requirements and contribution rules
 - [CHANGELOG.md](CHANGELOG.md) — release history

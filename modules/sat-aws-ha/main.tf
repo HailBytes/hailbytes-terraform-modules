@@ -62,5 +62,14 @@ module "this" {
   rds_performance_insights_enabled        = var.rds_performance_insights_enabled
   rds_performance_insights_retention_days = var.rds_performance_insights_retention_days
 
-  tags = var.tags
+  tags       = var.tags
+  admin_port = var.admin_port
+
+  external_db_host     = var.external_db_host
+  external_db_port     = var.external_db_port
+  external_db_name     = var.external_db_name
+  external_db_username = var.external_db_username
+  external_db_password = var.external_db_password
+  external_db_sslmode  = var.external_db_sslmode
+
 }

@@ -14,12 +14,12 @@ flowchart TB
     LB --> VM2[(VM #2<br/>Zone 2<br/>Marketplace image)]
     VM1 --> KV[(Key Vault<br/>DB password)]
     VM2 --> KV
-    VM1 -->|TLS| RC[(Azure Cache for Redis<br/>Standard or Premium<br/>sessions + worker locks)]
-    VM2 -->|TLS| RC
+    VM1 -->|TLS, Private Link| RC[(Azure Cache for Redis<br/>Standard or Premium<br/>sessions + worker locks)]
+    VM2 -->|TLS, Private Link| RC
     VM1 -->|TLS, vnet-integrated| PG[(Postgres Flexible Server<br/>ZoneRedundant HA primary)]
     VM2 -->|TLS, vnet-integrated| PG
     PG -.replication.-> PGS[(Standby in second zone)]
-    RC -.failover.-> RCS[(Replica in second zone)]
+    RC -.failover.-> RCS[(Replica — same zone unless<br/>redis_sku_name = Premium)]
 ```
 
 ## TLS termination
@@ -46,7 +46,7 @@ meter and tier sizing are aligned.
 | 2× Premium SSD OS | 64 GB | $20 |
 | 2× Premium SSD data | 256 GB | $70 |
 | Standard Load Balancer + 1 rule | | $25 |
-| Azure Cache for Redis (`Standard C1`, zone-redundant primary/replica) | shared session store | $55 |
+| Azure Cache for Redis (`Standard C1`, primary/replica — **not** zone-redundant) | shared session store | $101 |
 | Postgres Flexible Server `GP_Standard_D2ds_v5` Zone-Redundant | 128 GB | $260 |
 | Postgres backups | retained 14d | $15 |
 | Key Vault | secrets ops | $1 |
@@ -62,6 +62,33 @@ meter and tier sizing are aligned.
   - A private DNS zone `privatelink.postgres.database.azure.com` linked to the vnet (`private_dns_zone_id`)
 - Marketplace subscription accepted (handled by module unless you set `accept_marketplace_terms = false`)
 - Subscription-level permissions to provision Azure Cache for Redis (Standard tier or higher — Basic is single-node and not HA-safe)
+
+> [!IMPORTANT]
+> **Redis zone redundancy needs the Premium tier.** The default `Standard C1`
+> gives a primary/replica pair, but Azure only offers *zone redundancy* for
+> Azure Cache for Redis on Premium and above, and this module only sets `zones`
+> when `redis_sku_name = "Premium"`. If a customer's requirement is "every tier
+> is zone-redundant", move them to Premium P1 (+$304/month over Standard C1) —
+> don't describe the default as zone-redundant, because it isn't.
+
+> [!WARNING]
+> **Azure Cache for Redis is being retired.** Microsoft has published retirement
+> dates for every tier: Basic/Standard/**Premium** on **2028-09-30** (instances
+> disabled from 2028-10-01), Enterprise/Enterprise Flash on **2027-03-31**. The
+> replacement is [Azure Managed
+> Redis](https://learn.microsoft.com/en-us/azure/redis/overview), a first-party
+> service with no Marketplace component.
+>
+> Read this alongside the note above before quoting the Premium upgrade: Azure
+> Managed Redis is **zone-redundant by default**, so it delivers zone redundancy
+> without the Premium step-up, and it authenticates with Entra ID rather than
+> access keys. For any contract term running past 2028, migration is the
+> destination, not Premium. This module has not moved yet — the change touches
+> the resource type, the clustering contract, and the credential model the
+> marketplace image consumes. See
+> [`AZURE_HA_PARITY_AUDIT.md`](../../../docs/AZURE_HA_PARITY_AUDIT.md#new-finding--azure-cache-for-redis-is-being-retired).
+> Source: [retirement
+> FAQ](https://learn.microsoft.com/en-us/azure/azure-cache-for-redis/retirement-faq).
 
 ## Usage
 

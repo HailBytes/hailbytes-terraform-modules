@@ -32,3 +32,18 @@ output "private_dns_zone_name" {
   description = "Name of the private DNS zone for Postgres (e.g. '<prefix>.postgres.database.azure.com'). Pass to var.private_dns_zone_name on ha-hot-hot / unlimited-scale."
   value       = azurerm_private_dns_zone.postgres.name
 }
+
+output "nat_gateway_id" {
+  description = "Resource ID of the NAT Gateway providing outbound egress for the workload subnet, or empty when enable_nat_gateway = false."
+  value       = var.enable_nat_gateway ? azurerm_nat_gateway.main[0].id : ""
+}
+
+output "nat_gateway_public_ip" {
+  description = "Public IP the workload subnet egresses from. Give this to customers who need to allow-list HailBytes traffic (SMTP relays, integration endpoints). Empty when enable_nat_gateway = false."
+  value       = var.enable_nat_gateway ? azurerm_public_ip.nat[0].ip_address : ""
+}
+
+output "flow_log_storage_account_name" {
+  description = "Storage Account receiving VNet flow logs, or empty when enable_flow_logs = false."
+  value       = var.enable_flow_logs ? azurerm_storage_account.flow_logs[0].name : ""
+}

@@ -92,3 +92,22 @@ run "backup_storage_not_created_when_disabled" {
     error_message = "create_backup_storage_account = false must create zero backup Storage Accounts."
   }
 }
+
+# A zone-spread VMSS needs a zone-redundant frontend. A Standard public IP is
+# only zone-redundant when it is created with all the region's zones; a zonal or
+# no-zone public IP reintroduces the single-zone dependency the VMSS spread was
+# meant to remove.
+# https://learn.microsoft.com/en-us/azure/reliability/reliability-load-balancer
+run "frontend_is_zone_redundant_like_the_scale_set" {
+  command = plan
+
+  assert {
+    condition     = length(azurerm_public_ip.lb.zones) == 3
+    error_message = "The load-balancer public IP must be zone-redundant across all three zones, or the zone-spread VMSS still has a single-zone frontend."
+  }
+
+  assert {
+    condition     = length(azurerm_linux_virtual_machine_scale_set.main.zones) == 3
+    error_message = "The scale set must spread across all three zones."
+  }
+}
