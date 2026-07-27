@@ -918,6 +918,32 @@ resource "azurerm_virtual_machine_run_command" "pre_patch_backup" {
       export AZURE_STORAGE_ACCOUNT='${local.backup_storage_account_name == null ? "" : local.backup_storage_account_name}'
       export AZURE_STORAGE_CONTAINER='${local.backup_container_name}'
       export AZURE_BLOB_PREFIX="hailbytes-${var.product}-$${TS}"
+
+      # The script needs libpq coordinates and a password, or it exits 1 before
+      # pg_dump runs. The password comes from the same Key Vault secret the app
+      # reads, via this VM's managed identity.
+      export HAILBYTES_SAT_DB_HOST='${local.db_host}'
+      export HAILBYTES_SAT_DB_PORT='${local.db_port}'
+      export HAILBYTES_SAT_DB_USER='${local.db_user}'
+      export HAILBYTES_SAT_DB_NAME='${local.db_name}'
+      KV_TOKEN=$(curl -sS -H Metadata:true -m 10 \
+        "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://vault.azure.net" \
+        | jq -r .access_token)
+      if [ -z "$KV_TOKEN" ] || [ "$KV_TOKEN" = "null" ]; then
+        echo "ERROR: could not obtain a managed-identity token for Key Vault." >&2
+        exit 1
+      fi
+      PGPASSWORD=$(curl -sS -m 10 -H "Authorization: Bearer $KV_TOKEN" \
+        "${azurerm_key_vault.main.vault_uri}secrets/${azurerm_key_vault_secret.db.name}?api-version=7.4" \
+        | jq -r .value)
+      if [ -z "$PGPASSWORD" ] || [ "$PGPASSWORD" = "null" ]; then
+        echo "ERROR: could not read the DB password from Key Vault. Confirm this VM's" >&2
+        echo "       identity holds the Key Vault Secrets User role on the vault." >&2
+        exit 1
+      fi
+      export PGPASSWORD
+      unset KV_TOKEN
+
       if [ -x /opt/hailbytes/bin/ha-pre-patch-backup.sh ]; then
         sudo -E /opt/hailbytes/bin/ha-pre-patch-backup.sh
       else
