@@ -47,6 +47,22 @@ It also tells you the things that look like savings and aren't: `SameZone` HA
 costs the same as `ZoneRedundant`, and Flexible Server storage can grow but
 never shrink, so day-one over-provisioning is permanent.
 
+### It warns you about two things that aren't costs
+
+**The Key Vault 30-day trap.** Azure Key Vault names are globally unique, and
+the vault is created with purge protection and a 30-day soft-delete window that
+cannot be waived (a disk encryption set requires purge protection). Destroy a
+deployment and re-create it under the same name inside 30 days and the apply
+fails, with no force-purge available. The wizard asks whether this is a
+throwaway PoC and generates a unique vault name if so — which is free, and the
+alternative is waiting out a month.
+
+**Azure Cache for Redis is being retired.** Basic/Standard/Premium on
+2028-09-30, Enterprise on 2027-03-31. The wizard says so before it provisions
+one, and specifically steers away from buying the Premium tier for zone
+redundancy: the successor, Azure Managed Redis, is zone-redundant by default and
+costs about a quarter as much.
+
 ### Database options
 
 The wizard asks how you want the database provisioned, because this is the
