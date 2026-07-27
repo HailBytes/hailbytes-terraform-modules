@@ -34,6 +34,7 @@ Status column: ✅ works today · ⚠️ works with caveats · ⛔ blocked.
 | **Post-patch schema-version verification.** | `module.<name>.schema_version_endpoint` → `https://<lb-or-appgw>/api/instance/schema-version`, and the image ships the five-probe verifier at `/opt/hailbytes/bin/ha-post-patch-verify.sh`. The Run Command now invokes it as `... 127.0.0.1 <admin_port>`, which satisfies its positional-argument contract. | ✅ |
 | **Auto-rollback on a bad upgrade.** | HA tier: Azure Monitor metric alerts on LB `VipAvailability` and (when App Gateway is enabled) backend 5xx count, wired to an Action Group, for **operator-initiated** rollback. There is no automatic rollback on this tier — the autoscale tier's VMSS `automatic_instance_repair` is the closest Azure gets, and this tier has no VMSS. | ⚠️ see [Step 6](#step-6--rollback) |
 | **WAF supported but not bundled.** | `var.waf_policy_id` attaches a customer-supplied WAF policy to the Application Gateway, which the module provisions when `enable_application_gateway = true`. Azure WAF cannot attach to a Standard Load Balancer — it is L4 only — so WAF on Azure is strictly an App Gateway feature. | ✅ |
+| **Postgres HA is not disturbed by the network module.** | Microsoft documents that routing the **delegated** subnet through a virtual appliance (`0.0.0.0/0 → NVA`) is unsupported and can break HA failover, and that the auto-configured `Microsoft.Storage` service endpoint on that subnet must not be removed. The NAT Gateway added for outbound egress associates only the *workload* subnet, never the delegated one. Also: do not place a resource lock on the Postgres private DNS zone while HA is enabled — it can block the record updates a failover needs. | ✅ |
 
 ---
 
@@ -211,13 +212,17 @@ az network application-gateway show-backend-health \
   --resource-group '<rg>' --name '<prefix>-appgw' -o table
 ```
 
-> **App Gateway + the marketplace image's self-signed certificate.** The module
-> configures `backend_http_settings` with `protocol = "Https"` to the VMs, and
-> the VMs present a self-signed certificate generated on first boot. App Gateway
-> v2 validates backend certificates; without a matching entry in
-> `trusted_root_certificate_names` the probe fails and the gateway returns 502.
-> Verify backend health on a non-production stack before relying on this path
-> during a patch window.
+> **App Gateway backend hop.** The backend hop now defaults to `Http`: TLS
+> terminates at the gateway and the hop to the VMs stays inside the customer's
+> vnet. That is deliberate — App Gateway v2 validates the backend certificate
+> against an uploaded trusted root and matches the backend host against the
+> certificate CN, and the marketplace image presents a self-signed certificate
+> (CN `hailbytes-sat-admin`), so an `Https` hop without both would mark the pool
+> unhealthy and serve 502. For end-to-end TLS set
+> `appgw_backend_protocol = "Https"` **with** `appgw_backend_root_cert_pem` (the
+> VM's `/opt/hailbytes-sat/hailbytes-sat-admin.crt`, which is its own root) and
+> `appgw_backend_host_header = "hailbytes-sat-admin"`. A precondition refuses the
+> combination that would 502.
 
 ### Step 4 — Schema migrations under the advisory lock
 

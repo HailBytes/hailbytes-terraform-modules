@@ -375,3 +375,21 @@ variable "external_db_sslmode" {
   type        = string
   default     = "require"
 }
+
+variable "appgw_backend_protocol" {
+  description = "Protocol for the App Gateway -> VM hop. \"Http\" terminates TLS at the gateway. \"Https\" gives end-to-end encryption but requires appgw_backend_root_cert_pem and appgw_backend_host_header — App Gateway v2 validates the backend certificate."
+  type        = string
+  default     = "Http"
+}
+
+variable "appgw_backend_port" {
+  description = "Port App Gateway connects to on the VMs. 443 pairs with Https; 80 pairs with Http."
+  type        = number
+  default     = 80
+}
+
+variable "appgw_backend_root_cert_pem" {
+  description = "PEM-encoded root certificate of the backend server certificate, uploaded as an App Gateway trusted root. Required when appgw_backend_protocol = \"Https\"."
+  type        = string
+  default     = null
+}
