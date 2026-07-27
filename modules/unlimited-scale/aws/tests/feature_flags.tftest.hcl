@@ -88,3 +88,15 @@ run "redis_disabled_creates_nothing" {
     error_message = "redis_mode must be 'disabled' when managed Redis is off and no override is supplied."
   }
 }
+
+# Same IMDSv2 requirement as the other tiers, but on the launch template — the
+# ASG path is easy to miss because the setting lives one level deeper.
+# https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-options.html
+run "imdsv2_is_required_on_the_launch_template" {
+  command = plan
+
+  assert {
+    condition     = one([for m in aws_launch_template.main.metadata_options : m.http_tokens]) == "required"
+    error_message = "IMDSv2 must be required on the launch template, or every scaled-out instance exposes IMDSv1."
+  }
+}

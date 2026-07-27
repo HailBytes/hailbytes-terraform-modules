@@ -164,3 +164,18 @@ run "external_db_requires_host_and_password" {
 
   expect_failures = [random_password.db]
 }
+
+# TLS to RDS is enforced with the rds.force_ssl parameter, not with a client-side
+# connection string: with force_ssl = 0 a misconfigured client silently
+# downgrades to plaintext inside the VPC.
+# https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/PostgreSQL.Concepts.General.SSL.html
+run "database_tls_is_enforced_server_side" {
+  command = plan
+
+  assert {
+    condition = one([
+      for p in aws_db_parameter_group.main[0].parameter : p.value if p.name == "rds.force_ssl"
+    ]) == "1"
+    error_message = "rds.force_ssl must be 1; without it a client can silently connect in plaintext."
+  }
+}

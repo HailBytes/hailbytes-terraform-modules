@@ -63,3 +63,21 @@ run "snapshots_disabled_creates_no_dlm" {
     error_message = "enable_snapshots = false must create zero DLM lifecycle policies."
   }
 }
+
+# IMDSv2 is not a preference, it is a documented requirement for blocking the
+# SSRF class of credential theft: the instance must be launched with
+# http_tokens = "required" so IMDSv1's unauthenticated GET is refused.
+# https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-options.html
+run "imdsv2_is_required" {
+  command = plan
+
+  assert {
+    condition     = one([for m in aws_instance.vm.metadata_options : m.http_tokens]) == "required"
+    error_message = "IMDSv2 must be required; http_tokens = \"optional\" leaves IMDSv1 open to SSRF credential theft."
+  }
+
+  assert {
+    condition     = one([for m in aws_instance.vm.metadata_options : m.http_put_response_hop_limit]) == 1
+    error_message = "A hop limit above 1 lets containers on the instance reach IMDS."
+  }
+}

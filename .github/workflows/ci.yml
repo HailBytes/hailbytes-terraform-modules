@@ -16,12 +16,14 @@ on:
       - 'modules/**'
       - 'quickstart/**'
       - '.github/workflows/ci.yml'
+      - '.github/scripts/**'
   push:
     branches: [main]
     paths:
       - 'modules/**'
       - 'quickstart/**'
       - '.github/workflows/ci.yml'
+      - '.github/scripts/**'
 
 permissions:
   contents: read
@@ -157,6 +159,28 @@ jobs:
       - name: terraform test
         working-directory: modules/${{ matrix.module }}
         run: terraform test -no-color
+
+  # ---------------------------------------------------------------------
+  # mock-provider fidelity.  Every defect the July 2026 Azure HA audit
+  # turned up was semantic, not syntactic, and terraform test only catches
+  # a semantic defect if a test asserts against it.  This guards the two
+  # properties that make the mocked suites worth running: mock resource IDs
+  # must be well-formed for their cloud (the provider parses IDs it is
+  # handed, and a short random token fails in a way that reads as a harness
+  # bug), and each tier module's tests must cite at least one provider or
+  # service doc so the constraints they encode stay traceable to a source
+  # rather than becoming folklore.
+  # ---------------------------------------------------------------------
+  mock-fidelity:
+    name: terraform test mock fidelity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Mock providers use realistic IDs and cite their sources
+        run: python3 .github/scripts/mock_fidelity_check.py
 
   # ---------------------------------------------------------------------
   # quickstart/deploy.sh is the guided Cloud Shell installer — the first
