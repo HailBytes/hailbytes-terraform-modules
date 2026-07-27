@@ -1070,25 +1070,45 @@ resource "azurerm_application_gateway" "main" {
     ip_addresses = azurerm_network_interface.vm[*].private_ip_address
   }
 
+  # Backend hop. See the A6 note in docs/AZURE_HA_PARITY_AUDIT.md: App Gateway
+  # v2 validates the backend certificate. Per Microsoft's end-to-end TLS
+  # documentation, a self-signed backend certificate — which is exactly what the
+  # marketplace image generates on first boot — requires its root uploaded as a
+  # trusted root certificate, AND the backend settings' host must match the
+  # certificate's CN. Without both, the gateway marks the pool unhealthy and
+  # returns 502. var.appgw_backend_protocol = "Http" is the other supported
+  # path: terminate TLS at the gateway and use the private VNet hop in clear.
   backend_http_settings {
-    name                                = "https-passthrough"
+    name                                = "backend"
     cookie_based_affinity               = "Enabled"
-    port                                = 443
-    protocol                            = "Https"
+    port                                = var.appgw_backend_port
+    protocol                            = var.appgw_backend_protocol
     request_timeout                     = 60
     pick_host_name_from_backend_address = false
-    probe_name                          = "https-health"
+    host_name                           = var.appgw_backend_host_header
+    probe_name                          = "backend-health"
+
+    trusted_root_certificate_names = (
+      var.appgw_backend_protocol == "Https" && var.appgw_backend_root_cert_pem != null
+    ) ? ["backend-root"] : []
+  }
+
+  dynamic "trusted_root_certificate" {
+    for_each = var.appgw_backend_protocol == "Https" && var.appgw_backend_root_cert_pem != null ? [1] : []
+    content {
+      name = "backend-root"
+      data = var.appgw_backend_root_cert_pem
+    }
   }
 
   probe {
-    name                                      = "https-health"
-    protocol                                  = "Https"
+    name                                      = "backend-health"
+    protocol                                  = var.appgw_backend_protocol
     path                                      = "/health"
     interval                                  = 15
     timeout                                   = 5
     unhealthy_threshold                       = 3
-    pick_host_name_from_backend_http_settings = false
-    host                                      = var.appgw_backend_host_header
+    pick_host_name_from_backend_http_settings = true
   }
 
   ssl_certificate {
@@ -1122,6 +1142,30 @@ resource "azurerm_application_gateway" "main" {
     precondition {
       condition     = var.appgw_tls_pfx_base64 != null && var.appgw_tls_pfx_password != null
       error_message = "appgw_tls_pfx_base64 and appgw_tls_pfx_password are required when enable_application_gateway = true."
+    }
+    # Application Gateway v2 validates the backend certificate: a self-signed
+    # or unknown-CA backend needs its root uploaded, and the backend host must
+    # match the certificate CN. Refuse to build a topology Microsoft documents
+    # as returning 502 rather than shipping it and letting the customer find
+    # out during a patch window.
+    precondition {
+      condition = var.appgw_backend_protocol != "Https" || (
+        var.appgw_backend_root_cert_pem != null && var.appgw_backend_host_header != null
+      )
+      error_message = <<-EOM
+        appgw_backend_protocol = "Https" needs BOTH appgw_backend_root_cert_pem
+        and appgw_backend_host_header. Application Gateway v2 validates the
+        backend certificate against an uploaded trusted root and checks that the
+        backend host matches the certificate's CN; without both it marks the
+        pool unhealthy and serves 502.
+
+        The marketplace image generates a self-signed certificate on first boot
+        with CN "hailbytes-sat-admin", so either:
+          * set appgw_backend_root_cert_pem to that certificate (it is its own
+            root) and appgw_backend_host_header = "hailbytes-sat-admin"; or
+          * set appgw_backend_protocol = "Http" to terminate TLS at the gateway
+            and use the private VNet hop in clear.
+      EOM
     }
   }
 }

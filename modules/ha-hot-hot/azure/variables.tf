@@ -311,7 +311,29 @@ variable "appgw_tls_pfx_password" {
 }
 
 variable "appgw_backend_host_header" {
-  description = "Optional Host header App Gateway sends to the SAT backend pool. Leave null to use the backend's IP."
+  description = "Host header App Gateway sends to the backend pool, and the name it validates the backend certificate's CN against. **Required when appgw_backend_protocol = \"Https\"** — App Gateway v2 checks that this matches the CN the backend presents. The marketplace image's first-boot self-signed certificate uses CN \"hailbytes-sat-admin\", so that is the value to set unless you have replaced the certificate on the VMs."
+  type        = string
+  default     = null
+}
+
+variable "appgw_backend_protocol" {
+  description = "Protocol for the App Gateway -> VM hop. \"Http\" terminates TLS at the gateway and uses the private VNet hop in clear — simplest, and the hop never leaves the customer's vnet. \"Https\" gives end-to-end encryption but requires appgw_backend_root_cert_pem and appgw_backend_host_header, because App Gateway v2 validates the backend certificate against an uploaded trusted root and matches its CN."
+  type        = string
+  default     = "Http"
+  validation {
+    condition     = contains(["Http", "Https"], var.appgw_backend_protocol)
+    error_message = "appgw_backend_protocol must be one of: Http, Https."
+  }
+}
+
+variable "appgw_backend_port" {
+  description = "Port App Gateway connects to on the VMs. 443 pairs with appgw_backend_protocol = \"Https\"; 80 pairs with \"Http\"."
+  type        = number
+  default     = 80
+}
+
+variable "appgw_backend_root_cert_pem" {
+  description = "PEM-encoded root certificate of the backend server certificate, uploaded to App Gateway as a trusted root. Required when appgw_backend_protocol = \"Https\": Microsoft's end-to-end TLS documentation states that a self-signed or unknown-CA backend certificate will only be trusted if its root is in the backend settings' trusted-root list, otherwise the gateway marks the pool unhealthy and serves 502. For the marketplace image's self-signed certificate, the certificate is its own root — read it off a VM at /opt/hailbytes-sat/hailbytes-sat-admin.crt."
   type        = string
   default     = null
 }

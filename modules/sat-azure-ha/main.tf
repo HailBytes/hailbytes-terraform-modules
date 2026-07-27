@@ -78,4 +78,8 @@ module "this" {
   external_db_password = var.external_db_password
   external_db_sslmode  = var.external_db_sslmode
 
+  appgw_backend_protocol      = var.appgw_backend_protocol
+  appgw_backend_port          = var.appgw_backend_port
+  appgw_backend_root_cert_pem = var.appgw_backend_root_cert_pem
+
 }
