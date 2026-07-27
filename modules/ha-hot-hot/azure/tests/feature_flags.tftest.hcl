@@ -167,3 +167,56 @@ run "no_duplicate_vm_nsg_when_subnets_match" {
     error_message = "vm_nsg_id must be empty when vm_subnet_id == lb_subnet_id."
   }
 }
+
+# db_mode = "external": the customer already runs Postgres, so we provision
+# none. Removes the largest single Azure line item from their bill and hands
+# them responsibility for availability and backups.
+run "external_db_provisions_no_database" {
+  command = plan
+
+  variables {
+    db_mode              = "external"
+    external_db_host     = "pg.internal.example.org"
+    external_db_password = "not-a-real-password"
+  }
+
+  assert {
+    condition     = length(azurerm_postgresql_flexible_server.main) == 0
+    error_message = "db_mode = external must create zero Flexible Servers."
+  }
+
+  assert {
+    condition     = length(azurerm_linux_virtual_machine.db_vm) == 0
+    error_message = "db_mode = external must create zero database VMs."
+  }
+
+  assert {
+    condition     = output.postgres_fqdn == "pg.internal.example.org"
+    error_message = "postgres_fqdn must report the customer-supplied host in external mode."
+  }
+
+  assert {
+    condition     = output.db_is_customer_managed == true
+    error_message = "db_is_customer_managed must be true in external mode — it gates the backup guarantees we advertise."
+  }
+}
+
+run "external_db_still_provisions_the_app_tier" {
+  command = plan
+
+  variables {
+    db_mode              = "external"
+    external_db_host     = "pg.internal.example.org"
+    external_db_password = "not-a-real-password"
+  }
+
+  assert {
+    condition     = length(azurerm_linux_virtual_machine.vm) == 2
+    error_message = "external mode changes only the database; the two app VMs remain."
+  }
+
+  assert {
+    condition     = length(azurerm_redis_cache.main) == 1
+    error_message = "external mode must not disturb the shared session store."
+  }
+}

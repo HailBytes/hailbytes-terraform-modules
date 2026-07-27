@@ -29,13 +29,18 @@ output "vm_private_ips" {
 }
 
 output "postgres_fqdn" {
-  description = "DB endpoint. Flexible Server FQDN in 'flexible_server' mode; private-IP:5432 of the self-managed Postgres VM in 'vm' mode."
+  description = "DB endpoint. Flexible Server FQDN in 'flexible_server' mode; the self-managed Postgres VM's private IP in 'vm' mode; the customer-supplied host in 'external' mode."
   value       = local.db_host
 }
 
 output "db_mode" {
-  description = "Active DB mode: 'flexible_server' or 'vm'."
+  description = "Active DB mode: 'flexible_server', 'vm', or 'external'."
   value       = var.db_mode
+}
+
+output "db_is_customer_managed" {
+  description = "True when db_mode = 'external'. When true, HailBytes provisions no database: availability, backups, patching and point-in-time restore are the customer's responsibility, and the pre-patch Run Command takes no server-side snapshot."
+  value       = local.use_external_db
 }
 
 output "key_vault_uri" {

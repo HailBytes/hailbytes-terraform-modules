@@ -71,4 +71,11 @@ module "this" {
   redis_private_endpoint_subnet_id = var.redis_private_endpoint_subnet_id
   admin_port                       = var.admin_port
 
+  external_db_host     = var.external_db_host
+  external_db_port     = var.external_db_port
+  external_db_name     = var.external_db_name
+  external_db_username = var.external_db_username
+  external_db_password = var.external_db_password
+  external_db_sslmode  = var.external_db_sslmode
+
 }

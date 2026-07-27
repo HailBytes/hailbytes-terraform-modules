@@ -512,23 +512,33 @@ Same logic for `db_backup_retention_days` (module default 14, Azure minimum 7):
 the free backup allowance equals 100% of provisioned storage, so retention only
 costs money above that — but where it does, halving retention halves the charge.
 
-### 5. Offer bring-your-own Postgres — the product gap worth closing
+### 5. Bring-your-own Postgres — now available
 
-The HA module lets a customer supply their own Redis
-(`redis_endpoint_override` + `enable_managed_redis = false`) but **has no
-equivalent for Postgres**: `db_mode` accepts only `flexible_server` or `vm`.
+**Shipped.** `db_mode = "external"` on the HA tier (both clouds) connects the
+stack to a Postgres server the customer already operates. The module provisions
+no database at all; the customer supplies `external_db_host` and
+`external_db_password`, TLS is enforced (`external_db_sslmode`, minimum
+`require`), and the credentials land in the same Key Vault secret the other
+modes use so the marketplace image bootstraps identically.
+
+This mirrors the Redis escape hatch (`redis_endpoint_override` +
+`enable_managed_redis = false`), which the HA module has always had.
 
 For a customer who already operates Postgres at scale — which describes most
-consortium and national-scale education buyers — an `external` mode would
-remove the entire database line from their Azure bill: **$3,469–38,964/yr
-depending on SKU**, the largest single saving available, and again revenue-
-neutral for HailBytes. The asymmetry with Redis is hard to justify to a
-customer who asks.
+consortium and national-scale education buyers — this removes the entire
+database line from their Azure bill: **$3,469–38,964/yr depending on SKU**, the
+largest single saving available, and revenue-neutral for HailBytes because the
+plan price is fixed at the licensed-VM vCore count.
 
-Recommended: add `db_mode = "external"` with `db_host` / `db_port` /
-`db_secret_name` inputs, validated to require TLS. Effort ~2 engineer-days;
-tracked as gap **B8** in
-[`docs/AZURE_HA_PARITY_AUDIT.md`](docs/AZURE_HA_PARITY_AUDIT.md).
+**What the customer gives up:** zone-redundant failover, automated backups,
+point-in-time restore and the pre-patch server snapshot all become theirs to
+provide. The `db_is_customer_managed` output is `true` in this mode — check it
+before repeating any backup or availability guarantee back to a customer, and
+do not sell `HB-PRO-HA` on external mode unless their Postgres is genuinely
+highly available.
+
+Still on the roadmap for the autoscale tier, which has read replicas to
+consider.
 
 ### 6. Keep NAT-bound traffic off the NAT Gateway
 

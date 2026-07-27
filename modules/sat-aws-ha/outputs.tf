@@ -118,3 +118,8 @@ output "flow_log_group_name" {
   value       = module.this.flow_log_group_name
   sensitive   = false
 }
+
+output "db_is_customer_managed" {
+  description = "True when db_mode = 'external'. When true, HailBytes provisions no database: availability, backups, patching and point-in-time restore are the customer's responsibility."
+  value       = module.this.db_is_customer_managed
+}
