@@ -120,7 +120,7 @@ shared live-validation effort called out separately at the end.
 | **B3** | **No break-glass management access.** No Azure Bastion, no AAD-login extension, no `enable_management_access`. SSH is the only path, and with no NAT/public IP there is no path at all until A4 lands. `SECURITY-DEFAULTS.md` promises Bastion. | P1 | `grep -rn enable_management_access modules/**/azure` → nothing. | Add `enable_management_access` on Azure: either the `AADSSHLoginForLinux` extension + role assignment, or an `azurerm_bastion_host` (needs an `AzureBastionSubnet`). Document which. | ✅ **FIXED** — `AADSSHLoginForLinux` extension on each app VM behind `enable_management_access` (default `false`, opt-in), giving Entra-authenticated RBAC-gated SSH via `az ssh vm` with no public IP. Azure Bastion deliberately **not** provisioned: it costs ~$140/month for a capability the extension delivers for free. `SECURITY-DEFAULTS.md` reworded to describe what is actually built. |
 | **B4** | **Redis "zone-redundant" claim is false at the default SKU.** The module comment, `modules/ha-hot-hot/azure/README.md` ("Standard C1, zone-redundant primary/replica") and `COST_SHAPES.md` all describe the default Standard tier as zone-redundant. Azure provides zone redundancy for this service on Premium and above, and the module only sets `zones` for Premium. | P1 | `azurerm_redis_cache.main`: `zones = var.redis_sku_name == "Premium" ? ["1","2"] : null`, with `redis_sku_name` defaulting to `"Standard"`. | Correct all three docs. Decide whether "zone-redundant deployment" as sold to a customer requires defaulting to Premium P1 (+€267 / +$304 per month). **This is a written-claim exposure, not just a doc nit.** | ✅ **FIXED (documentation)** — the module README now carries an explicit callout that Standard is *not* zone-redundant and that Premium P1 (+$304/mo) is required if the customer needs it; `COST_SHAPES.md` and `AZURE_COST_SHAPES.md` corrected, and the Redis prices there were stale as well ($55 → $101 verified). **The default is unchanged** — flipping it to Premium is a pricing decision, not a bug fix. |
 | **B5** | **A single `terraform apply` replaces both VMs.** No `lifecycle` block on `azurerm_linux_virtual_machine.vm`, no `create_before_destroy`. Bumping a pinned image version plans two replacements and applies both. The AWS module's `ignore_changes = [ami, user_data]` makes the same operation a no-op. | P1 | `modules/ha-hot-hot/azure/main.tf` vs `modules/ha-hot-hot/aws/main.tf` `aws_instance.vm` lifecycle. | Decide the intended semantic and make it explicit. Recommended: keep replacement visible in `plan` (it is more honest than the AWS behaviour) but add `create_before_destroy` and document the `-target` procedure — already written up in the patching runbook. | ✅ **FIXED** — `ignore_changes = [source_image_reference, custom_data]` on `azurerm_linux_virtual_machine.vm` and `.db_vm`, and on `single-vm/azure` too, which had the same gap. **Not** the `create_before_destroy` the recommendation above suggested: the VM name is deterministic (`<prefix>-vm-1`), so a replacement cannot stand up the new VM while the old one holds the name — `create_before_destroy` would fail on a name collision rather than gracefully overlap. And the "more honest plan" argument does not survive the detail that `marketplace_image_version` defaults to `"latest"`: the replacement was not something an operator asked for, it was drift arriving on an apply made for an unrelated reason. Image rotation is now an explicit `terraform apply -replace=...`, one VM at a time, which is the procedure the patching runbook already documents. CI asserts the `ignore_changes` is present in every module that replaces a VM — a `lifecycle` block is invisible to `terraform test`, so it is checked statically. |
-| **B6** | **No CMK for Flexible Server, Redis, or the backup Storage Account.** `enable_customer_managed_key` covers VM disks only; the AWS module threads its KMS key through RDS, ElastiCache, Secrets Manager, SNS, S3 and CloudWatch Logs. | P1 | `grep -n customer_managed_key modules/ha-hot-hot/azure/main.tf` — disk encryption set only. | Add CMK wiring for Flexible Server (needs a user-assigned identity + `customer_managed_key` block) and the Storage Account. Redis CMK is Premium-only. | **2** |
+| **B6** | **No CMK for Flexible Server, Redis, or the backup Storage Account.** `enable_customer_managed_key` covers VM disks only; the AWS module threads its KMS key through RDS, ElastiCache, Secrets Manager, SNS, S3 and CloudWatch Logs. | P1 | `grep -n customer_managed_key modules/ha-hot-hot/azure/main.tf` — disk encryption set only. | Add CMK wiring for Flexible Server (needs a user-assigned identity + `customer_managed_key` block) and the Storage Account. Redis CMK is Premium-only. | ✅ **FIXED for Flexible Server and the backup Storage Account. Redis is not fixable — see below.** `enable_customer_managed_key` now also provisions an `azurerm_user_assigned_identity` with `Key Vault Crypto Service Encryption User` on the module's vault, and wires it into both services. The disk encryption set's *system-assigned* identity could not be reused: Microsoft requires a **user-assigned** identity for both. Same RSA-4096 key backs disks, database and backups — one key per deployment is the right shape, because the point of CMK is that revoking one key makes all three inaccessible at once. **The key URI is versionless** (`versionless_id`, not `id`): a pinned version takes the server to `Inaccessible` and denies every connection when that version expires, which Microsoft lists as a leading cause of that state. A CI check enforces it, because both values are computed and `terraform test` cannot tell them apart. **Two things the audit row did not know:** (a) *Flexible Server CMK is create-time only.* Microsoft: "You can configure customer managed key encryption only during creation of a new server, not as an update to an existing" one — and it cannot be reverted. So **turning this on for an existing deployment replaces the database.** The variable description says so in capitals; the migration path is a PITR restore to a new server. (b) *CMK is incompatible with `postgres_geo_redundant_backup_enabled` in this module.* Azure needs a second key, in a second vault, in the geo-paired region, reached by a **different** user-assigned identity ("You can't use the same user-managed identity"). The module provisions one vault in one region, so the combination is refused by a plan-time precondition rather than failing mid-apply. **Redis CMK: the row's premise was wrong.** CMK on Azure Cache for Redis is an **Enterprise / Enterprise Flash** feature, not Premium — and on Premium there is no persistence disk to encrypt at all, because persistence streams straight to Azure Storage. There is no SKU we would sensibly deploy on which Redis CMK is available. See the retirement note below, which makes this moot. | **DONE** |
 | **B7** | **No TLS termination or HTTP→HTTPS redirect in the default topology.** The AWS module requires `acm_certificate_arn` and terminates at the ALB; the Azure default is TCP passthrough to a self-signed cert. `enable_http_redirect` has no Azure equivalent. The README is honest about this, which is why it is P1 and not P0 — but "browsers warn on every visit" is not a deliverable for a 600k-learner rollout. | P1 | `modules/ha-hot-hot/azure/README.md` § TLS termination. | Product decision: make App Gateway the default for the HA tier (raises the floor cost by ~€164–295/mo and requires a PFX input + a gateway subnet), or accept upstream-LB-required and say so in the offer. Depends on A6. | **2–3** (incl. A6) |
 | **B8** | **No bring-your-own Postgres.** `db_mode` accepts only `flexible_server` or `vm`. Redis, by contrast, *can* be brought by the customer (`redis_endpoint_override` + `enable_managed_redis = false`). A customer who already operates Postgres at scale — which describes most consortium and national-scale education buyers — cannot point the module at it, and so pays Azure for a Flexible Server they do not need. | P1 | `modules/ha-hot-hot/azure/variables.tf` `db_mode` validation vs `redis_endpoint_override`. Same in `unlimited-scale/azure`. | Add `db_mode = "external"` with `db_host` / `db_port` / `db_secret_name` inputs, validated to require TLS, and skip the Flexible Server resources. Removes $3,469–38,964/yr of the customer's Azure spend depending on SKU (see [`../AZURE_COST_SHAPES.md`](../AZURE_COST_SHAPES.md#reducing-the-customers-azure-bill)) at zero revenue cost to HailBytes, since the plan price is fixed at the licensed-VM vCore count. | ✅ **FIXED (HA tier, both clouds)** — `db_mode = "external"` with `external_db_host` / `_port` / `_name` / `_username` / `_password` / `_sslmode`, plan-time preconditions, a `db_is_customer_managed` output, and pre-patch snapshot skipped with an explicit warning. Autoscale tier still to do (read replicas need thought). |
 | **C1** | **Private DNS zone name is valid but misleading.** `modules/network/azure` creates `privatelink.postgres.database.azure.com` — the Private *Endpoint* zone name — while the workload modules use private access via a delegated subnet. | P2 *(possible P0 — unverified)* | `modules/network/azure/main.tf` `azurerm_private_dns_zone.postgres`. | Verify against a live `terraform apply` in North Europe. If Azure rejects or mis-resolves it, this is a P0 and A-list item. Cheap to test, cannot be settled from static reading. | ✅ **RESOLVED — not a defect.** Microsoft's private-access documentation requires only that the zone name *end with* `.postgres.database.azure.com`, in the form `[name].postgres.database.azure.com` or `[name1].[name2].postgres.database.azure.com`, and that the name not collide with a server name. `privatelink.postgres.database.azure.com` satisfies both (`privatelink` is the `[name]`, and our servers are named `<prefix>-pg`). It resolves and links correctly; it is only *semantically* the Private Endpoint convention. **No code change.** Left as-is to avoid a rename that would force DNS-zone replacement on existing state. Source: learn.microsoft.com/azure/postgresql/network/concepts-networking-private. |
@@ -199,7 +199,7 @@ surfaced in minutes.
 
 ## Findings settled from Microsoft documentation
 
-Three of the open questions were answerable from the docs without a live
+Several open questions were answerable from the docs without a live
 subscription. Recording them here so they are not re-litigated:
 
 | Question | Answer | Source |
@@ -208,11 +208,62 @@ subscription. Recording them here so they are not re-litigated:
 | Is `privatelink.postgres.database.azure.com` a valid zone name for a delegated-subnet (private access) Flexible Server? | **Yes.** The only constraints are that the name end with `.postgres.database.azure.com` and not equal a server name. C1 is a naming-convention wart, not a defect. | [PostgreSQL private access networking](https://learn.microsoft.com/en-us/azure/postgresql/network/concepts-networking-private) |
 | Is a NAT Gateway on the workload subnet safe for a Flexible Server in the same vnet? | **Yes, on the workload subnet.** What is explicitly *unsupported* is routing the **delegated** subnet's traffic through a virtual appliance (`0.0.0.0/0 → NVA`), which "can interfere with required platform connectivity" and break HA. A4's NAT Gateway associates only `azurerm_subnet.workload`, never the db subnet — which is the correct call, now documented rather than lucky. | same |
 
+| Can CMK be enabled on an existing Flexible Server? | **No.** "You can configure customer managed key encryption only during creation of a new server, not as an update to an existing" server, and it cannot be reverted afterwards. Enabling it on a live deployment **replaces the database**; the migration path is a PITR restore to a new server. Shapes B6. | [Flexible Server data encryption](https://learn.microsoft.com/en-us/azure/postgresql/security/security-data-encryption) |
+| Does Flexible Server CMK work with geo-redundant backup? | **Not with a single key vault.** It needs a second key in a vault in the geo-paired region, reached by a *different* user-assigned identity — "You can't use the same user-managed identity to authenticate for the primary database's Key Vault instance and the Key Vault instance that holds the encryption key for geo-redundant backup." The module refuses the combination at plan time. | same |
+| Which Azure Cache for Redis tiers support CMK? | **Enterprise and Enterprise Flash only** — *not* Premium, which is what gap B6 assumed. And on Premium there is no persistence disk to encrypt: persistence streams straight to Azure Storage. So Redis CMK is unavailable on every SKU we would deploy. | [Azure Cache for Redis disk encryption](https://learn.microsoft.com/en-us/azure/azure-cache-for-redis/cache-how-to-encryption) |
+
 Three operational constraints worth carrying into the runbook, from the same page:
 
 - The delegated subnet minimum is **/28**, and a server with HA consumes **four** addresses. `network/azure` uses /24, so there is ample headroom.
 - Azure auto-configures a `Microsoft.Storage` service endpoint on the delegated subnet for WAL archival. **Removing it disrupts connectivity** — don't let landing-zone tooling strip it.
 - **Do not put a resource lock on the Postgres private DNS zone** when HA is enabled: it can block the DNS record updates an HA failover needs. Also, the zone cannot be changed after creation on an HA-enabled server.
+
+---
+
+## New finding — Azure Cache for Redis is being retired
+
+Not a parity gap, and not something the audit set out to look for. It surfaced
+while checking whether Redis CMK was Premium-only for B6, and it is more
+consequential than anything else on this page for a multi-year contract.
+
+**Microsoft has announced retirement dates for every Azure Cache for Redis
+tier:**
+
+| Tier | Retired on | Instances disabled from |
+|---|---|---|
+| Basic, Standard, **Premium** | **2028-09-30** | 2028-10-01 |
+| Enterprise, Enterprise Flash | **2027-03-31** | 2027-04-01 |
+
+The replacement is **Azure Managed Redis**, a first-party service (no
+Marketplace component). Source: [Azure Cache for Redis retirement
+FAQ](https://learn.microsoft.com/en-us/azure/azure-cache-for-redis/retirement-faq).
+
+**Why this matters here, in order of consequence:**
+
+1. **Every Azure module that provisions a cache is provisioning a service with
+   an end-of-life date inside a typical enterprise contract term.** The HA and
+   autoscale tiers both default to `azurerm_redis_cache` Standard C1. A
+   multi-year deal signed in 2026 outlives September 2028. This will be asked
+   about in security or procurement review, and the answer needs to exist before
+   it is asked.
+2. **It resolves gap B4 more cheaply than the Premium upgrade B4 proposed.**
+   Azure Managed Redis is **zone redundant by default**, so migrating there
+   delivers the zone-redundant cache the module's docs previously claimed —
+   without the +$304/month Premium P1 step-up that B4 priced as the only route.
+   B4's decision should be reconsidered in that light rather than taken as
+   framed.
+3. **It also uses Entra ID rather than access keys**, which retires the
+   access-key-in-Key-Vault plumbing that gap A3 had to build.
+4. Reservations on the old service are honoured only to the retirement date, so
+   any Redis reservation in a cost model needs a term that ends before it.
+
+**Not actioned in this branch.** Migrating to Azure Managed Redis changes the
+resource type, the connection contract (clustered by default), and the
+credential model — and the credential model is consumed by the *marketplace
+image*, not just the Terraform. That is a coordinated change across
+`hailbytes-terraform-modules` and both product repos, and it needs a decision
+about the target date rather than being slipped into an audit-remediation
+branch. Recorded here so it is scheduled rather than discovered.
 
 ---
 

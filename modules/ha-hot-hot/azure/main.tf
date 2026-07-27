@@ -218,6 +218,36 @@ resource "azurerm_role_assignment" "des_kv_crypto_user" {
   principal_id         = azurerm_disk_encryption_set.vm[0].identity[0].principal_id
 }
 
+# CMK for the managed services — Flexible Server and the backup Storage Account
+# (gap B6). Both require a *user-assigned* managed identity; neither accepts a
+# system-assigned one, which is why the disk encryption set above cannot be
+# reused. Microsoft's Flexible Server requirement is explicit: "Grant the Azure
+# Database for PostgreSQL flexible server's user assigned managed identity
+# access to the key", with the RBAC path being the Key Vault Crypto Service
+# Encryption User role.
+#
+# The same RSA-4096 key backs disks, database and backups. One CMK per
+# deployment is the normal shape — the point of CMK is that the customer can
+# revoke access to their data, and one key does that for all three at once.
+#
+# https://learn.microsoft.com/en-us/azure/postgresql/security/security-data-encryption
+resource "azurerm_user_assigned_identity" "cmk" {
+  count = var.enable_customer_managed_key ? 1 : 0
+
+  name                = "${local.name_prefix}-cmk-id"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  tags                = local.common_tags
+}
+
+resource "azurerm_role_assignment" "cmk_kv_crypto_user" {
+  count = var.enable_customer_managed_key ? 1 : 0
+
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Crypto Service Encryption User"
+  principal_id         = azurerm_user_assigned_identity.cmk[0].principal_id
+}
+
 # ----- NSG -----
 
 resource "azurerm_network_security_group" "lb" {
@@ -628,11 +658,51 @@ resource "azurerm_postgresql_flexible_server" "main" {
     mode = var.db_high_availability_mode
   }
 
+  # CMK (gap B6). Two Microsoft constraints shape this block:
+  #
+  # 1. "You can configure customer managed key encryption only during creation
+  #    of a new server, not as an update to an existing" server — and it cannot
+  #    be reverted either. So flipping enable_customer_managed_key on an
+  #    existing deployment REPLACES the database. See the precondition below.
+  # 2. The key URI is deliberately versionless (versionless_id, not id). With a
+  #    versioned URI the server pins to that version and goes Inaccessible when
+  #    it expires; versionless enables automatic key version updates, which is
+  #    what Microsoft recommends and what makes Key Vault autorotation safe.
+  dynamic "identity" {
+    for_each = var.enable_customer_managed_key ? [1] : []
+    content {
+      type         = "UserAssigned"
+      identity_ids = [azurerm_user_assigned_identity.cmk[0].id]
+    }
+  }
+
+  dynamic "customer_managed_key" {
+    for_each = var.enable_customer_managed_key ? [1] : []
+    content {
+      key_vault_key_id                  = azurerm_key_vault_key.disk[0].versionless_id
+      primary_user_assigned_identity_id = azurerm_user_assigned_identity.cmk[0].id
+    }
+  }
+
   tags = local.common_tags
 
   lifecycle {
     ignore_changes = [administrator_password, zone, high_availability[0].standby_availability_zone]
+
+    # Geo-redundant backup with CMK needs a SECOND key, in a second Key Vault,
+    # in the geo-paired region, reached by a SECOND user-assigned identity that
+    # Microsoft documents cannot be the same one: "You can't use the same
+    # user-managed identity to authenticate for the primary database's Key Vault
+    # instance and the Key Vault instance that holds the encryption key for
+    # geo-redundant backup." This module provisions one vault in one region, so
+    # the combination is refused at plan time rather than failing mid-apply.
+    precondition {
+      condition     = !(var.enable_customer_managed_key && var.postgres_geo_redundant_backup_enabled)
+      error_message = "enable_customer_managed_key and postgres_geo_redundant_backup_enabled cannot both be set: Azure requires a separate key, Key Vault and user-assigned identity in the geo-paired region for the geo-backup, which this module does not provision. Pick one, or supply the geo-region key vault yourself outside the module."
+    }
   }
+
+  depends_on = [azurerm_role_assignment.cmk_kv_crypto_user]
 }
 
 resource "azurerm_postgresql_flexible_server_configuration" "require_ssl" {
@@ -900,6 +970,28 @@ resource "azurerm_storage_account" "backup" {
       days = var.backup_blob_soft_delete_days
     }
   }
+
+  # CMK for the pre-patch backup bundles (gap B6). Unlike Flexible Server this
+  # one is switchable on an existing account — Azure Storage rewraps the account
+  # DEK with the new key and the data stays encrypted throughout — so no
+  # precondition is needed here.
+  dynamic "identity" {
+    for_each = var.enable_customer_managed_key ? [1] : []
+    content {
+      type         = "UserAssigned"
+      identity_ids = [azurerm_user_assigned_identity.cmk[0].id]
+    }
+  }
+
+  dynamic "customer_managed_key" {
+    for_each = var.enable_customer_managed_key ? [1] : []
+    content {
+      key_vault_key_id          = azurerm_key_vault_key.disk[0].versionless_id
+      user_assigned_identity_id = azurerm_user_assigned_identity.cmk[0].id
+    }
+  }
+
+  depends_on = [azurerm_role_assignment.cmk_kv_crypto_user]
 }
 
 resource "azurerm_storage_management_policy" "backup" {
