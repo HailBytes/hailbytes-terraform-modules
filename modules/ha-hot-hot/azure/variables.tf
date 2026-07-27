@@ -159,12 +159,12 @@ variable "marketplace_image_version" {
 # ----- Patching and migration safety -----
 
 variable "db_mode" {
-  description = "Database backend. 'flexible_server' (default) provisions Azure Database for PostgreSQL Flexible Server — recommended for production. 'vm' provisions a third Linux VM with self-managed Postgres 16 for customers that must keep data plane on a VM."
+  description = "Database backend. 'flexible_server' (default) provisions Azure Database for PostgreSQL Flexible Server — recommended for production, and the only mode with zone-redundant failover and point-in-time restore. 'vm' provisions a third Linux VM with self-managed Postgres 16 for customers that must keep the data plane on a VM. 'external' connects to a Postgres server the customer already operates: the module provisions no database at all, and the customer owns availability, backups and patching for it."
   type        = string
   default     = "flexible_server"
   validation {
-    condition     = contains(["flexible_server", "vm"], var.db_mode)
-    error_message = "db_mode must be one of: flexible_server, vm."
+    condition     = contains(["flexible_server", "vm", "external"], var.db_mode)
+    error_message = "db_mode must be one of: flexible_server, vm, external."
   }
 }
 
@@ -376,4 +376,56 @@ variable "admin_port" {
   description = "Port the HailBytes admin server listens on. Used by the post-patch verifier, which probes the instance over localhost."
   type        = number
   default     = 3333
+}
+
+# ----- Customer-managed Postgres (db_mode = "external") -----
+#
+# Mirrors the redis_endpoint_override escape hatch. A customer who already runs
+# Postgres at scale can point the stack at it and pay Azure nothing for a
+# database. The password lands in this module's Key Vault under the same secret
+# name the other two modes use, so the marketplace image bootstraps identically.
+
+variable "external_db_host" {
+  description = "Hostname or private IP of a customer-operated PostgreSQL server. Required when db_mode = \"external\", ignored otherwise. Must be resolvable and reachable from vm_subnet_id."
+  type        = string
+  default     = null
+}
+
+variable "external_db_port" {
+  description = "Port of the customer-operated PostgreSQL server."
+  type        = number
+  default     = 5432
+  validation {
+    condition     = var.external_db_port >= 1 && var.external_db_port <= 65535
+    error_message = "external_db_port must be between 1 and 65535."
+  }
+}
+
+variable "external_db_name" {
+  description = "Database name on the customer-operated server. It must already exist; the module does not create it."
+  type        = string
+  default     = "hailbytes"
+}
+
+variable "external_db_username" {
+  description = "Role the application connects as. It needs full DDL rights on external_db_name — the binary runs goose migrations at boot."
+  type        = string
+  default     = "hailbytes"
+}
+
+variable "external_db_password" {
+  description = "Password for external_db_username. Required when db_mode = \"external\". Written to this module's Key Vault as 'hailbytes-db-password'; supply it through a tfvars file or TF_VAR_ environment variable, never a literal in version control."
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
+variable "external_db_sslmode" {
+  description = "libpq sslmode for the connection to the customer-operated server. 'require' is the minimum this module accepts; 'verify-full' is recommended when the server presents a certificate chained to a CA the VMs trust."
+  type        = string
+  default     = "require"
+  validation {
+    condition     = contains(["require", "verify-ca", "verify-full"], var.external_db_sslmode)
+    error_message = "external_db_sslmode must be one of: require, verify-ca, verify-full. Unencrypted modes (disable, allow, prefer) are not accepted."
+  }
 }

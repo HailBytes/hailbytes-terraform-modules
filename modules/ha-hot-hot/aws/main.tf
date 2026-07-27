@@ -32,14 +32,22 @@ locals {
 
   use_rds                       = var.db_mode == "rds"
   use_ec2_db                    = var.db_mode == "ec2"
+  use_external_db               = var.db_mode == "external"
   create_backup_bucket          = var.create_backup_bucket
   effective_backup_bucket       = local.create_backup_bucket ? aws_s3_bucket.backup[0].id : var.backup_bucket_name
   backup_object_prefix          = "hailbytes-${var.product}-"
   create_alb_access_logs_bucket = var.enable_alb_access_logging
 
-  db_host = coalesce(one(aws_db_instance.main[*].address), one(aws_instance.db_ec2[*].private_ip))
-  db_port = local.use_rds ? coalesce(one(aws_db_instance.main[*].port), 5432) : 5432
-  db_arn  = coalesce(one(aws_db_instance.main[*].arn), one(aws_instance.db_ec2[*].arn))
+  db_host = local.use_external_db ? var.external_db_host : coalesce(one(aws_db_instance.main[*].address), one(aws_instance.db_ec2[*].private_ip))
+  db_port = local.use_external_db ? var.external_db_port : (local.use_rds ? coalesce(one(aws_db_instance.main[*].port), 5432) : 5432)
+  db_arn  = local.use_external_db ? null : coalesce(one(aws_db_instance.main[*].arn), one(aws_instance.db_ec2[*].arn))
+
+  # In external mode the customer owns the server, so the credentials are
+  # theirs. They still land in the same Secrets Manager secret, in the same
+  # JSON shape, so the marketplace AMI bootstraps identically across modes.
+  db_username = local.use_external_db ? var.external_db_username : "hailbytes"
+  db_dbname   = local.use_external_db ? var.external_db_name : "hailbytes"
+  db_password = local.use_external_db ? var.external_db_password : random_password.db.result
 
   # Redis is required for HA: both app instances must share session state and
   # the worker-lock heartbeat through the same Redis. The module provisions
@@ -219,6 +227,17 @@ resource "aws_iam_instance_profile" "vm" {
 # ----- DB credentials -----
 
 resource "random_password" "db" {
+  lifecycle {
+    precondition {
+      condition     = var.db_mode != "external" || (var.external_db_host != null && var.external_db_password != null)
+      error_message = "db_mode = \"external\" requires both external_db_host and external_db_password."
+    }
+    precondition {
+      condition     = var.db_mode == "external" || (var.external_db_host == null && var.external_db_password == null)
+      error_message = "external_db_host / external_db_password are only used when db_mode = \"external\"; unset them or switch db_mode."
+    }
+  }
+
   length           = 32
   special          = true
   override_special = "!@#$%^&*()-_=+[]{}"
@@ -235,12 +254,13 @@ resource "aws_secretsmanager_secret" "db" {
 resource "aws_secretsmanager_secret_version" "db" {
   secret_id = aws_secretsmanager_secret.db.id
   secret_string = jsonencode({
-    username = "hailbytes"
-    password = random_password.db.result
+    username = local.db_username
+    password = local.db_password
     host     = local.db_host
     port     = local.db_port
-    dbname   = "hailbytes"
+    dbname   = local.db_dbname
     mode     = var.db_mode
+    sslmode  = local.use_external_db ? var.external_db_sslmode : "require"
   })
 }
 
@@ -1034,7 +1054,7 @@ resource "aws_ssm_document" "pre_patch_backup" {
             "if [ -x /opt/hailbytes/bin/ha-pre-patch-backup.sh ]; then sudo -E /opt/hailbytes/bin/ha-pre-patch-backup.sh; else echo 'ERROR: /opt/hailbytes/bin/ha-pre-patch-backup.sh not present on this AMI. Rebuild from main; the Packer provision.sh now installs the script.' >&2; exit 1; fi",
             "SNAP_ID='{{ snapshotIdentifier }}'",
             "if [ -z \"$SNAP_ID\" ]; then SNAP_ID=\"${local.name_prefix}-pre-patch-$${TS}\"; fi",
-            "if [ '${var.db_mode}' = 'rds' ]; then aws rds create-db-snapshot --db-instance-identifier '${try(aws_db_instance.main[0].id, "")}' --db-snapshot-identifier \"$SNAP_ID\" --tags Key=Module,Value=hailbytes-terraform-modules Key=Phase,Value=pre-patch; else VOL='${try(aws_ebs_volume.db_data[0].id, "")}'; if [ -n \"$VOL\" ]; then aws ec2 create-snapshot --volume-id \"$VOL\" --description \"hailbytes-${var.product} pre-patch $${TS}\" --tag-specifications \"ResourceType=snapshot,Tags=[{Key=Module,Value=hailbytes-terraform-modules},{Key=Phase,Value=pre-patch},{Key=Name,Value=$$SNAP_ID}]\"; fi; fi",
+            "if [ '${var.db_mode}' = 'external' ]; then echo 'NOTE: db_mode=external - the database is customer-managed, so no server-side snapshot is taken. Ensure your own backup or PITR covers the patch window.'; elif [ '${var.db_mode}' = 'rds' ]; then aws rds create-db-snapshot --db-instance-identifier '${try(aws_db_instance.main[0].id, "")}' --db-snapshot-identifier \"$SNAP_ID\" --tags Key=Module,Value=hailbytes-terraform-modules Key=Phase,Value=pre-patch; else VOL='${try(aws_ebs_volume.db_data[0].id, "")}'; if [ -n \"$VOL\" ]; then aws ec2 create-snapshot --volume-id \"$VOL\" --description \"hailbytes-${var.product} pre-patch $${TS}\" --tag-specifications \"ResourceType=snapshot,Tags=[{Key=Module,Value=hailbytes-terraform-modules},{Key=Phase,Value=pre-patch},{Key=Name,Value=$$SNAP_ID}]\"; fi; fi",
           ]
         }
       }

@@ -38,8 +38,20 @@ locals {
 
   use_flexible_server = var.db_mode == "flexible_server"
   use_vm_db           = var.db_mode == "vm"
+  use_external_db     = var.db_mode == "external"
 
-  db_host = local.use_flexible_server ? one(azurerm_postgresql_flexible_server.main[*].fqdn) : one(azurerm_linux_virtual_machine.db_vm[*].private_ip_address)
+  db_host = local.use_flexible_server ? one(azurerm_postgresql_flexible_server.main[*].fqdn) : (
+    local.use_vm_db ? one(azurerm_linux_virtual_machine.db_vm[*].private_ip_address) : var.external_db_host
+  )
+  db_port = local.use_external_db ? var.external_db_port : 5432
+  db_name = local.use_external_db ? var.external_db_name : "hailbytes"
+  db_user = local.use_external_db ? var.external_db_username : "hailbytes"
+
+  # In external mode the customer owns the server, so the password is theirs
+  # rather than one we generate. It still lands in this module's Key Vault
+  # under the same secret name, so the marketplace image's bootstrap path is
+  # byte-identical across all three modes.
+  db_password = local.use_external_db ? var.external_db_password : random_password.db.result
 
   create_backup_storage       = var.create_backup_storage_account
   backup_storage_account_name = local.create_backup_storage ? azurerm_storage_account.backup[0].name : var.backup_storage_account_name
@@ -110,7 +122,21 @@ resource "azurerm_key_vault" "main" {
   }
 }
 
+# Validation for db_mode = "external". A lifecycle precondition on a
+# null_resource-free anchor: random_password always exists, so this fires on
+# every plan regardless of which db_mode is selected.
 resource "random_password" "db" {
+  lifecycle {
+    precondition {
+      condition     = var.db_mode != "external" || (var.external_db_host != null && var.external_db_password != null)
+      error_message = "db_mode = \"external\" requires both external_db_host and external_db_password."
+    }
+    precondition {
+      condition     = var.db_mode == "external" || (var.external_db_host == null && var.external_db_password == null)
+      error_message = "external_db_host / external_db_password are only used when db_mode = \"external\"; unset them or switch db_mode."
+    }
+  }
+
   length           = 32
   special          = true
   override_special = "!@#$%^&*()-_=+"
@@ -124,7 +150,7 @@ resource "azurerm_role_assignment" "kv_secret_writer" {
 
 resource "azurerm_key_vault_secret" "db" {
   name         = "hailbytes-db-password"
-  value        = random_password.db.result
+  value        = local.db_password
   key_vault_id = azurerm_key_vault.main.id
   # Content type satisfies CKV_AZURE_114 (identify secret semantics for
   # rotation tooling) and expiration_date satisfies CKV_AZURE_41 (every
@@ -395,6 +421,10 @@ resource "azurerm_linux_virtual_machine" "vm" {
       key_vault_uri      = azurerm_key_vault.main.vault_uri
       db_secret_name     = azurerm_key_vault_secret.db.name
       db_fqdn            = local.db_host
+      db_port            = local.db_port
+      db_name            = local.db_name
+      db_user            = local.db_user
+      db_sslmode         = local.use_external_db ? var.external_db_sslmode : "require"
       product            = var.product
       cluster_member_idx = count.index
       redis_host         = local.effective_redis_host
@@ -569,7 +599,7 @@ resource "azurerm_postgresql_flexible_server" "main" {
   storage_mb = var.db_storage_mb
 
   administrator_login    = "hailbytes"
-  administrator_password = random_password.db.result
+  administrator_password = random_password.db.result # never local.db_password: external mode creates no server
 
   delegated_subnet_id = var.db_delegated_subnet_id
   private_dns_zone_id = var.private_dns_zone_id
@@ -895,8 +925,14 @@ resource "azurerm_virtual_machine_run_command" "pre_patch_backup" {
         echo "       Rebuild the marketplace image from main; provision.sh installs the script." >&2
         exit 1
       fi
-      az login --identity --allow-no-subscriptions >/dev/null
       DB_MODE='${var.db_mode}'
+      if [ "$DB_MODE" = "external" ]; then
+        echo "NOTE: db_mode=external — the database is customer-managed, so this"
+        echo "      Run Command takes no server-side snapshot. Ensure your own"
+        echo "      backup or PITR covers the patch window before proceeding."
+        exit 0
+      fi
+      az login --identity --allow-no-subscriptions >/dev/null
       if [ "$DB_MODE" = "flexible_server" ]; then
         az postgres flexible-server backup create \
           --resource-group '${var.resource_group_name}' \

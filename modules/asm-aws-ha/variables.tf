@@ -323,3 +323,40 @@ variable "admin_port" {
   type        = number
   default     = 3333
 }
+
+variable "external_db_host" {
+  description = "Hostname or private IP of a customer-operated PostgreSQL server. Required when db_mode = \"external\", ignored otherwise. Must be resolvable and reachable from the private subnets."
+  type        = string
+  default     = null
+}
+
+variable "external_db_port" {
+  description = "Port of the customer-operated PostgreSQL server."
+  type        = number
+  default     = 5432
+}
+
+variable "external_db_name" {
+  description = "Database name on the customer-operated server. It must already exist; the module does not create it."
+  type        = string
+  default     = "hailbytes"
+}
+
+variable "external_db_username" {
+  description = "Role the application connects as. It needs full DDL rights on external_db_name — the binary runs goose migrations at boot."
+  type        = string
+  default     = "hailbytes"
+}
+
+variable "external_db_password" {
+  description = "Password for external_db_username. Required when db_mode = \"external\". Written to the deployment's Secrets Manager secret; supply it through a tfvars file or TF_VAR_ environment variable, never a literal in version control."
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
+variable "external_db_sslmode" {
+  description = "libpq sslmode for the connection to the customer-operated server. 'require' is the minimum accepted; 'verify-full' is recommended."
+  type        = string
+  default     = "require"
+}

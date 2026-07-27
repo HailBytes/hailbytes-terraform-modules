@@ -461,6 +461,7 @@ The procurement-grade test for "no data loss from patching", and the DR runbook.
 |---|---|---|
 | `flexible_server` (default) | Zone-Redundant PostgreSQL Flexible Server, encrypted, automated backups (`db_backup_retention_days`, default 14), point-in-time restore, on-demand backups | Pre-patch DB snapshot is a one-liner; rollback has PITR. This is the mode this runbook assumes. |
 | `vm` | A third Linux VM, Ubuntu 24.04 + apt-installed PostgreSQL 16 on a Premium_LRS data disk | No automated backups, no PITR, no zone-redundant failover. Pre-patch protection is a managed-disk snapshot only, and restore means attaching a snapshot to a new VM. Also carries the per-vCPU Marketplace meter — see [`AZURE_COST_SHAPES.md`](../AZURE_COST_SHAPES.md). |
+| `external` | Nothing. The stack connects to a Postgres server the customer already operates (`external_db_host` + `external_db_password`, TLS enforced via `external_db_sslmode`) | **The customer owns availability, backups, PITR and patching for the database.** `RunPrePatchBackup` deliberately takes no server-side snapshot and says so in its output — the `/api/instance/export` bundle still runs and still captures the schema and data. Removes the whole database line from their cloud bill. The `db_is_customer_managed` output is `true`, which is the flag to check before repeating any backup guarantee back to a customer. |
 
 The Key Vault secret format is identical in both modes (`hailbytes-db-password`
 in the module's vault), so the marketplace image bootstraps without branching.
@@ -488,7 +489,9 @@ earlier pin gets the backup container, Run Commands and alerts on their next
 | `enable_pre_patch_run_command` | `true` | Installs `RunPrePatchBackup`. Currently ⛔ — see Step 2. |
 | `enable_post_patch_run_command` | `true` | Installs `RunPostPatchVerify` on each VM. Currently ⛔ — see Step 5. |
 | `schema_version_endpoint_path` | `/api/instance/schema-version` | Exported via the `schema_version_endpoint` output. |
-| `db_backup_retention_days` | `14` | Flexible Server automated-backup retention (7–35). |
+| `db_backup_retention_days` | `14` | Flexible Server automated-backup retention (7–35). Ignored when `db_mode = "external"`. |
+| `external_db_host` / `external_db_password` | `null` | Required together when `db_mode = "external"`; a plan-time precondition rejects one without the other. |
+| `external_db_sslmode` | `"require"` | Minimum accepted. `verify-ca` / `verify-full` also allowed; unencrypted modes are rejected by validation. |
 | `postgres_geo_redundant_backup_enabled` | `false` | `true` replicates backups to the paired region (West Europe for North Europe). Data-residency decision. |
 | `db_high_availability_mode` | `"ZoneRedundant"` | `"SameZone"` is cheaper with a lower SLA. |
 | `alert_email` | `null` | Creates the Action Group and both metric alerts. **Set it before a patch window** — with `null` there is no tripwire at all. |
