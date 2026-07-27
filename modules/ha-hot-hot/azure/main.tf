@@ -101,7 +101,7 @@ resource "azurerm_marketplace_agreement" "hailbytes" {
 data "azurerm_client_config" "current" {}
 
 resource "azurerm_key_vault" "main" {
-  name                       = substr(replace("${local.name_prefix}-kv", "-", ""), 0, 24)
+  name                       = coalesce(var.key_vault_name, substr(replace("${local.name_prefix}-kv", "-", ""), 0, 24))
   resource_group_name        = var.resource_group_name
   location                   = var.location
   tenant_id                  = data.azurerm_client_config.current.tenant_id
@@ -640,6 +640,37 @@ resource "azurerm_postgresql_flexible_server_configuration" "require_ssl" {
   name      = "require_secure_transport"
   server_id = azurerm_postgresql_flexible_server.main[0].id
   value     = "ON"
+}
+
+# Slow-query logging, the Azure counterpart of the AWS parameter group's
+# log_min_duration_statement (gap C4). Without it the diagnostic setting added
+# for B2 ships PostgreSQLLogs to Log Analytics with nothing interesting in them:
+# Flexible Server's default is -1, which logs no statement durations at all.
+# 1000 ms matches the AWS side so a triage runbook reads the same on both
+# clouds.
+resource "azurerm_postgresql_flexible_server_configuration" "log_min_duration_statement" {
+  count     = local.use_flexible_server ? 1 : 0
+  name      = "log_min_duration_statement"
+  server_id = azurerm_postgresql_flexible_server.main[0].id
+  value     = tostring(var.db_log_min_duration_ms)
+}
+
+# Deletion protection. Azure has no `deletion_protection` argument on Flexible
+# Server the way RDS does, so a CanNotDelete management lock is the equivalent —
+# it blocks deletion of the server (and its backups) by anyone, including the
+# operator running `terraform destroy`, until the lock is removed.
+#
+# Off by default *because* it is effective: with the lock in place
+# `terraform destroy` fails partway through and leaves a half-destroyed stack,
+# which is a worse first experience for a PoC than an accidental delete. Turn it
+# on for production, and remove it deliberately before a planned teardown:
+#   terraform apply -var='enable_db_delete_lock=false' && terraform destroy
+resource "azurerm_management_lock" "db" {
+  count      = local.use_flexible_server && var.enable_db_delete_lock ? 1 : 0
+  name       = "${local.name_prefix}-pg-no-delete"
+  scope      = azurerm_postgresql_flexible_server.main[0].id
+  lock_level = "CanNotDelete"
+  notes      = "HailBytes ${var.product} database. Remove this lock deliberately before a planned teardown; see enable_db_delete_lock."
 }
 
 resource "azurerm_postgresql_flexible_server_database" "main" {

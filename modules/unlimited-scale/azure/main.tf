@@ -73,7 +73,7 @@ resource "azurerm_marketplace_agreement" "hailbytes" {
 # ----- Key Vault -----
 
 resource "azurerm_key_vault" "main" {
-  name                       = substr(replace("${local.name_prefix}-kv", "-", ""), 0, 24)
+  name                       = coalesce(var.key_vault_name, substr(replace("${local.name_prefix}-kv", "-", ""), 0, 24))
   resource_group_name        = var.resource_group_name
   location                   = var.location
   tenant_id                  = data.azurerm_client_config.current.tenant_id

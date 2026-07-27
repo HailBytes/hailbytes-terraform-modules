@@ -14,6 +14,9 @@ module "this" {
   ssh_public_key         = var.ssh_public_key
 
   # Key Vault network ACL
+  db_log_min_duration_ms           = var.db_log_min_duration_ms
+  enable_db_delete_lock            = var.enable_db_delete_lock
+  key_vault_name                   = var.key_vault_name
   key_vault_network_default_action = var.key_vault_network_default_action
   key_vault_ip_rules               = var.key_vault_ip_rules
   associate_vm_subnet_nsg          = var.associate_vm_subnet_nsg
