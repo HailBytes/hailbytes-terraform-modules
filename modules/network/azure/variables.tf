@@ -64,3 +64,27 @@ variable "nat_gateway_idle_timeout_minutes" {
     error_message = "nat_gateway_idle_timeout_minutes must be between 4 and 120."
   }
 }
+
+variable "enable_flow_logs" {
+  description = "Enable VNet flow logs to a module-created Storage Account. Closes the gap between SECURITY-DEFAULTS.md's claim that Azure flow logs are on by default and the fact that no Azure module produced one. Implemented as VNet flow logs rather than NSG flow logs, because NSG flow logs are being retired. Requires a Network Watcher in the region — Azure auto-creates one, see network_watcher_name."
+  type        = bool
+  default     = true
+}
+
+variable "network_watcher_name" {
+  description = "Name of the Network Watcher in this region. Azure auto-provisions one named NetworkWatcher_<region> in the NetworkWatcherRG resource group when a vnet is first created in a subscription; override if your landing zone names it differently. Ignored when enable_flow_logs = false."
+  type        = string
+  default     = null
+}
+
+variable "network_watcher_resource_group_name" {
+  description = "Resource group holding the Network Watcher. Defaults to Azure's own NetworkWatcherRG. Ignored when enable_flow_logs = false."
+  type        = string
+  default     = "NetworkWatcherRG"
+}
+
+variable "flow_log_retention_days" {
+  description = "Days to retain flow logs in the Storage Account."
+  type        = number
+  default     = 30
+}

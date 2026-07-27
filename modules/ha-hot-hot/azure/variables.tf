@@ -451,3 +451,33 @@ variable "external_db_sslmode" {
     error_message = "external_db_sslmode must be one of: require, verify-ca, verify-full. Unencrypted modes (disable, allow, prefer) are not accepted."
   }
 }
+
+# ----- Observability and management access -----
+
+variable "enable_diagnostics" {
+  description = "Send load-balancer, database, cache and (when enabled) Application Gateway diagnostics to a Log Analytics workspace. Closes the gap between SECURITY-DEFAULTS.md's logging claims and what the Azure modules actually did. Note the Standard Load Balancer is L4 and has no request-level access log — the App Gateway's ApplicationGatewayAccessLog is the closest analogue of AWS ALB access logs. Log Analytics ingestion is billed per GB by Azure."
+  type        = bool
+  default     = true
+}
+
+variable "log_analytics_workspace_id" {
+  description = "Resource ID of an existing Log Analytics workspace to send diagnostics to. Leave null and the module creates one. Supply your landing zone's central workspace if you have one — most enterprises do, and a per-deployment workspace fragments their queries."
+  type        = string
+  default     = null
+}
+
+variable "diagnostics_retention_days" {
+  description = "Retention for the module-created Log Analytics workspace. Ignored when log_analytics_workspace_id is supplied."
+  type        = number
+  default     = 30
+  validation {
+    condition     = var.diagnostics_retention_days >= 30 && var.diagnostics_retention_days <= 730
+    error_message = "diagnostics_retention_days must be between 30 and 730 (Log Analytics constraint)."
+  }
+}
+
+variable "enable_management_access" {
+  description = "Install the AADSSHLoginForLinux extension on each app VM, giving Entra-authenticated and RBAC-gated SSH via `az ssh vm` with no public IP. This is the Azure counterpart of the AWS module's enable_management_access (SSM Session Manager). Operators still need the 'Virtual Machine Administrator Login' or 'User Login' role assigned to them — the extension provides the mechanism, not the grant."
+  type        = bool
+  default     = false
+}

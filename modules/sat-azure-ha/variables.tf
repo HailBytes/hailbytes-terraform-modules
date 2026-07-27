@@ -393,3 +393,27 @@ variable "appgw_backend_root_cert_pem" {
   type        = string
   default     = null
 }
+
+variable "enable_diagnostics" {
+  description = "Send load-balancer, database, cache and Application Gateway diagnostics to a Log Analytics workspace. Log Analytics ingestion is billed per GB by Azure."
+  type        = bool
+  default     = true
+}
+
+variable "log_analytics_workspace_id" {
+  description = "Resource ID of an existing Log Analytics workspace. Leave null and the module creates one; supply your landing zone's central workspace if you have one."
+  type        = string
+  default     = null
+}
+
+variable "diagnostics_retention_days" {
+  description = "Retention for the module-created Log Analytics workspace. Ignored when log_analytics_workspace_id is supplied."
+  type        = number
+  default     = 30
+}
+
+variable "enable_management_access" {
+  description = "Install AADSSHLoginForLinux on each app VM for Entra-authenticated, RBAC-gated SSH via `az ssh vm` with no public IP. Operators still need the Virtual Machine Administrator Login or User Login role assigned."
+  type        = bool
+  default     = false
+}

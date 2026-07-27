@@ -42,3 +42,8 @@ output "nat_gateway_public_ip" {
   description = "Public IP the workload subnet egresses from. Give this to customers who need to allow-list HailBytes traffic (SMTP relays, integration endpoints). Empty when enable_nat_gateway = false."
   value       = var.enable_nat_gateway ? azurerm_public_ip.nat[0].ip_address : ""
 }
+
+output "flow_log_storage_account_name" {
+  description = "Storage Account receiving VNet flow logs, or empty when enable_flow_logs = false."
+  value       = var.enable_flow_logs ? azurerm_storage_account.flow_logs[0].name : ""
+}
