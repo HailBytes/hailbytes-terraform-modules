@@ -60,6 +60,24 @@ run "managed_redis_by_default" {
   }
 }
 
+run "redis_private_link_uses_supplied_zone" {
+  command = plan
+
+  variables {
+    redis_private_dns_zone_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.Network/privateDnsZones/privatelink.redis.cache.windows.net"
+  }
+
+  assert {
+    condition     = length(azurerm_private_dns_zone.redis) == 0
+    error_message = "Supplying redis_private_dns_zone_id must not create a second zone — zone names are unique per resource group and would collide."
+  }
+
+  assert {
+    condition     = length(azurerm_private_endpoint.redis) == 1
+    error_message = "The private endpoint is still required when the caller supplies the DNS zone."
+  }
+}
+
 run "redis_disabled_creates_nothing" {
   command = plan
 
@@ -75,6 +93,16 @@ run "redis_disabled_creates_nothing" {
   assert {
     condition     = output.redis_mode == "disabled"
     error_message = "redis_mode must be 'disabled' when managed Redis is off and no override is supplied."
+  }
+
+  assert {
+    condition     = length(azurerm_private_endpoint.redis) == 0
+    error_message = "No managed Redis means no private endpoint and no access-key secret."
+  }
+
+  assert {
+    condition     = length(azurerm_key_vault_secret.redis) == 0
+    error_message = "No managed Redis means no access-key secret."
   }
 }
 

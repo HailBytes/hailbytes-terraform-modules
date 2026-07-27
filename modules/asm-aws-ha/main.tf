@@ -62,5 +62,7 @@ module "this" {
   rds_performance_insights_enabled        = var.rds_performance_insights_enabled
   rds_performance_insights_retention_days = var.rds_performance_insights_retention_days
 
-  tags = var.tags
+  tags       = var.tags
+  admin_port = var.admin_port
+
 }

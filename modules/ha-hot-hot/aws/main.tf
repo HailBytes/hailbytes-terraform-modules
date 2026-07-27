@@ -1076,7 +1076,10 @@ resource "aws_ssm_document" "post_patch_verify" {
             "set -euo pipefail",
             "export HAILBYTES_SCHEMA_VERSION_PATH='{{ schemaVersionPath }}'",
             "export HAILBYTES_MIN_SCHEMA_VERSION='{{ minSchemaVersion }}'",
-            "if [ -x /opt/hailbytes/bin/ha-post-patch-verify.sh ]; then sudo -E /opt/hailbytes/bin/ha-post-patch-verify.sh; else echo 'ERROR: /opt/hailbytes/bin/ha-post-patch-verify.sh not present on this AMI.'; exit 1; fi",
+            # The verifier takes the admin host as a positional argument and
+            # exits 1 on its usage check without one. Running on-box, that is
+            # localhost.
+            "if [ -x /opt/hailbytes/bin/ha-post-patch-verify.sh ]; then sudo -E /opt/hailbytes/bin/ha-post-patch-verify.sh 127.0.0.1 ${var.admin_port}; else echo 'ERROR: /opt/hailbytes/bin/ha-post-patch-verify.sh not present on this AMI.'; exit 1; fi",
           ]
         }
       }

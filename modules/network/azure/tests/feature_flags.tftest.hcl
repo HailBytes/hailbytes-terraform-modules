@@ -63,3 +63,43 @@ run "nsg_association_disabled_creates_no_associations" {
     error_message = "associate_subnet_nsgs = false must still create the NSG resources themselves (only the association is skipped)."
   }
 }
+
+# Regression: no Azure module provisioned an outbound path, so workload VMs
+# behind an inbound-only Standard LB with no public IP could not reach the
+# internet at all — no OS updates, no SMTP, no integrations.
+run "nat_gateway_created_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(azurerm_nat_gateway.main) == 1
+    error_message = "enable_nat_gateway defaults to true and must create exactly one NAT Gateway."
+  }
+
+  assert {
+    condition     = length(azurerm_subnet_nat_gateway_association.workload) == 1
+    error_message = "The NAT Gateway must be associated with the workload subnet, which is where the VMs live."
+  }
+}
+
+run "nat_gateway_disabled_creates_nothing" {
+  command = plan
+
+  variables {
+    enable_nat_gateway = false
+  }
+
+  assert {
+    condition     = length(azurerm_nat_gateway.main) == 0
+    error_message = "enable_nat_gateway = false must create zero NAT Gateways."
+  }
+
+  assert {
+    condition     = length(azurerm_public_ip.nat) == 0
+    error_message = "enable_nat_gateway = false must not leave an orphaned public IP."
+  }
+
+  assert {
+    condition     = output.nat_gateway_public_ip == ""
+    error_message = "nat_gateway_public_ip must be empty when the gateway is disabled."
+  }
+}

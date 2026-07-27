@@ -11,11 +11,11 @@ The companion change in HailBytes SAT itself ships `/api/instance/export`,
 those into the Azure topology.
 
 > [!WARNING]
-> **Two of the mechanisms below are wired but non-functional on Azure today.**
-> The pre-patch backup Run Command cannot produce a bundle, and the post-patch
-> verify Run Command exits before running a single probe. Both are marked
-> ⛔ **BLOCKED** at the point of use, with the exact reason and the manual
-> procedure to use instead. Do not hand this page to a customer as an
+> **The pre-patch backup Run Command is wired but non-functional on Azure
+> today** — it cannot produce a bundle. It is marked ⛔ **BLOCKED** at the point
+> of use, with the exact reason and the manual procedure to use instead.
+> (The post-patch verifier was blocked for the same class of reason and has
+> since been fixed; see [Step 5](#step-5--post-patch-verification).) Do not hand this page to a customer as an
 > as-built description until the ⛔ items clear — hand them the manual
 > procedures, which do work. Detail and remediation effort:
 > [`AZURE_HA_PARITY_AUDIT.md`](AZURE_HA_PARITY_AUDIT.md).
@@ -33,7 +33,7 @@ Status column: ✅ works today · ⚠️ works with caveats · ⛔ blocked.
 | **No expected data loss from patching.** | Bundle should land in a Storage Account container with blob versioning + an unlocked immutability policy + lifecycle to Cool at 30 d / Archive at 90 d, with a Flexible Server on-demand backup alongside. The container, policies and lifecycle **are** provisioned; the script that fills them is AWS-only. | ⛔ see [Pre-patch backup](#step-2--pre-patch-backup) |
 | **Rolling replace keeps capacity at 50%.** | Two standalone zonal VMs behind a Standard Load Balancer. There is no VMSS on this tier, so no `rolling_upgrade_policy` and no `automatic_instance_repair` — the operator replaces one VM at a time with `-target`. A plain `terraform apply` after bumping a pinned image version **replaces both VMs in the same apply**. | ⚠️ see [Step 3](#step-3--rolling-replace-one-vm-at-a-time) |
 | **Schema migrations are serialised.** | The SAT/ASM binary takes a Postgres session-level advisory lock (`pg_advisory_lock(7426893184710137)`) around its goose migration run, so both VMs booting on a new image at once cannot race the same DDL. Cloud-independent — this is application behaviour, and it is the one part of the story that is identical on AWS and Azure. | ✅ see [Step 4](#step-4--schema-migrations-under-the-advisory-lock) |
-| **Post-patch schema-version verification.** | `module.<name>.schema_version_endpoint` → `https://<lb-or-appgw>/api/instance/schema-version`, and the image ships the five-probe verifier at `/opt/hailbytes/bin/ha-post-patch-verify.sh`. The Run Command that should invoke it calls it with no arguments, which the script rejects. | ⛔ see [Step 5](#step-5--post-patch-verification) |
+| **Post-patch schema-version verification.** | `module.<name>.schema_version_endpoint` → `https://<lb-or-appgw>/api/instance/schema-version`, and the image ships the five-probe verifier at `/opt/hailbytes/bin/ha-post-patch-verify.sh`. The Run Command now invokes it as `... 127.0.0.1 <admin_port>`, which satisfies its positional-argument contract. | ✅ |
 | **Auto-rollback on a bad upgrade.** | HA tier: Azure Monitor metric alerts on LB `VipAvailability` and (when App Gateway is enabled) backend 5xx count, wired to an Action Group, for **operator-initiated** rollback. There is no automatic rollback on this tier — the autoscale tier's VMSS `automatic_instance_repair` is the closest Azure gets, and this tier has no VMSS. | ⚠️ see [Step 6](#step-6--rollback) |
 | **WAF supported but not bundled.** | `var.waf_policy_id` attaches a customer-supplied WAF policy to the Application Gateway, which the module provisions when `enable_application_gateway = true`. Azure WAF cannot attach to a Standard Load Balancer — it is L4 only — so WAF on Azure is strictly an App Gateway feature. | ✅ |
 
@@ -276,18 +276,19 @@ Operational notes:
 
 ### Step 5 — Post-patch verification
 
-⛔ **BLOCKED: `RunPostPatchVerify` exits before running any probe.**
+`RunPostPatchVerify` now invokes the verifier as
+`/opt/hailbytes/bin/ha-post-patch-verify.sh 127.0.0.1 <admin_port>` (default
+port 3333, override with `var.admin_port`). It previously called the script
+with no arguments; the script takes the admin host as a **positional argument**
+(`Usage: $0 <admin-host> [<admin-port>]`) and exited 1 on the usage check, so
+every invocation tested nothing. The AWS SSM document had the identical defect
+and was fixed in the same change.
 
-`ha-post-patch-verify.sh` takes the admin host as a **positional argument**
-(`Usage: $0 <admin-host> [<admin-port>]`) and exits 1 when called with none.
-The Azure Run Command
-(`azurerm_virtual_machine_run_command.post_patch_verify`) invokes
-`sudo -E /opt/hailbytes/bin/ha-post-patch-verify.sh` with no arguments, so
-every invocation exits 1 having tested nothing. It exports
-`HAILBYTES_SCHEMA_VERSION_PATH`, which the script does not read. The AWS SSM
-document has the identical defect, so this is not an Azure-only regression.
+Note the Run Command still exports `HAILBYTES_SCHEMA_VERSION_PATH`, which the
+script does not read — harmless, but don't expect it to change the probe's
+behaviour.
 
-**Run it by hand, per VM, after each replacement:**
+**To run it by hand, per VM, after each replacement:**
 
 ```bash
 # From an operator host that can reach the VM, or on the VM itself.

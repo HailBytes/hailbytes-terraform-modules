@@ -56,6 +56,22 @@ locals {
   provision_managed_redis = var.enable_managed_redis && var.redis_endpoint_override == null
   effective_redis_host    = local.provision_managed_redis ? one(azurerm_redis_cache.main[*].hostname) : var.redis_endpoint_override
   effective_redis_port    = local.provision_managed_redis ? 6380 : var.redis_endpoint_override_port
+
+  # Azure Cache for Redis always requires an access key (or Entra auth); unlike
+  # ElastiCache there is no "no-auth inside the VNet" mode. The key is written
+  # to the same Key Vault as the DB password and the VMs fetch it by name.
+  redis_secret_name = "hailbytes-redis-access-key"
+
+  # Private Link for the cache. public_network_access_enabled = false means the
+  # cache has no reachable endpoint at all without one, and VNet injection is a
+  # Premium-tier feature, so Private Link is the only option that works on the
+  # default Standard SKU. Callers composing this module with network/azure can
+  # pass a shared zone; standalone deployments get one created here.
+  create_redis_dns_zone   = local.provision_managed_redis && var.redis_private_dns_zone_id == null
+  effective_redis_zone_id = local.provision_managed_redis ? (local.create_redis_dns_zone ? azurerm_private_dns_zone.redis[0].id : var.redis_private_dns_zone_id) : null
+
+  # The vnet that owns vm_subnet_id, needed to link the private DNS zone.
+  vm_vnet_id = regex("^(/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.Network/virtualNetworks/[^/]+)/subnets/", var.vm_subnet_id)[0]
 }
 
 resource "azurerm_marketplace_agreement" "hailbytes" {
@@ -384,6 +400,9 @@ resource "azurerm_linux_virtual_machine" "vm" {
       redis_host         = local.effective_redis_host
       redis_port         = local.effective_redis_port
       redis_tls          = local.provision_managed_redis ? true : var.redis_endpoint_override_tls
+      # Azure Cache for Redis requires an access key. The VM reads it from the
+      # same Key Vault as the DB password; only the secret name travels here.
+      redis_secret_name = local.provision_managed_redis ? local.redis_secret_name : null
     }
   }))
 
@@ -394,6 +413,19 @@ resource "azurerm_linux_virtual_machine" "vm" {
     azurerm_redis_cache.main,
     azurerm_role_assignment.des_kv_crypto_user,
   ]
+}
+
+# The app VMs' managed identities must be able to read the DB password (and
+# the Redis key) from Key Vault — custom_data points them at the vault, but
+# the vault is rbac_authorization_enabled so without this role assignment they
+# get 403 and the deployment cannot start. This is the Azure counterpart of
+# aws_iam_role_policy.secrets in the AWS module.
+resource "azurerm_role_assignment" "vm_kv_secrets_user" {
+  count = local.vm_count
+
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_linux_virtual_machine.vm[count.index].identity[0].principal_id
 }
 
 resource "azurerm_managed_disk" "data" {
@@ -449,6 +481,72 @@ resource "azurerm_redis_cache" "main" {
   redis_configuration {
     maxmemory_policy = "allkeys-lru"
   }
+}
+
+# ----- Redis reachability: Private Link -----
+#
+# Without this the cache is provisioned but unreachable: the module sets
+# public_network_access_enabled = false, and VNet injection needs Premium.
+# Private Link works on Standard, so this is what makes the default SKU usable.
+
+resource "azurerm_private_dns_zone" "redis" {
+  count = local.create_redis_dns_zone ? 1 : 0
+
+  name                = "privatelink.redis.cache.windows.net"
+  resource_group_name = var.resource_group_name
+  tags                = local.common_tags
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "redis" {
+  count = local.create_redis_dns_zone ? 1 : 0
+
+  name                  = "${local.name_prefix}-redis-link"
+  resource_group_name   = var.resource_group_name
+  private_dns_zone_name = azurerm_private_dns_zone.redis[0].name
+  virtual_network_id    = local.vm_vnet_id
+  registration_enabled  = false
+  tags                  = local.common_tags
+}
+
+resource "azurerm_private_endpoint" "redis" {
+  count = local.provision_managed_redis ? 1 : 0
+
+  name                = "${local.name_prefix}-redis-pe"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  subnet_id           = coalesce(var.redis_private_endpoint_subnet_id, var.vm_subnet_id)
+  tags                = local.common_tags
+
+  private_service_connection {
+    name                           = "${local.name_prefix}-redis-psc"
+    private_connection_resource_id = azurerm_redis_cache.main[0].id
+    subresource_names              = ["redisCache"]
+    is_manual_connection           = false
+  }
+
+  private_dns_zone_group {
+    name                 = "redis"
+    private_dns_zone_ids = [local.effective_redis_zone_id]
+  }
+}
+
+# The access key the VMs authenticate with, alongside the DB password in the
+# same vault. Rotating the cache regenerates the key; re-running apply
+# refreshes this secret.
+resource "azurerm_key_vault_secret" "redis" {
+  count = local.provision_managed_redis ? 1 : 0
+
+  name            = local.redis_secret_name
+  value           = azurerm_redis_cache.main[0].primary_access_key
+  key_vault_id    = azurerm_key_vault.main.id
+  content_type    = "application/x-redis-access-key"
+  expiration_date = timeadd(timestamp(), "${var.db_secret_expiration_hours}h")
+
+  lifecycle {
+    ignore_changes = [expiration_date]
+  }
+
+  depends_on = [azurerm_role_assignment.kv_secret_writer]
 }
 
 # ----- Postgres backend (Flexible Server in default mode; self-managed VM in 'vm' mode) -----
@@ -835,8 +933,10 @@ resource "azurerm_virtual_machine_run_command" "post_patch_verify" {
       #!/bin/bash
       set -euo pipefail
       export HAILBYTES_SCHEMA_VERSION_PATH='${var.schema_version_endpoint_path}'
+      # The verifier takes the admin host as a positional argument and exits 1
+      # on the usage check without one. Running on-box, that is localhost.
       if [ -x /opt/hailbytes/bin/ha-post-patch-verify.sh ]; then
-        sudo -E /opt/hailbytes/bin/ha-post-patch-verify.sh
+        sudo -E /opt/hailbytes/bin/ha-post-patch-verify.sh 127.0.0.1 ${var.admin_port}
       else
         echo "ERROR: /opt/hailbytes/bin/ha-post-patch-verify.sh not present on this VM image." >&2
         echo "       Rebuild the marketplace image from main; provision.sh installs the script." >&2

@@ -357,3 +357,23 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+# ----- Redis Private Link -----
+
+variable "redis_private_dns_zone_id" {
+  description = "Resource ID of an existing 'privatelink.redis.cache.windows.net' private DNS zone, linked to the vnet holding vm_subnet_id. Leave null and the module creates and links one. Supply a shared zone when several stacks live in the same resource group — private DNS zone names are unique per resource group, so two stacks that each create their own will collide."
+  type        = string
+  default     = null
+}
+
+variable "redis_private_endpoint_subnet_id" {
+  description = "Subnet for the Azure Cache for Redis private endpoint. Defaults to vm_subnet_id, which is correct for the standard topology; override only if your landing zone requires private endpoints in a dedicated subnet."
+  type        = string
+  default     = null
+}
+
+variable "admin_port" {
+  description = "Port the HailBytes admin server listens on. Used by the post-patch verifier, which probes the instance over localhost."
+  type        = number
+  default     = 3333
+}
