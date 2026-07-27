@@ -201,6 +201,16 @@ resource "azurerm_linux_virtual_machine" "vm" {
 
   boot_diagnostics {}
 
+  # source_image_reference forces replacement and marketplace_image_version
+  # defaults to "latest", so without this an apply made for an unrelated reason
+  # would rebuild the VM against whatever version Microsoft published since —
+  # destroying the OS disk and every local change on it. Rotate images
+  # explicitly: terraform apply -replace='module.sat.azurerm_linux_virtual_machine.vm'
+  # after taking a backup. Mirrors ignore_changes = [ami] on the AWS side.
+  lifecycle {
+    ignore_changes = [source_image_reference]
+  }
+
   depends_on = [azurerm_marketplace_agreement.hailbytes]
 }
 

@@ -34,7 +34,7 @@ output "db_instance_arn" {
 }
 
 output "db_mode" {
-  description = "Active DB mode: 'rds' or 'ec2'."
+  description = "Active DB mode: 'rds', 'ec2', or 'external'."
   value       = var.db_mode
 }
 
@@ -103,4 +103,9 @@ output "redis_mode" {
 output "flow_log_group_name" {
   description = "CloudWatch log group name receiving VPC Flow Logs. Empty string when enable_flow_logs is false."
   value       = var.enable_flow_logs ? aws_cloudwatch_log_group.flow_logs[0].name : ""
+}
+
+output "db_is_customer_managed" {
+  description = "True when db_mode = 'external'. When true, HailBytes provisions no database: availability, backups, patching and point-in-time restore are the customer's responsibility, and the pre-patch SSM document takes no server-side snapshot."
+  value       = local.use_external_db
 }

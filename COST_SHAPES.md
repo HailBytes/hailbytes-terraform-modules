@@ -79,17 +79,26 @@ at the Starter shape; a SKU is fulfilled by applying the overrides below
 (runnable examples live in each module's `examples/` directory where
 noted).
 
-| SKU | Plan | Metered vCores | Module | Overrides vs defaults |
-|---|---|---|---|---|
-| `HB-ESS` | Essential | 8 | `single-vm/aws` | `instance_type = "m6i.2xlarge"` |
-| `HB-STD` | Standard | 12 | `unlimited-scale/aws` | `instance_type = "m6i.xlarge"`, `asg_min_size = asg_desired_capacity = 3`, `asg_max_size = 3` (raise only if the customer enables auto-scaling) |
-| `HB-PRO` | Professional | 16 | `single-vm/aws` | `instance_type = "m6i.4xlarge"` |
-| `HB-PRO-HA` | Professional HA | 16 (2 × 8) | `ha-hot-hot/aws` | `instance_type = "m6i.2xlarge"`, `db_instance_class = "db.m6g.large"` — see [`examples/hb-pro-ha`](modules/ha-hot-hot/aws/examples/hb-pro-ha) |
-| `HB-SCALE` | Consortium / national scale (500k+ users) | 48 (6 × 8) | `unlimited-scale/aws` | `instance_type = "m6i.2xlarge"`, `asg_min_size = asg_desired_capacity = 6`, `asg_max_size = 12`, `db_instance_class = "db.r6g.2xlarge"`, `redis_node_type = "cache.m6g.large"` — see [`examples/hb-scale`](modules/unlimited-scale/aws/examples/hb-scale) |
+| SKU | Plan | List price (per product) | Metered vCores | Module | Overrides vs defaults |
+|---|---|---|---|---|---|
+| `HB-ESS` | Essential | $16,800/yr · $1,400/mo | 8 | `single-vm/aws` | `instance_type = "m6i.2xlarge"` |
+| `HB-STD` | Standard | $25,200/yr · $2,100/mo | 12 | `unlimited-scale/aws` | `instance_type = "m6i.xlarge"`, `asg_min_size = asg_desired_capacity = 3`, `asg_max_size = 3` (raise only if the customer enables auto-scaling) |
+| `HB-PRO` | Professional | $33,600/yr · $2,800/mo | 16 | `single-vm/aws` | `instance_type = "m6i.4xlarge"` |
+| `HB-PRO-HA` | Professional HA | $33,600/yr · $2,800/mo | 16 (2 × 8) | `ha-hot-hot/aws` | `instance_type = "m6i.2xlarge"`, `db_instance_class = "db.m6g.large"` — see [`examples/hb-pro-ha`](modules/ha-hot-hot/aws/examples/hb-pro-ha) |
+| `HB-SCALE` | Consortium / national scale (500k+ users) | partner-desk quote | 48 (6 × 8) | `unlimited-scale/aws` | `instance_type = "m6i.2xlarge"`, `asg_min_size = asg_desired_capacity = 6`, `asg_max_size = 12`, `db_instance_class = "db.r6g.2xlarge"`, `redis_node_type = "cache.m6g.large"` — see [`examples/hb-scale`](modules/unlimited-scale/aws/examples/hb-scale) |
+
+Each fixed plan price is the per-vCPU meter annualised — vCores × 730 h ×
+$0.24 × 12 — matching to within 0.1% on every plan. So a customer moving
+between marketplace metering and a catalog SKU sees no change in software
+price; only the billing shape changes.
 
 Azure equivalents by VM size: `Standard_D8s_v5` (8 vCPU) for the
 `m6i.2xlarge` rows, `Standard_D4s_v5` for `m6i.xlarge`,
-`Standard_D16s_v5` for `m6i.4xlarge`.
+`Standard_D16s_v5` for `m6i.4xlarge`. For each SKU's **Azure infrastructure
+cost and all-in first-year total**, see
+[`AZURE_COST_SHAPES.md`](AZURE_COST_SHAPES.md#sku--azure-sizing-and-total-first-year-cost)
+— Azure infra runs 19–47% of first-year cost depending on topology, so the
+plan price alone is not a customer's total.
 
 Notes:
 
@@ -118,6 +127,13 @@ does not require any data to leave the customer VPC.
 
 ## Azure shapes (East US, pay-as-you-go, list price, rounded)
 
+> [!NOTE]
+> **For North Europe, use [`AZURE_COST_SHAPES.md`](AZURE_COST_SHAPES.md)**,
+> which carries EUR + USD figures pulled from the Azure Retail Prices API
+> rather than derived from the module READMEs, and flags the line items that
+> can't be verified. The table below is an East US summary; its Postgres
+> Zone-Redundant line in particular understates the verified cost.
+
 Azure parity of the three-shape AWS table. Cost lines are derived from
 the per-module Azure READMEs and aligned at procurement-grade sizing
 (same per-vCPU meter, same Multi-AZ / Zone-Redundant defaults). All
@@ -126,7 +142,7 @@ managed services in the topology keep data in-region.
 | Shape | Module | Instances | Managed services | Infra | + per-vCore meter | **All-in (procurement-grade)** |
 |---|---|---|---|---|---|---|
 | **Single** | [`single-vm/azure`](modules/single-vm/azure) | 1× `Standard_D2s_v5` | none | ~$95/mo | 2 vCPU × 730h × $0.24 = ~$350/mo | **~$445/mo** |
-| **HA hot-hot** | [`ha-hot-hot/azure`](modules/ha-hot-hot/azure) | 2× `Standard_D2s_v5` | Standard LB + Azure Cache Redis (Std C1) + Postgres Flex Server Zone-Redundant | ~$585/mo | 4 vCPU × 730h × $0.24 = ~$700/mo | **~$1,285/mo (≈ 2.9× single)** |
+| **HA hot-hot** | [`ha-hot-hot/azure`](modules/ha-hot-hot/azure) | 2× `Standard_D2s_v5` | Standard LB + Azure Cache Redis (Std C1, not zone-redundant) + Postgres Flex Server Zone-Redundant | ~$585/mo | 4 vCPU × 730h × $0.24 = ~$700/mo | **~$1,285/mo (≈ 2.9× single)** |
 | **Unlimited scale** | [`unlimited-scale/azure`](modules/unlimited-scale/azure) | 3× `Standard_D2s_v5` (VMSS min) | Standard LB + Azure Cache Redis + Postgres Flex Server primary + 2× replicas (`GP_Standard_D4ds_v5`) | ~$1,480/mo | 6 vCPU × 730h × $0.24 = ~$1,050/mo | **~$2,530/mo at min, ~$5,150/mo at 10 instances** |
 
 Cross-cloud parity is intentional: an AWS HA deployment and an Azure HA
@@ -144,10 +160,17 @@ rejected by module validation**.
 
 | SKU / capacity | RAM | Per-month | Use case |
 |---|---|---|---|
-| Standard C1 | 1 GB | ~$55 | HA hot-hot or VMSS up to 5 instances |
-| Standard C2 | 2.5 GB | ~$110 | VMSS 5–10 instances |
-| Standard C3 | 6 GB | ~$220 | VMSS 10–20 instances |
-| Premium P1 | 6 GB | ~$420 | Zone-redundant primary; needed for ≥3-zone deployments or Redis persistence |
+| Standard C1 | 1 GB | ~$101 | HA hot-hot or VMSS up to 5 instances. Primary/replica, **not** zone-redundant — that needs Premium. |
+| Standard C2 | 2.5 GB | ~$164 | VMSS 5–10 instances |
+| Standard C3 | 6 GB | ~$329 | VMSS 10–20 instances |
+| Premium P1 | 6 GB | ~$405 | The only tier with zone redundancy; also needed for Redis persistence or VNet injection |
+
+> ⚠️ **This whole table is a retiring service.** Azure Cache for Redis
+> Basic/Standard/Premium retire **2028-09-30**; Enterprise **2027-03-31**. The
+> successor, Azure Managed Redis, is zone-redundant by default and prices
+> materially lower. Do not quote the Premium P1 upgrade as the route to zone
+> redundancy on a term that runs past 2028. Full detail and the AMR comparison:
+> [`AZURE_COST_SHAPES.md § Azure Cache for Redis sizing`](AZURE_COST_SHAPES.md#azure-cache-for-redis-sizing).
 
 ## When prices change
 

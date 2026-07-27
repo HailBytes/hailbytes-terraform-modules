@@ -48,3 +48,43 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "enable_nat_gateway" {
+  description = "Provision a NAT Gateway and associate it with the workload subnet. Required for the VMs to reach anything outbound: a Standard Load Balancer gives its backend pool no outbound SNAT, and the VMs have no public IP. Defaults true, matching enable_nat_gateway in modules/network/aws. Costs roughly EUR 28.84 / USD 32.85 per month plus EUR 0.0395 / USD 0.045 per GB processed — the per-GB charge applies to traffic bound for Azure services too, so pair it with service endpoints for Storage and Key Vault."
+  type        = bool
+  default     = true
+}
+
+variable "nat_gateway_idle_timeout_minutes" {
+  description = "TCP idle timeout for the NAT Gateway, in minutes (4-120)."
+  type        = number
+  default     = 10
+  validation {
+    condition     = var.nat_gateway_idle_timeout_minutes >= 4 && var.nat_gateway_idle_timeout_minutes <= 120
+    error_message = "nat_gateway_idle_timeout_minutes must be between 4 and 120."
+  }
+}
+
+variable "enable_flow_logs" {
+  description = "Enable VNet flow logs to a module-created Storage Account. Closes the gap between SECURITY-DEFAULTS.md's claim that Azure flow logs are on by default and the fact that no Azure module produced one. Implemented as VNet flow logs rather than NSG flow logs, because NSG flow logs are being retired. Requires a Network Watcher in the region — Azure auto-creates one, see network_watcher_name."
+  type        = bool
+  default     = true
+}
+
+variable "network_watcher_name" {
+  description = "Name of the Network Watcher in this region. Azure auto-provisions one named NetworkWatcher_<region> in the NetworkWatcherRG resource group when a vnet is first created in a subscription; override if your landing zone names it differently. Ignored when enable_flow_logs = false."
+  type        = string
+  default     = null
+}
+
+variable "network_watcher_resource_group_name" {
+  description = "Resource group holding the Network Watcher. Defaults to Azure's own NetworkWatcherRG. Ignored when enable_flow_logs = false."
+  type        = string
+  default     = "NetworkWatcherRG"
+}
+
+variable "flow_log_retention_days" {
+  description = "Days to retain flow logs in the Storage Account."
+  type        = number
+  default     = 30
+}

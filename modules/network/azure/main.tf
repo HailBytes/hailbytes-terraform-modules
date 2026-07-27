@@ -116,3 +116,110 @@ resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
   registration_enabled  = false
   tags                  = local.common_tags
 }
+
+# ----- Outbound egress: NAT Gateway -----
+#
+# Without this the workload VMs have no outbound path at all. They sit behind a
+# Standard Load Balancer with inbound rules only and carry no public IP, and a
+# Standard LB does not provide outbound SNAT to its backend pool members. The
+# result is no OS security updates, no SMTP sending (which is the entire point
+# of SAT), and no customer-chosen integrations.
+#
+# This is the counterpart of aws_nat_gateway in modules/network/aws, which
+# creates one per AZ. A single NAT Gateway here is regional (non-zonal): Azure
+# places it in a zone of its choosing and it is not zone-redundant, so a zonal
+# outage can take egress with it while the zone-spread VMs keep serving inbound
+# traffic. Per-zone NAT Gateways are the fully resilient pattern and cost one
+# gateway per zone; see docs/AZURE_HA_PARITY_AUDIT.md.
+
+resource "azurerm_public_ip" "nat" {
+  count = var.enable_nat_gateway ? 1 : 0
+
+  name                = "${var.name_prefix}-nat-pip"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  allocation_method   = "Static"
+  sku                 = "Standard"
+  tags                = local.common_tags
+}
+
+resource "azurerm_nat_gateway" "main" {
+  count = var.enable_nat_gateway ? 1 : 0
+
+  name                    = "${var.name_prefix}-nat"
+  resource_group_name     = var.resource_group_name
+  location                = var.location
+  sku_name                = "Standard"
+  idle_timeout_in_minutes = var.nat_gateway_idle_timeout_minutes
+  tags                    = local.common_tags
+}
+
+resource "azurerm_nat_gateway_public_ip_association" "main" {
+  count = var.enable_nat_gateway ? 1 : 0
+
+  nat_gateway_id       = azurerm_nat_gateway.main[0].id
+  public_ip_address_id = azurerm_public_ip.nat[0].id
+}
+
+# Only the workload subnet needs egress. The LB subnet holds a public frontend
+# and the db subnet is delegated to Flexible Server, which manages its own.
+resource "azurerm_subnet_nat_gateway_association" "workload" {
+  count = var.enable_nat_gateway ? 1 : 0
+
+  subnet_id      = azurerm_subnet.workload.id
+  nat_gateway_id = azurerm_nat_gateway.main[0].id
+}
+
+# ----- VNet flow logs (gap B1) -----
+#
+# SECURITY-DEFAULTS.md claimed "VPC Flow Logs / Azure NSG Flow Logs are enabled
+# by default (enable_flow_logs = true)". The variable existed only in the AWS
+# modules; nothing on the Azure side produced a flow log at all.
+#
+# This implements VNet flow logs rather than NSG flow logs: Microsoft has
+# announced NSG flow logs' retirement in favour of VNet flow logs, so building
+# the NSG variant now would be building the deprecated one. Flow logs need a
+# Network Watcher in the region — Azure normally auto-creates one per region as
+# NetworkWatcherRG/NetworkWatcher_<region>, which is what network_watcher_name
+# and network_watcher_resource_group_name default to.
+
+resource "azurerm_storage_account" "flow_logs" {
+  count = var.enable_flow_logs ? 1 : 0
+
+  name                            = substr(replace("${var.name_prefix}flowlogs", "-", ""), 0, 24)
+  resource_group_name             = var.resource_group_name
+  location                        = var.location
+  account_tier                    = "Standard"
+  account_replication_type        = "LRS"
+  account_kind                    = "StorageV2"
+  min_tls_version                 = "TLS1_2"
+  shared_access_key_enabled       = false
+  allow_nested_items_to_be_public = false
+  public_network_access_enabled   = false
+  tags                            = local.common_tags
+
+  blob_properties {
+    delete_retention_policy {
+      days = var.flow_log_retention_days
+    }
+  }
+}
+
+resource "azurerm_network_watcher_flow_log" "vnet" {
+  count = var.enable_flow_logs ? 1 : 0
+
+  name                 = "${var.name_prefix}-vnet-flowlog"
+  network_watcher_name = coalesce(var.network_watcher_name, "NetworkWatcher_${var.location}")
+  resource_group_name  = var.network_watcher_resource_group_name
+  location             = var.location
+  target_resource_id   = azurerm_virtual_network.main.id
+  storage_account_id   = azurerm_storage_account.flow_logs[0].id
+  enabled              = true
+  version              = 2
+  tags                 = local.common_tags
+
+  retention_policy {
+    enabled = true
+    days    = var.flow_log_retention_days
+  }
+}

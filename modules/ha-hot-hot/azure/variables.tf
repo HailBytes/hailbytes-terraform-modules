@@ -60,6 +60,29 @@ variable "ssh_public_key" {
 
 # ----- Key Vault network ACL -----
 
+variable "db_log_min_duration_ms" {
+  description = "Log Postgres statements slower than this many milliseconds. Flexible Server's default is -1 (log nothing), which makes the PostgreSQLLogs diagnostic setting useless for triage. Matches the AWS parameter group's log_min_duration_statement. Set -1 to disable."
+  type        = number
+  default     = 1000
+}
+
+variable "enable_db_delete_lock" {
+  description = "Place a CanNotDelete management lock on the Flexible Server. Azure has no deletion_protection argument the way RDS does; this is the equivalent. It blocks deletion by ANYONE including terraform destroy, so leave it off for PoCs (a locked server makes destroy fail partway and leave a half-destroyed stack) and turn it on for production. Disable it in a separate apply before a planned teardown."
+  type        = bool
+  default     = false
+}
+
+variable "key_vault_name" {
+  description = "Override the Key Vault name. Leave null to derive it from name_prefix. Key Vault names are globally unique AND the vault is created with purge_protection_enabled = true and a 30-day soft-delete window, which disk encryption sets require and which cannot be force-purged. So destroying a stack and re-creating it under the same name inside 30 days FAILS, with no way out but waiting or renaming. If you are iterating on a PoC, set a unique name per iteration (e.g. hbsatkv0731a). Max 24 chars, alphanumerics and hyphens."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.key_vault_name == null || can(regex("^[a-zA-Z][a-zA-Z0-9-]{2,23}$", var.key_vault_name))
+    error_message = "key_vault_name must be 3-24 characters, start with a letter, and contain only alphanumerics and hyphens."
+  }
+}
+
 variable "key_vault_network_default_action" {
   description = "Default action for the Key Vault network ACL. 'Allow' preserves the pre-network-ACL behavior (public endpoint open, RBAC-gated); set 'Deny' once you've added the operator IP to key_vault_ip_rules and the Microsoft.KeyVault service endpoint on vm_subnet_id. AzureServices bypass is always on so the VMs' managed identities can read secrets either way."
   type        = string
@@ -99,7 +122,7 @@ variable "data_disk_size_gb" {
 }
 
 variable "enable_customer_managed_key" {
-  description = "Encrypt VM OS and data disks with a customer-managed key (RSA-4096 in this module's Key Vault, via a disk encryption set) instead of platform-managed keys. Matches the single-vm tier's CMK option."
+  description = "Encrypt VM disks, the PostgreSQL Flexible Server, and the backup Storage Account with a customer-managed RSA-4096 key in this module's Key Vault, instead of platform-managed keys. WARNING — DESTRUCTIVE ON AN EXISTING DEPLOYMENT: Azure allows Flexible Server CMK to be configured only at server creation, so turning this on for a server that already exists REPLACES the database. Set it on day one or migrate via point-in-time restore to a new server. It also cannot be turned back off once on. Cannot be combined with postgres_geo_redundant_backup_enabled (Azure requires a second key vault and identity in the paired region). Azure Cache for Redis is NOT covered: CMK there is an Enterprise-tier-only feature, and Enterprise retires 2027-03-31."
   type        = bool
   default     = false
 }
@@ -159,12 +182,12 @@ variable "marketplace_image_version" {
 # ----- Patching and migration safety -----
 
 variable "db_mode" {
-  description = "Database backend. 'flexible_server' (default) provisions Azure Database for PostgreSQL Flexible Server — recommended for production. 'vm' provisions a third Linux VM with self-managed Postgres 16 for customers that must keep data plane on a VM."
+  description = "Database backend. 'flexible_server' (default) provisions Azure Database for PostgreSQL Flexible Server — recommended for production, and the only mode with zone-redundant failover and point-in-time restore. 'vm' provisions a third Linux VM with self-managed Postgres 16 for customers that must keep the data plane on a VM. 'external' connects to a Postgres server the customer already operates: the module provisions no database at all, and the customer owns availability, backups and patching for it."
   type        = string
   default     = "flexible_server"
   validation {
-    condition     = contains(["flexible_server", "vm"], var.db_mode)
-    error_message = "db_mode must be one of: flexible_server, vm."
+    condition     = contains(["flexible_server", "vm", "external"], var.db_mode)
+    error_message = "db_mode must be one of: flexible_server, vm, external."
   }
 }
 
@@ -311,7 +334,29 @@ variable "appgw_tls_pfx_password" {
 }
 
 variable "appgw_backend_host_header" {
-  description = "Optional Host header App Gateway sends to the SAT backend pool. Leave null to use the backend's IP."
+  description = "Host header App Gateway sends to the backend pool, and the name it validates the backend certificate's CN against. **Required when appgw_backend_protocol = \"Https\"** — App Gateway v2 checks that this matches the CN the backend presents. The marketplace image's first-boot self-signed certificate uses CN \"hailbytes-sat-admin\", so that is the value to set unless you have replaced the certificate on the VMs."
+  type        = string
+  default     = null
+}
+
+variable "appgw_backend_protocol" {
+  description = "Protocol for the App Gateway -> VM hop. \"Http\" terminates TLS at the gateway and uses the private VNet hop in clear — simplest, and the hop never leaves the customer's vnet. \"Https\" gives end-to-end encryption but requires appgw_backend_root_cert_pem and appgw_backend_host_header, because App Gateway v2 validates the backend certificate against an uploaded trusted root and matches its CN."
+  type        = string
+  default     = "Http"
+  validation {
+    condition     = contains(["Http", "Https"], var.appgw_backend_protocol)
+    error_message = "appgw_backend_protocol must be one of: Http, Https."
+  }
+}
+
+variable "appgw_backend_port" {
+  description = "Port App Gateway connects to on the VMs. 443 pairs with appgw_backend_protocol = \"Https\"; 80 pairs with \"Http\"."
+  type        = number
+  default     = 80
+}
+
+variable "appgw_backend_root_cert_pem" {
+  description = "PEM-encoded root certificate of the backend server certificate, uploaded to App Gateway as a trusted root. Required when appgw_backend_protocol = \"Https\": Microsoft's end-to-end TLS documentation states that a self-signed or unknown-CA backend certificate will only be trusted if its root is in the backend settings' trusted-root list, otherwise the gateway marks the pool unhealthy and serves 502. For the marketplace image's self-signed certificate, the certificate is its own root — read it off a VM at /opt/hailbytes-sat/hailbytes-sat-admin.crt."
   type        = string
   default     = null
 }
@@ -356,4 +401,106 @@ variable "postgres_geo_redundant_backup_enabled" {
 variable "tags" {
   type    = map(string)
   default = {}
+}
+
+# ----- Redis Private Link -----
+
+variable "redis_private_dns_zone_id" {
+  description = "Resource ID of an existing 'privatelink.redis.cache.windows.net' private DNS zone, linked to the vnet holding vm_subnet_id. Leave null and the module creates and links one. Supply a shared zone when several stacks live in the same resource group — private DNS zone names are unique per resource group, so two stacks that each create their own will collide."
+  type        = string
+  default     = null
+}
+
+variable "redis_private_endpoint_subnet_id" {
+  description = "Subnet for the Azure Cache for Redis private endpoint. Defaults to vm_subnet_id, which is correct for the standard topology; override only if your landing zone requires private endpoints in a dedicated subnet."
+  type        = string
+  default     = null
+}
+
+variable "admin_port" {
+  description = "Port the HailBytes admin server listens on. Used by the post-patch verifier, which probes the instance over localhost."
+  type        = number
+  default     = 3333
+}
+
+# ----- Customer-managed Postgres (db_mode = "external") -----
+#
+# Mirrors the redis_endpoint_override escape hatch. A customer who already runs
+# Postgres at scale can point the stack at it and pay Azure nothing for a
+# database. The password lands in this module's Key Vault under the same secret
+# name the other two modes use, so the marketplace image bootstraps identically.
+
+variable "external_db_host" {
+  description = "Hostname or private IP of a customer-operated PostgreSQL server. Required when db_mode = \"external\", ignored otherwise. Must be resolvable and reachable from vm_subnet_id."
+  type        = string
+  default     = null
+}
+
+variable "external_db_port" {
+  description = "Port of the customer-operated PostgreSQL server."
+  type        = number
+  default     = 5432
+  validation {
+    condition     = var.external_db_port >= 1 && var.external_db_port <= 65535
+    error_message = "external_db_port must be between 1 and 65535."
+  }
+}
+
+variable "external_db_name" {
+  description = "Database name on the customer-operated server. It must already exist; the module does not create it."
+  type        = string
+  default     = "hailbytes"
+}
+
+variable "external_db_username" {
+  description = "Role the application connects as. It needs full DDL rights on external_db_name — the binary runs goose migrations at boot."
+  type        = string
+  default     = "hailbytes"
+}
+
+variable "external_db_password" {
+  description = "Password for external_db_username. Required when db_mode = \"external\". Written to this module's Key Vault as 'hailbytes-db-password'; supply it through a tfvars file or TF_VAR_ environment variable, never a literal in version control."
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
+variable "external_db_sslmode" {
+  description = "libpq sslmode for the connection to the customer-operated server. 'require' is the minimum this module accepts; 'verify-full' is recommended when the server presents a certificate chained to a CA the VMs trust."
+  type        = string
+  default     = "require"
+  validation {
+    condition     = contains(["require", "verify-ca", "verify-full"], var.external_db_sslmode)
+    error_message = "external_db_sslmode must be one of: require, verify-ca, verify-full. Unencrypted modes (disable, allow, prefer) are not accepted."
+  }
+}
+
+# ----- Observability and management access -----
+
+variable "enable_diagnostics" {
+  description = "Send load-balancer, database, cache and (when enabled) Application Gateway diagnostics to a Log Analytics workspace. Closes the gap between SECURITY-DEFAULTS.md's logging claims and what the Azure modules actually did. Note the Standard Load Balancer is L4 and has no request-level access log — the App Gateway's ApplicationGatewayAccessLog is the closest analogue of AWS ALB access logs. Log Analytics ingestion is billed per GB by Azure."
+  type        = bool
+  default     = true
+}
+
+variable "log_analytics_workspace_id" {
+  description = "Resource ID of an existing Log Analytics workspace to send diagnostics to. Leave null and the module creates one. Supply your landing zone's central workspace if you have one — most enterprises do, and a per-deployment workspace fragments their queries."
+  type        = string
+  default     = null
+}
+
+variable "diagnostics_retention_days" {
+  description = "Retention for the module-created Log Analytics workspace. Ignored when log_analytics_workspace_id is supplied."
+  type        = number
+  default     = 30
+  validation {
+    condition     = var.diagnostics_retention_days >= 30 && var.diagnostics_retention_days <= 730
+    error_message = "diagnostics_retention_days must be between 30 and 730 (Log Analytics constraint)."
+  }
+}
+
+variable "enable_management_access" {
+  description = "Install the AADSSHLoginForLinux extension on each app VM, giving Entra-authenticated and RBAC-gated SSH via `az ssh vm` with no public IP. This is the Azure counterpart of the AWS module's enable_management_access (SSM Session Manager). Operators still need the 'Virtual Machine Administrator Login' or 'User Login' role assigned to them — the extension provides the mechanism, not the grant."
+  type        = bool
+  default     = false
 }

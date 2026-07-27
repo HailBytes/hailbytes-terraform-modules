@@ -14,12 +14,16 @@ on:
   pull_request:
     paths:
       - 'modules/**'
+      - 'quickstart/**'
       - '.github/workflows/ci.yml'
+      - '.github/scripts/**'
   push:
     branches: [main]
     paths:
       - 'modules/**'
+      - 'quickstart/**'
       - '.github/workflows/ci.yml'
+      - '.github/scripts/**'
 
 permissions:
   contents: read
@@ -155,6 +159,145 @@ jobs:
       - name: terraform test
         working-directory: modules/${{ matrix.module }}
         run: terraform test -no-color
+
+  # ---------------------------------------------------------------------
+  # mock-provider fidelity.  Every defect the July 2026 Azure HA audit
+  # turned up was semantic, not syntactic, and terraform test only catches
+  # a semantic defect if a test asserts against it.  This guards the two
+  # properties that make the mocked suites worth running: mock resource IDs
+  # must be well-formed for their cloud (the provider parses IDs it is
+  # handed, and a short random token fails in a way that reads as a harness
+  # bug), and each tier module's tests must cite at least one provider or
+  # service doc so the constraints they encode stay traceable to a source
+  # rather than becoming folklore.
+  # ---------------------------------------------------------------------
+  mock-fidelity:
+    name: terraform test mock fidelity
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Mock providers use realistic IDs and cite their sources
+        run: python3 .github/scripts/mock_fidelity_check.py
+
+      # marketplace_image_version defaults to "latest", and the image reference
+      # forces replacement. Without ignore_changes, an apply made for an
+      # unrelated reason rebuilds the VM against whatever version the publisher
+      # shipped since — and in the HA tier, `count` means BOTH app VMs go at
+      # once. Image rotation must be an explicit `-replace`, which is what the
+      # patching runbooks document. A lifecycle block is invisible to
+      # `terraform test`, so this is asserted statically.
+      - name: VM image rotation is explicit, never a side effect of apply
+        run: |
+          set -eo pipefail
+          fail=0
+          check() {  # check <file> <resource> <attribute>
+            if ! awk -v r="resource \"$2\"" '
+                  index($0, r) { inres=1 }
+                  inres && /ignore_changes/ { print; found=1 }
+                  inres && /^}/ { inres=0 }
+                  END { exit(found ? 0 : 1) }
+                ' "$1" | grep -q "$3"; then
+              echo "::error file=$1::$2 has no lifecycle ignore_changes on $3."
+              echo "  A published image version would replace it on an unrelated apply."
+              fail=1
+            fi
+          }
+          check modules/single-vm/azure/main.tf 'azurerm_linux_virtual_machine" "vm' source_image_reference
+          check modules/ha-hot-hot/azure/main.tf 'azurerm_linux_virtual_machine" "vm'    source_image_reference
+          check modules/ha-hot-hot/azure/main.tf 'azurerm_linux_virtual_machine" "db_vm' source_image_reference
+          check modules/single-vm/aws/main.tf    'aws_instance" "vm'    ami
+          check modules/ha-hot-hot/aws/main.tf   'aws_instance" "vm'    ami
+          check modules/ha-hot-hot/aws/main.tf   'aws_instance" "db_ec2' ami
+          check modules/unlimited-scale/aws/main.tf 'aws_launch_template" "main' image_id
+          [ "${fail}" = "1" ] && exit 1
+          # Azure's autoscale tier is deliberately absent: the VMSS carries
+          # upgrade_mode = "Rolling" with a rolling_upgrade_policy, so an image
+          # change rolls through instances in batches rather than replacing the
+          # set. That is the intended mechanism, not a gap.
+          echo "Image rotation is explicit in every module that replaces a VM."
+
+      # A CMK key URI that carries a version GUID pins the service to that
+      # version. When the version expires or is disabled, Flexible Server goes
+      # Inaccessible and denies every connection — Microsoft documents this as a
+      # leading cause of that state. A versionless URI lets the service pick up
+      # rotations automatically. Both plan values are computed, so terraform
+      # test cannot tell the two apart; this can.
+      # Scoped to customer_managed_key blocks only. azurerm_disk_encryption_set
+      # also takes a key_vault_key_id, and a versioned key there is a legitimate
+      # manual-rotation choice (auto_key_rotation_enabled is the opt-in), so it
+      # is deliberately not covered.
+      - name: CMK key URIs are versionless
+        run: |
+          set -eo pipefail
+          # Track the enclosing resource rather than the block: the CMK blocks
+          # are written as `dynamic "customer_managed_key"`, so matching the
+          # block name directly would miss them.
+          hits=$(awk '
+            /^resource "/ { split($0, f, "\""); rtype = f[2] }
+            rtype != "azurerm_disk_encryption_set" \
+              && /key_vault_key_id/ && /\.id[[:space:]]*$/ {
+              printf "%s:%d:%s\n", FILENAME, FNR, $0
+            }
+          ' $(find modules -name '*.tf'))
+          if [ -n "${hits}" ]; then
+            echo "${hits}"
+            echo "::error::A customer_managed_key block uses .id (versioned) instead of .versionless_id."
+            echo "  A pinned key version takes the service Inaccessible when it expires."
+            exit 1
+          fi
+          echo "All service CMK references use versionless key URIs."
+
+  # ---------------------------------------------------------------------
+  # quickstart/deploy.sh is the guided Cloud Shell installer — the first
+  # thing many customers run, and the only part of this repo that executes
+  # on their machine. It gets shellcheck plus unit tests over the logic that
+  # can fail silently: cloud detection, the tier -> module-name mapping, the
+  # marketplace identifiers matching the modules, and the assertion that
+  # every billing-relevant branch actually warns about cost.
+  # ---------------------------------------------------------------------
+  quickstart-wizard:
+    name: quickstart wizard — shellcheck + unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: shellcheck
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck -S warning quickstart/deploy.sh quickstart/tests/deploy_test.sh
+
+      - name: Unit tests
+        run: bash quickstart/tests/deploy_test.sh
+
+      - name: Cloud Shell tool availability
+        # Both Cloud Shells ship terraform, git and their own CLI. If the
+        # wizard grows a dependency on something else, this catches it before
+        # a customer does.
+        run: |
+          set -eo pipefail
+          allowed='^(terraform|git|az|aws|curl|awk|sed|grep|cut|mkdir|chmod|printf|read|date|cat|command)$'
+          # Extract bare command words the script invokes at the start of a line
+          # or after a pipe, and flag anything outside the allow-list.
+          mapfile -t used < <(grep -oE '(^|[;&|]|\$\()[[:space:]]*[a-z][a-z0-9_-]{1,15}[[:space:]]' quickstart/deploy.sh \
+            | tr -d ';&|$()' | tr -d ' ' | sort -u)
+          bad=()
+          for c in "${used[@]}"; do
+            [[ "$c" =~ $allowed ]] && continue
+            # Skip shell keywords and the script's own functions.
+            grep -qE "^${c}\(\) \{" quickstart/deploy.sh && continue
+            case "$c" in if|then|else|elif|fi|for|do|done|while|case|esac|local|return|exit|set|declare|unset|in|function|e|n|s|f|z|d|t|true|false) continue ;;
+            esac
+            bad+=("$c")
+          done
+          if [ "${#bad[@]}" -gt 0 ]; then
+            echo "::warning::commands used by the wizard that are not on the Cloud Shell allow-list: ${bad[*]}"
+          fi
+          echo "Command audit complete."
 
   tflint:
     name: tflint
