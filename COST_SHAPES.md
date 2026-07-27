@@ -161,9 +161,16 @@ rejected by module validation**.
 | SKU / capacity | RAM | Per-month | Use case |
 |---|---|---|---|
 | Standard C1 | 1 GB | ~$101 | HA hot-hot or VMSS up to 5 instances. Primary/replica, **not** zone-redundant — that needs Premium. |
-| Standard C2 | 2.5 GB | ~$110 | VMSS 5–10 instances |
-| Standard C3 | 6 GB | ~$220 | VMSS 10–20 instances |
+| Standard C2 | 2.5 GB | ~$164 | VMSS 5–10 instances |
+| Standard C3 | 6 GB | ~$329 | VMSS 10–20 instances |
 | Premium P1 | 6 GB | ~$405 | The only tier with zone redundancy; also needed for Redis persistence or VNet injection |
+
+> ⚠️ **This whole table is a retiring service.** Azure Cache for Redis
+> Basic/Standard/Premium retire **2028-09-30**; Enterprise **2027-03-31**. The
+> successor, Azure Managed Redis, is zone-redundant by default and prices
+> materially lower. Do not quote the Premium P1 upgrade as the route to zone
+> redundancy on a term that runs past 2028. Full detail and the AMR comparison:
+> [`AZURE_COST_SHAPES.md § Azure Cache for Redis sizing`](AZURE_COST_SHAPES.md#azure-cache-for-redis-sizing).
 
 ## When prices change
 

@@ -256,6 +256,14 @@ FAQ](https://learn.microsoft.com/en-us/azure/azure-cache-for-redis/retirement-fa
    access-key-in-Key-Vault plumbing that gap A3 had to build.
 4. Reservations on the old service are honoured only to the retirement date, so
    any Redis reservation in a cost model needs a term that ends before it.
+5. **It is substantially cheaper**, which was not expected and matters for the
+   deal. Verified against the Retail Prices API for North Europe: AMR Balanced
+   B1 (1 GB) is **$25.55/mo** against Standard C1's **$100.74** — and B5 (5 GB,
+   zone-redundant by default) is **$125.56** against the **$405.15** Premium P1
+   that B4 priced as the only route to zone redundancy. Full table in
+   [`AZURE_COST_SHAPES.md`](../AZURE_COST_SHAPES.md#what-the-successor-costs),
+   including two figures flagged as not-yet-verified (whether the published rate
+   is the HA rate, and whether SAT/ASM's Redis use is cluster-safe).
 
 **Not actioned in this branch.** Migrating to Azure Managed Redis changes the
 resource type, the connection contract (clustered by default), and the

@@ -344,6 +344,66 @@ replica pair.
 > primary/replica" in `modules/ha-hot-hot/azure/README.md` and in
 > `COST_SHAPES.md` is incorrect and is tracked in the Azure HA parity audit.
 
+> ⚠️ **Every price in this table is for a service Microsoft is retiring.**
+> Azure Cache for Redis Basic/Standard/**Premium** retire **2028-09-30**;
+> Enterprise/Enterprise Flash retire **2027-03-31**
+> ([retirement FAQ](https://learn.microsoft.com/en-us/azure/azure-cache-for-redis/retirement-faq)).
+> The successor is **Azure Managed Redis**.
+>
+> Three consequences for quoting:
+>
+> 1. **Don't sell the Premium P1 upgrade as the route to zone redundancy on a
+>    multi-year term.** Azure Managed Redis is zone-redundant by default. Paying
+>    €267/month extra for a capability the replacement service includes, on a
+>    service that stops existing in 2028, is the wrong recommendation.
+> 2. **Any Redis reservation must end before the retirement date.** Reservations
+>    on this service are honoured only until then — 2028-09-30 for
+>    Basic/Standard/Premium, 2027-03-31 for Enterprise. A 3-year Redis
+>    reservation taken in 2026 runs past the Enterprise date.
+> 3. **Azure Managed Redis is priced differently** — its SKUs are structured
+>    directly on memory and performance rather than on capacity plus scale
+>    factor, and it drops the Enterprise quorum node. The figures above do not
+>    carry across; re-price against AMR before quoting anything that runs into
+>    2028.
+>
+> The modules have not migrated yet. See
+> [`docs/AZURE_HA_PARITY_AUDIT.md`](docs/AZURE_HA_PARITY_AUDIT.md#new-finding--azure-cache-for-redis-is-being-retired).
+
+### What the successor costs
+
+Verified against the Azure Retail Prices API, North Europe, same query as every
+other figure in this document (`serviceName eq 'Redis Cache'`, `armRegionName eq
+'northeurope'`). Azure Managed Redis Balanced SKUs are named for their memory in
+GB, so the comparison is like-for-like on capacity.
+
+| Capacity | Azure Cache for Redis (retiring) | Azure Managed Redis Balanced | Change |
+|---|---|---|---|
+| 1 GB | Standard C1 — $100.74/mo | **B1 — $25.55/mo** | **−75%** |
+| 3 GB | *(no 3 GB SKU; C2 is 2.5 GB at $164.25)* | B3 — $52.56/mo | −68% at more RAM |
+| 5–6 GB | Standard C3 (6 GB) — $328.50/mo | B5 (5 GB) — $125.56/mo | −62% |
+| 6 GB, zone-redundant | Premium P1 — $405.15/mo | B5 — $125.56/mo (**zone-redundant by default**) | **−69%** |
+
+Reserved pricing exists too: B1 is $199/year on a 1-year term ($16.58/mo, −35%),
+B5 is $979/year.
+
+The headline: **the cache line in every Azure shape in this document is roughly
+4× what the successor service charges, and the $405.15 Premium P1 upgrade buys
+zone redundancy that the successor includes at $125.56.** For the HA shape that
+is $75/month of pure overpayment at the default, or $280/month if a customer was
+quoted Premium for zone redundancy.
+
+> **Two things here are not yet verified and should not be quoted as final:**
+>
+> 1. Microsoft documents a "non-HA option for dev/test and nonproduction at a
+>    reduced cost", but the Retail Prices API publishes a **single** consumption
+>    meter per Balanced SKU in North Europe — no HA/non-HA split. So it is not
+>    established from pricing data alone whether $25.55 is the HA figure or
+>    whether HA is a multiplier on top. Confirm before it reaches a quote.
+> 2. Azure Managed Redis is **clustered by default**. SAT/ASM use Redis for
+>    sessions and worker locks; whether those code paths are cluster-safe (no
+>    cross-slot commands) has not been checked. A non-clustered AMR option
+>    exists up to 25 GB, which is the conservative migration target.
+
 ---
 
 ## Application Gateway vs Standard Load Balancer

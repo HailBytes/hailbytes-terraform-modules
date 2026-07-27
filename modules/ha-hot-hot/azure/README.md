@@ -71,6 +71,25 @@ meter and tier sizing are aligned.
 > is zone-redundant", move them to Premium P1 (+$304/month over Standard C1) —
 > don't describe the default as zone-redundant, because it isn't.
 
+> [!WARNING]
+> **Azure Cache for Redis is being retired.** Microsoft has published retirement
+> dates for every tier: Basic/Standard/**Premium** on **2028-09-30** (instances
+> disabled from 2028-10-01), Enterprise/Enterprise Flash on **2027-03-31**. The
+> replacement is [Azure Managed
+> Redis](https://learn.microsoft.com/en-us/azure/redis/overview), a first-party
+> service with no Marketplace component.
+>
+> Read this alongside the note above before quoting the Premium upgrade: Azure
+> Managed Redis is **zone-redundant by default**, so it delivers zone redundancy
+> without the Premium step-up, and it authenticates with Entra ID rather than
+> access keys. For any contract term running past 2028, migration is the
+> destination, not Premium. This module has not moved yet — the change touches
+> the resource type, the clustering contract, and the credential model the
+> marketplace image consumes. See
+> [`AZURE_HA_PARITY_AUDIT.md`](../../../docs/AZURE_HA_PARITY_AUDIT.md#new-finding--azure-cache-for-redis-is-being-retired).
+> Source: [retirement
+> FAQ](https://learn.microsoft.com/en-us/azure/azure-cache-for-redis/retirement-faq).
+
 ## Usage
 
 > No `v1.0.0` tag exists yet ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)); pin to a commit SHA instead of `?ref=v1.0.0` until a tagged release ships.
