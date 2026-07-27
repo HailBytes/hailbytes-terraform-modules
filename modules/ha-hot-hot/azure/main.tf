@@ -438,6 +438,21 @@ resource "azurerm_linux_virtual_machine" "vm" {
     }
   }))
 
+  # Both attributes force replacement, and `count` means a single apply would
+  # replace BOTH app VMs at once — a full outage of a topology whose entire
+  # purpose is not having one. marketplace_image_version defaults to "latest",
+  # so an unrelated apply (a tag change, a new allowed CIDR) picks up whatever
+  # version Microsoft published since and takes the deployment down without the
+  # operator ever asking for an upgrade.
+  #
+  # Image rotation is therefore explicit and one VM at a time:
+  #   terraform apply -replace='module.sat.azurerm_linux_virtual_machine.vm[0]'
+  # which is exactly the rolling procedure in docs/AZURE_PATCHING_AND_MIGRATION.md.
+  # This mirrors ignore_changes = [ami, user_data] on the AWS side.
+  lifecycle {
+    ignore_changes = [source_image_reference, custom_data]
+  }
+
   depends_on = [
     azurerm_marketplace_agreement.hailbytes,
     azurerm_postgresql_flexible_server.main,
@@ -797,6 +812,16 @@ resource "azurerm_linux_virtual_machine" "db_vm" {
       - /usr/local/sbin/hailbytes-init-postgres.sh
   EOC
   )
+
+  # source_image_reference.version is "latest" here too, and this VM holds the
+  # database on an attached data disk. An implicit replacement would detach the
+  # disk and re-run initdb's guard against a volume that already has a cluster
+  # on it — recoverable, but only after an outage nobody scheduled. Ubuntu
+  # security patching happens in-guest via unattended-upgrades, not by replacing
+  # the VM. Mirrors ignore_changes = [ami, user_data] on aws_instance.db_ec2.
+  lifecycle {
+    ignore_changes = [source_image_reference, custom_data]
+  }
 
   depends_on = [azurerm_role_assignment.des_kv_crypto_user]
 }

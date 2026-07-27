@@ -29,7 +29,7 @@ Status column: ✅ works today · ⚠️ works with caveats · ⛔ blocked.
 | **Patches are customer-initiated.** | Nothing in the modules schedules an image change. No `azurerm_automation_schedule`, no cron in `custom_data`, no Update Manager maintenance configuration. Image version is pinned by `var.marketplace_image_version`; only a customer-run `terraform apply` moves it. | ✅ |
 | **HailBytes retains no admin access.** | No HailBytes service principal, no shared SAS token, no HailBytes tenant in any `azurerm_role_assignment`. Every role assignment targets either the caller running `terraform apply` (`data.azurerm_client_config.current.object_id`), the module's own disk-encryption-set identity, or a VM's system-assigned identity. | ✅ |
 | **No expected data loss from patching.** | Bundle lands in a Storage Account container with blob versioning + an unlocked immutability policy + lifecycle to Cool at 30 d / Archive at 90 d, uploaded with the VM's managed identity, with a Flexible Server on-demand backup alongside. In `db_mode = "external"` the bundle is still taken; the server-side snapshot is the customer's responsibility. | ✅ |
-| **Rolling replace keeps capacity at 50%.** | Two standalone zonal VMs behind a Standard Load Balancer. There is no VMSS on this tier, so no `rolling_upgrade_policy` and no `automatic_instance_repair` — the operator replaces one VM at a time with `-target`. A plain `terraform apply` after bumping a pinned image version **replaces both VMs in the same apply**. | ⚠️ see [Step 3](#step-3--rolling-replace-one-vm-at-a-time) |
+| **Rolling replace keeps capacity at 50%.** | Two standalone zonal VMs behind a Standard Load Balancer. There is no VMSS on this tier, so no `rolling_upgrade_policy` and no `automatic_instance_repair` — the operator replaces one VM at a time with `-replace`. `ignore_changes` on the image reference means a plain `terraform apply` never replaces a VM on its own — including the case where a newly published version would otherwise have taken **both** down in one run. | ⚠️ see [Step 3](#step-3--rolling-replace-one-vm-at-a-time) |
 | **Schema migrations are serialised.** | The SAT/ASM binary takes a Postgres session-level advisory lock (`pg_advisory_lock(7426893184710137)`) around its goose migration run, so both VMs booting on a new image at once cannot race the same DDL. Cloud-independent — this is application behaviour, and it is the one part of the story that is identical on AWS and Azure. | ✅ see [Step 4](#step-4--schema-migrations-under-the-advisory-lock) |
 | **Post-patch schema-version verification.** | `module.<name>.schema_version_endpoint` → `https://<lb-or-appgw>/api/instance/schema-version`, and the image ships the five-probe verifier at `/opt/hailbytes/bin/ha-post-patch-verify.sh`. The Run Command now invokes it as `... 127.0.0.1 <admin_port>`, which satisfies its positional-argument contract. | ✅ |
 | **Auto-rollback on a bad upgrade.** | HA tier: Azure Monitor metric alerts on LB `VipAvailability` and (when App Gateway is enabled) backend 5xx count, wired to an Action Group, for **operator-initiated** rollback. There is no automatic rollback on this tier — the autoscale tier's VMSS `automatic_instance_repair` is the closest Azure gets, and this tier has no VMSS. | ⚠️ see [Step 6](#step-6--rollback) |
@@ -54,11 +54,14 @@ az vm image list \
 
 Record the version you intend to move to. **Pin it** — set
 `marketplace_image_version = "1.1435.3"` rather than leaving the `"latest"`
-default. With `"latest"`, Terraform stores the literal string, sees no drift,
-and never plans a replacement; you lose the ability to see the patch in
-`terraform plan`, and a manually reimaged VM silently lands on a different
-build than its peer. Pinning is what makes the rest of this runbook
-observable.
+default.
+
+Pinning does not make the upgrade appear in `terraform plan`: the image
+reference is under `ignore_changes` (see Step 3), so no version change ever
+plans a replacement. What pinning buys you is knowing *which build each VM is
+on*. With `"latest"`, two VMs replaced a week apart land on different builds and
+the configuration records neither, so a rollback has nothing to roll back to.
+Pin it, and the version in your state is the version you can return to.
 
 ### Step 2 — Pre-patch backup
 
@@ -161,18 +164,21 @@ resource itself is not "a document sitting there waiting to be fired".
 instance-refresh and no rolling-upgrade policy on this tier. Two consequences,
 both different from AWS:
 
-- The AWS HA module sets `lifecycle { ignore_changes = [ami, user_data] }` on
-  its instances, so a new AMI never plans a replacement — the operator taints
-  deliberately. **The Azure module sets no `lifecycle` block on
-  `azurerm_linux_virtual_machine.vm`**, so bumping a pinned
-  `marketplace_image_version` plans a replacement of *both* VMs, and
-  `terraform apply` will execute both in one run. That is a full outage, not a
-  rolling patch.
-- Therefore: **always drive this tier with `-target`, one VM per apply.**
+- Both modules now pin image rotation behind `ignore_changes` — AWS on
+  `[ami, user_data]`, Azure on `[source_image_reference, custom_data]`. A newly
+  published image version therefore plans **nothing** on either cloud. This is
+  deliberate: `marketplace_image_version` defaults to `"latest"`, and without it
+  an apply run for an unrelated reason (a tag, a new allowed CIDR) would rebuild
+  both VMs against whatever Microsoft shipped since. Upgrades are an operator
+  decision, not drift.
+- The consequence for this runbook: `-target` alone will **not** move a VM to a
+  new image, because the attribute that would have triggered replacement is
+  ignored. **Drive this tier with `-replace`, one VM per apply.**
 
 ```bash
-# 0. Confirm the plan touches exactly what you expect, and note that BOTH
-#    VMs are queued for replacement.
+# 0. Confirm the plan is otherwise clean. After bumping the pinned version you
+#    should see NO changes — the image reference is ignored by design. The
+#    replacement below is what moves the VM.
 terraform plan
 
 # 1. Drain VM #1 from the load balancer by stopping the app. The LB probe
@@ -186,8 +192,9 @@ sleep 45
 # 2. Confirm VM #2 is carrying all traffic.
 curl -sk "https://$(terraform output -raw load_balancer_public_ip)/health"
 
-# 3. Replace VM #1 only.
-terraform apply -target='module.hailbytes_sat.azurerm_linux_virtual_machine.vm[0]'
+# 3. Replace VM #1 only. -replace is required, not -target: the image
+#    reference is under ignore_changes, so -target would plan no change.
+terraform apply -replace='module.hailbytes_sat.azurerm_linux_virtual_machine.vm[0]'
 
 # 4. VM #1 boots on the new image, runs bootstrap, takes the migration
 #    advisory lock (Step 4), migrates, and starts serving. Wait for the LB
@@ -349,7 +356,7 @@ still running the previous image and still serving:
 #    marketplace_image_version = "<previous version>"
 
 # 2. Re-replace only the VM you just patched.
-terraform apply -target='module.hailbytes_sat.azurerm_linux_virtual_machine.vm[0]'
+terraform apply -replace='module.hailbytes_sat.azurerm_linux_virtual_machine.vm[0]'
 
 # 3. Re-run Step 5 against the rolled-back VM.
 ```
