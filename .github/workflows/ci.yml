@@ -219,6 +219,37 @@ jobs:
           # set. That is the intended mechanism, not a gap.
           echo "Image rotation is explicit in every module that replaces a VM."
 
+      # A CMK key URI that carries a version GUID pins the service to that
+      # version. When the version expires or is disabled, Flexible Server goes
+      # Inaccessible and denies every connection — Microsoft documents this as a
+      # leading cause of that state. A versionless URI lets the service pick up
+      # rotations automatically. Both plan values are computed, so terraform
+      # test cannot tell the two apart; this can.
+      # Scoped to customer_managed_key blocks only. azurerm_disk_encryption_set
+      # also takes a key_vault_key_id, and a versioned key there is a legitimate
+      # manual-rotation choice (auto_key_rotation_enabled is the opt-in), so it
+      # is deliberately not covered.
+      - name: CMK key URIs are versionless
+        run: |
+          set -eo pipefail
+          # Track the enclosing resource rather than the block: the CMK blocks
+          # are written as `dynamic "customer_managed_key"`, so matching the
+          # block name directly would miss them.
+          hits=$(awk '
+            /^resource "/ { split($0, f, "\""); rtype = f[2] }
+            rtype != "azurerm_disk_encryption_set" \
+              && /key_vault_key_id/ && /\.id[[:space:]]*$/ {
+              printf "%s:%d:%s\n", FILENAME, FNR, $0
+            }
+          ' $(find modules -name '*.tf'))
+          if [ -n "${hits}" ]; then
+            echo "${hits}"
+            echo "::error::A customer_managed_key block uses .id (versioned) instead of .versionless_id."
+            echo "  A pinned key version takes the service Inaccessible when it expires."
+            exit 1
+          fi
+          echo "All service CMK references use versionless key URIs."
+
   # ---------------------------------------------------------------------
   # quickstart/deploy.sh is the guided Cloud Shell installer — the first
   # thing many customers run, and the only part of this repo that executes

@@ -236,3 +236,82 @@ run "key_vault_name_can_be_overridden_for_poc_iteration" {
     error_message = "Purge protection must stay on — disk encryption sets require it. The override is the escape hatch, not disabling protection."
   }
 }
+
+# Gap B6: CMK coverage beyond VM disks. Both managed services require a
+# *user-assigned* identity — neither accepts the system-assigned one the disk
+# encryption set uses — and the key URI must be versionless so the server picks
+# up rotations instead of going Inaccessible when a pinned version expires.
+# https://learn.microsoft.com/en-us/azure/postgresql/security/security-data-encryption
+run "cmk_covers_the_database_and_the_backup_account" {
+  command = plan
+
+  variables {
+    enable_customer_managed_key   = true
+    create_backup_storage_account = true
+  }
+
+  assert {
+    condition     = length(azurerm_user_assigned_identity.cmk) == 1
+    error_message = "Flexible Server and Storage Account CMK both require a user-assigned identity; the disk encryption set's system-assigned identity cannot be reused."
+  }
+
+  assert {
+    condition     = azurerm_role_assignment.cmk_kv_crypto_user[0].role_definition_name == "Key Vault Crypto Service Encryption User"
+    error_message = "The CMK identity needs wrapKey/unwrapKey/get, which is exactly what Key Vault Crypto Service Encryption User grants."
+  }
+
+  # Both key IDs are computed, so a plan-time equality check against the key
+  # resource is unknown on both sides. Presence is assertable; that the URI is
+  # *versionless* is enforced by a static CI check, because a versioned URI pins
+  # the server to one key version and takes the database Inaccessible when it
+  # expires.
+  assert {
+    condition     = length(azurerm_postgresql_flexible_server.main[0].customer_managed_key) == 1
+    error_message = "The database must be wired to the customer-managed key when CMK is enabled."
+  }
+
+  assert {
+    condition     = length(azurerm_storage_account.backup[0].customer_managed_key) == 1
+    error_message = "The backup account holds the pre-patch bundles and must be covered by the same key."
+  }
+
+  assert {
+    condition     = one([for i in azurerm_postgresql_flexible_server.main[0].identity : i.type]) == "UserAssigned"
+    error_message = "Flexible Server CMK requires a user-assigned identity; a system-assigned one is not accepted."
+  }
+
+  # The disk path must keep working alongside the new one.
+  assert {
+    condition     = length(azurerm_disk_encryption_set.vm) == 1
+    error_message = "VM disk CMK must still be wired when CMK is enabled."
+  }
+}
+
+run "cmk_defaults_off_and_provisions_no_identity" {
+  command = plan
+
+  assert {
+    condition     = length(azurerm_user_assigned_identity.cmk) == 0
+    error_message = "CMK is opt-in; nothing should be provisioned by default."
+  }
+
+  assert {
+    condition     = length(azurerm_postgresql_flexible_server.main[0].customer_managed_key) == 0
+    error_message = "The default server must use service-managed keys."
+  }
+}
+
+# Azure documents that geo-redundant backup with CMK needs a second key vault
+# and a *different* user-assigned identity in the paired region. This module
+# provisions one vault in one region, so the combination has to fail at plan
+# rather than halfway through an apply.
+run "cmk_with_geo_redundant_backup_is_refused" {
+  command = plan
+
+  variables {
+    enable_customer_managed_key           = true
+    postgres_geo_redundant_backup_enabled = true
+  }
+
+  expect_failures = [azurerm_postgresql_flexible_server.main]
+}
