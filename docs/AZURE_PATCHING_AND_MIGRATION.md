@@ -10,14 +10,12 @@ The companion change in HailBytes SAT itself ships `/api/instance/export`,
 `scripts/ha-pre-patch-backup.sh` / `ha-post-patch-verify.sh`. This repo wires
 those into the Azure topology.
 
-> [!WARNING]
-> **The pre-patch backup Run Command is wired but non-functional on Azure
-> today** — it cannot produce a bundle. It is marked ⛔ **BLOCKED** at the point
-> of use, with the exact reason and the manual procedure to use instead.
-> (The post-patch verifier was blocked for the same class of reason and has
-> since been fixed; see [Step 5](#step-5--post-patch-verification).) Do not hand this page to a customer as an
-> as-built description until the ⛔ items clear — hand them the manual
-> procedures, which do work. Detail and remediation effort:
+> [!NOTE]
+> Both mechanisms that were blocked when this page was written — the pre-patch
+> backup and the post-patch verifier — **are now fixed**. Each step below says
+> what changed and on what date, because a VM running an image built before the
+> fix still carries the old script; the manual equivalents are kept for exactly
+> that case. Remaining gaps and effort:
 > [`AZURE_HA_PARITY_AUDIT.md`](AZURE_HA_PARITY_AUDIT.md).
 
 ---
@@ -30,7 +28,7 @@ Status column: ✅ works today · ⚠️ works with caveats · ⛔ blocked.
 |---|---|---|
 | **Patches are customer-initiated.** | Nothing in the modules schedules an image change. No `azurerm_automation_schedule`, no cron in `custom_data`, no Update Manager maintenance configuration. Image version is pinned by `var.marketplace_image_version`; only a customer-run `terraform apply` moves it. | ✅ |
 | **HailBytes retains no admin access.** | No HailBytes service principal, no shared SAS token, no HailBytes tenant in any `azurerm_role_assignment`. Every role assignment targets either the caller running `terraform apply` (`data.azurerm_client_config.current.object_id`), the module's own disk-encryption-set identity, or a VM's system-assigned identity. | ✅ |
-| **No expected data loss from patching.** | Bundle should land in a Storage Account container with blob versioning + an unlocked immutability policy + lifecycle to Cool at 30 d / Archive at 90 d, with a Flexible Server on-demand backup alongside. The container, policies and lifecycle **are** provisioned; the script that fills them is AWS-only. | ⛔ see [Pre-patch backup](#step-2--pre-patch-backup) |
+| **No expected data loss from patching.** | Bundle lands in a Storage Account container with blob versioning + an unlocked immutability policy + lifecycle to Cool at 30 d / Archive at 90 d, uploaded with the VM's managed identity, with a Flexible Server on-demand backup alongside. In `db_mode = "external"` the bundle is still taken; the server-side snapshot is the customer's responsibility. | ✅ |
 | **Rolling replace keeps capacity at 50%.** | Two standalone zonal VMs behind a Standard Load Balancer. There is no VMSS on this tier, so no `rolling_upgrade_policy` and no `automatic_instance_repair` — the operator replaces one VM at a time with `-target`. A plain `terraform apply` after bumping a pinned image version **replaces both VMs in the same apply**. | ⚠️ see [Step 3](#step-3--rolling-replace-one-vm-at-a-time) |
 | **Schema migrations are serialised.** | The SAT/ASM binary takes a Postgres session-level advisory lock (`pg_advisory_lock(7426893184710137)`) around its goose migration run, so both VMs booting on a new image at once cannot race the same DDL. Cloud-independent — this is application behaviour, and it is the one part of the story that is identical on AWS and Azure. | ✅ see [Step 4](#step-4--schema-migrations-under-the-advisory-lock) |
 | **Post-patch schema-version verification.** | `module.<name>.schema_version_endpoint` → `https://<lb-or-appgw>/api/instance/schema-version`, and the image ships the five-probe verifier at `/opt/hailbytes/bin/ha-post-patch-verify.sh`. The Run Command now invokes it as `... 127.0.0.1 <admin_port>`, which satisfies its positional-argument contract. | ✅ |
@@ -63,46 +61,58 @@ observable.
 
 ### Step 2 — Pre-patch backup
 
-⛔ **BLOCKED: `RunPrePatchBackup` cannot produce a bundle on Azure.**
+Azure Portal → the SAT VM → Operations → Run command → **`RunPrePatchBackup`**.
 
-Two independent reasons, both in
-`modules/ha-hot-hot/azure/main.tf` (`azurerm_virtual_machine_run_command.pre_patch_backup`):
+It does three things, all visible in the command output:
 
-1. **The script has no Azure Blob support.** `ha-pre-patch-backup.sh` uploads
-   only when `AWS_S3_BUCKET` is set, via `aws s3 cp`. The Run Command exports
-   `AZURE_STORAGE_ACCOUNT`, `AZURE_STORAGE_CONTAINER` and `AZURE_BLOB_PREFIX`
-   — three variables the script never reads. Best case the bundle stays on the
-   VM's local disk at `/var/backups/hailbytes-sat/`, which is the disk you are
-   about to replace.
-2. **The script's required environment is not passed.** It needs
-   `HAILBYTES_SAT_DB_HOST`, `HAILBYTES_SAT_DB_USER`, `HAILBYTES_SAT_DB_NAME`
-   and `PGPASSWORD`; the Run Command sets none of them and the script exits 1
-   before `pg_dump` runs.
+1. Runs `/opt/hailbytes/bin/ha-pre-patch-backup.sh`, which produces a gzipped
+   tar of `bundle.json` + `db.sql` (`pg_dump --format=plain --no-owner
+   --no-privileges --clean --if-exists`) + `uploads.tar.gz`, stamped with a
+   SHA-256 fingerprint of `HAILBYTES_ENCRYPTION_KEY` in the manifest.
+2. Uploads it to the immutable Storage Account container as
+   `hailbytes-{sat,asm}-<timestamp>.tar.gz`, authenticating with the VM's
+   managed identity (`az login --identity`) — the account has
+   `shared_access_key_enabled = false`, so there is no key or SAS token
+   involved. The container's unlocked immutability policy
+   (`backup_immutability_days`, default 30) plus blob versioning make the
+   bundle tamper-evident for the retention window.
+3. Takes a database snapshot: a Flexible Server on-demand backup in
+   `flexible_server` mode, a managed-disk snapshot in `vm` mode, and
+   **nothing in `external` mode** — the server is customer-managed, so the
+   command says so and exits 0 rather than pretending. Make sure the customer's
+   own backup or PITR covers the patch window.
 
-Also note that `azurerm_virtual_machine_run_command` is not an on-demand
-document like an SSM document — **the script body executes when Terraform
-creates the resource**, i.e. during the initial `terraform apply`. The Portal's
-Run command blade lets you re-run a script, but the resource itself is not a
-"document sitting there waiting to be fired", and `PATCHING_AND_MIGRATION.md`
-describes it as if it were.
+> **This was blocked until 2026-07-26.** The script only supported `aws s3 cp`,
+> and the Run Command passed `AZURE_STORAGE_*` variables it never read plus
+> none of the libpq environment it required — so it exited 1 before `pg_dump`,
+> and the immutable container stayed empty. Both halves are fixed: the script
+> has an Azure Blob branch, and the Run Command now exports the DB host, port,
+> user, name and a `PGPASSWORD` fetched from Key Vault via the VM's managed
+> identity. If you are running an image built before that date, the script on
+> the VM predates the fix — rebuild the image, or use the manual procedure
+> below.
 
-**Use this instead, until that is fixed.** Run it from either app VM over SSH
-(or Azure Bastion). It is the same script the Run Command was meant to invoke,
-given the environment it actually asks for, plus an explicit blob upload.
+Verify the blob landed before going any further:
+
+```bash
+az storage blob list --auth-mode login \
+  --account-name "$(terraform output -raw backup_storage_account_name)" \
+  --container-name hailbytes-sat-bundles -o table
+```
+
+<details>
+<summary>Manual equivalent, for images that predate the fix</summary>
 
 ```bash
 # On app VM #1.
 set -euo pipefail
 TS=$(date -u +%Y-%m-%dT%H-%M-%SZ)
 
-# 1. DB coordinates. In flexible_server mode this is the module's
-#    postgres_fqdn output; in db_mode = "vm" it is the DB VM's private IP.
 export HAILBYTES_SAT_DB_HOST='<terraform output -raw postgres_fqdn>'
 export HAILBYTES_SAT_DB_USER='hailbytes'
 export HAILBYTES_SAT_DB_NAME='hailbytes'
 export HAILBYTES_SAT_DB_PORT=5432
 
-# 2. Password from Key Vault via the VM's managed identity.
 TOKEN=$(curl -sS -H Metadata:true \
   "http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://vault.azure.net" \
   | jq -r .access_token)
@@ -110,26 +120,18 @@ export PGPASSWORD=$(curl -sS -H "Authorization: Bearer $TOKEN" \
   "<terraform output -raw key_vault_uri>secrets/hailbytes-db-password?api-version=7.4" \
   | jq -r .value)
 
-# 3. Bundle to local disk (pg_dump + uploads + manifest with the
-#    encryption-key fingerprint).
 export BACKUP_DIR=/var/backups/hailbytes-sat
 sudo -E /opt/hailbytes/bin/ha-pre-patch-backup.sh
 
-# 4. Upload to the immutable container yourself — this is the step the
-#    script cannot do. Managed-identity auth; the module already granted
-#    the VM identity Storage Blob Data Contributor on this account.
 BUNDLE=$(ls -t "$BACKUP_DIR"/*.tar.gz | head -1)
 az login --identity --allow-no-subscriptions >/dev/null
-az storage blob upload \
-  --auth-mode login \
+az storage blob upload --auth-mode login \
   --account-name "$(terraform output -raw backup_storage_account_name)" \
   --container-name "hailbytes-sat-bundles" \
-  --name "hailbytes-sat-${TS}.tar.gz" \
-  --file "$BUNDLE"
+  --name "hailbytes-sat-${TS}.tar.gz" --file "$BUNDLE"
 ```
 
-Then take the database snapshot — this half of the Run Command is correct and
-can be run as-is:
+Then the DB snapshot:
 
 ```bash
 # flexible_server mode
@@ -144,15 +146,13 @@ az snapshot create \
   --tags Module=hailbytes-terraform-modules Phase=pre-patch
 ```
 
-Verify the blob landed before going further. The container carries an unlocked
-immutability policy (`backup_immutability_days`, default 30) and blob
-versioning, so once it is there it is tamper-evident for the retention window.
+</details>
 
-```bash
-az storage blob list --auth-mode login \
-  --account-name "$(terraform output -raw backup_storage_account_name)" \
-  --container-name hailbytes-sat-bundles -o table
-```
+One behaviour worth knowing regardless: `azurerm_virtual_machine_run_command`
+is not an on-demand document like an SSM document — **the script body executes
+when Terraform creates the resource**, i.e. during the initial
+`terraform apply`. The Portal's Run command blade re-runs it on demand, but the
+resource itself is not "a document sitting there waiting to be fired".
 
 ### Step 3 — Rolling replace, one VM at a time
 

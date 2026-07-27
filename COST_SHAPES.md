@@ -142,7 +142,7 @@ managed services in the topology keep data in-region.
 | Shape | Module | Instances | Managed services | Infra | + per-vCore meter | **All-in (procurement-grade)** |
 |---|---|---|---|---|---|---|
 | **Single** | [`single-vm/azure`](modules/single-vm/azure) | 1× `Standard_D2s_v5` | none | ~$95/mo | 2 vCPU × 730h × $0.24 = ~$350/mo | **~$445/mo** |
-| **HA hot-hot** | [`ha-hot-hot/azure`](modules/ha-hot-hot/azure) | 2× `Standard_D2s_v5` | Standard LB + Azure Cache Redis (Std C1) + Postgres Flex Server Zone-Redundant | ~$585/mo | 4 vCPU × 730h × $0.24 = ~$700/mo | **~$1,285/mo (≈ 2.9× single)** |
+| **HA hot-hot** | [`ha-hot-hot/azure`](modules/ha-hot-hot/azure) | 2× `Standard_D2s_v5` | Standard LB + Azure Cache Redis (Std C1, not zone-redundant) + Postgres Flex Server Zone-Redundant | ~$585/mo | 4 vCPU × 730h × $0.24 = ~$700/mo | **~$1,285/mo (≈ 2.9× single)** |
 | **Unlimited scale** | [`unlimited-scale/azure`](modules/unlimited-scale/azure) | 3× `Standard_D2s_v5` (VMSS min) | Standard LB + Azure Cache Redis + Postgres Flex Server primary + 2× replicas (`GP_Standard_D4ds_v5`) | ~$1,480/mo | 6 vCPU × 730h × $0.24 = ~$1,050/mo | **~$2,530/mo at min, ~$5,150/mo at 10 instances** |
 
 Cross-cloud parity is intentional: an AWS HA deployment and an Azure HA
@@ -160,10 +160,10 @@ rejected by module validation**.
 
 | SKU / capacity | RAM | Per-month | Use case |
 |---|---|---|---|
-| Standard C1 | 1 GB | ~$55 | HA hot-hot or VMSS up to 5 instances |
+| Standard C1 | 1 GB | ~$101 | HA hot-hot or VMSS up to 5 instances. Primary/replica, **not** zone-redundant — that needs Premium. |
 | Standard C2 | 2.5 GB | ~$110 | VMSS 5–10 instances |
 | Standard C3 | 6 GB | ~$220 | VMSS 10–20 instances |
-| Premium P1 | 6 GB | ~$420 | Zone-redundant primary; needed for ≥3-zone deployments or Redis persistence |
+| Premium P1 | 6 GB | ~$405 | The only tier with zone redundancy; also needed for Redis persistence or VNet injection |
 
 ## When prices change
 
