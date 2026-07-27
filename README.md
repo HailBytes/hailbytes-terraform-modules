@@ -13,7 +13,15 @@
 
 ## 🚀 Quickstart
 
-New here? [`quickstart/azure-ha`](quickstart/azure-ha) takes you from an empty subscription to a running HA deployment in one `terraform apply` (or one pasted Azure Cloud Shell command). It creates the networking prerequisites for you, so there is nothing to figure out before your first apply. Each workload module also ships an `examples/basic` config for teams composing into an existing landing zone.
+**New here? Paste this into AWS CloudShell or Azure Cloud Shell:**
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/HailBytes/hailbytes-terraform-modules/main/quickstart/deploy.sh)
+```
+
+[`quickstart/deploy.sh`](quickstart/deploy.sh) detects your cloud, checks your Marketplace subscription is actually active (and links the listing if it isn't), asks how you want to deploy, then shows you a `terraform plan` and applies only after you type `APPLY`. Every choice that materially changes your bill prints a `COST IMPACT` block with real figures first — see [`quickstart/README.md`](quickstart/README.md).
+
+Prefer to read the Terraform yourself? [`quickstart/azure-ha`](quickstart/azure-ha) is a complete root config for the Azure HA tier, networking included, that you can copy and edit. Each workload module also ships an `examples/basic` config for teams composing into an existing landing zone.
 
 ## Overview
 
