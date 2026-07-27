@@ -39,6 +39,9 @@ mock_provider "azurerm" {
   mock_resource "azurerm_key_vault" {
     defaults = { id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.KeyVault/vaults/mock-kv" }
   }
+  mock_resource "azurerm_private_dns_zone" {
+    defaults = { id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.Network/privateDnsZones/privatelink.redis.cache.windows.net" }
+  }
   mock_resource "azurerm_redis_cache" {
     defaults = { id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.Cache/redis/mock-redis" }
   }
@@ -102,5 +105,28 @@ run "minimal_inputs_apply" {
   assert {
     condition     = output.redis_endpoint != ""
     error_message = "redis_endpoint output must be non-empty when managed Redis is enabled (the default)"
+  }
+
+  # Regression: the app VMs' managed identities had no Key Vault data-plane
+  # role, so custom_data pointed them at a vault they got 403 from and the
+  # deployment could not start. One assignment per VM.
+  assert {
+    condition     = length(azurerm_role_assignment.vm_kv_secrets_user) == 2
+    error_message = "Each app VM's managed identity must hold a Key Vault Secrets User assignment."
+  }
+
+  # Regression: the cache is created with public_network_access_enabled =
+  # false and Standard SKU cannot be VNet-injected, so without a private
+  # endpoint it is unreachable from the VMs by construction.
+  assert {
+    condition     = length(azurerm_private_endpoint.redis) == 1
+    error_message = "Managed Redis must be reachable over Private Link."
+  }
+
+  # Regression: Azure Cache for Redis always requires an access key; the VMs
+  # were given host and port but no credential.
+  assert {
+    condition     = length(azurerm_key_vault_secret.redis) == 1
+    error_message = "The Redis access key must be stored in Key Vault for the VMs to read."
   }
 }

@@ -317,3 +317,9 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "admin_port" {
+  description = "Port the HailBytes admin server listens on. Used by the post-patch verifier, which probes the instance over localhost."
+  type        = number
+  default     = 3333
+}

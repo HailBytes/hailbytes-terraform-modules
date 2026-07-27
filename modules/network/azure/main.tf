@@ -116,3 +116,56 @@ resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
   registration_enabled  = false
   tags                  = local.common_tags
 }
+
+# ----- Outbound egress: NAT Gateway -----
+#
+# Without this the workload VMs have no outbound path at all. They sit behind a
+# Standard Load Balancer with inbound rules only and carry no public IP, and a
+# Standard LB does not provide outbound SNAT to its backend pool members. The
+# result is no OS security updates, no SMTP sending (which is the entire point
+# of SAT), and no customer-chosen integrations.
+#
+# This is the counterpart of aws_nat_gateway in modules/network/aws, which
+# creates one per AZ. A single NAT Gateway here is regional (non-zonal): Azure
+# places it in a zone of its choosing and it is not zone-redundant, so a zonal
+# outage can take egress with it while the zone-spread VMs keep serving inbound
+# traffic. Per-zone NAT Gateways are the fully resilient pattern and cost one
+# gateway per zone; see docs/AZURE_HA_PARITY_AUDIT.md.
+
+resource "azurerm_public_ip" "nat" {
+  count = var.enable_nat_gateway ? 1 : 0
+
+  name                = "${var.name_prefix}-nat-pip"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  allocation_method   = "Static"
+  sku                 = "Standard"
+  tags                = local.common_tags
+}
+
+resource "azurerm_nat_gateway" "main" {
+  count = var.enable_nat_gateway ? 1 : 0
+
+  name                    = "${var.name_prefix}-nat"
+  resource_group_name     = var.resource_group_name
+  location                = var.location
+  sku_name                = "Standard"
+  idle_timeout_in_minutes = var.nat_gateway_idle_timeout_minutes
+  tags                    = local.common_tags
+}
+
+resource "azurerm_nat_gateway_public_ip_association" "main" {
+  count = var.enable_nat_gateway ? 1 : 0
+
+  nat_gateway_id       = azurerm_nat_gateway.main[0].id
+  public_ip_address_id = azurerm_public_ip.nat[0].id
+}
+
+# Only the workload subnet needs egress. The LB subnet holds a public frontend
+# and the db subnet is delegated to Flexible Server, which manages its own.
+resource "azurerm_subnet_nat_gateway_association" "workload" {
+  count = var.enable_nat_gateway ? 1 : 0
+
+  subnet_id      = azurerm_subnet.workload.id
+  nat_gateway_id = azurerm_nat_gateway.main[0].id
+}

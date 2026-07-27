@@ -48,3 +48,19 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "enable_nat_gateway" {
+  description = "Provision a NAT Gateway and associate it with the workload subnet. Required for the VMs to reach anything outbound: a Standard Load Balancer gives its backend pool no outbound SNAT, and the VMs have no public IP. Defaults true, matching enable_nat_gateway in modules/network/aws. Costs roughly EUR 28.84 / USD 32.85 per month plus EUR 0.0395 / USD 0.045 per GB processed — the per-GB charge applies to traffic bound for Azure services too, so pair it with service endpoints for Storage and Key Vault."
+  type        = bool
+  default     = true
+}
+
+variable "nat_gateway_idle_timeout_minutes" {
+  description = "TCP idle timeout for the NAT Gateway, in minutes (4-120)."
+  type        = number
+  default     = 10
+  validation {
+    condition     = var.nat_gateway_idle_timeout_minutes >= 4 && var.nat_gateway_idle_timeout_minutes <= 120
+    error_message = "nat_gateway_idle_timeout_minutes must be between 4 and 120."
+  }
+}

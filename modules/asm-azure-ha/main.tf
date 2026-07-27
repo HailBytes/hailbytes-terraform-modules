@@ -66,5 +66,9 @@ module "this" {
 
   postgres_geo_redundant_backup_enabled = var.postgres_geo_redundant_backup_enabled
 
-  tags = var.tags
+  tags                             = var.tags
+  redis_private_dns_zone_id        = var.redis_private_dns_zone_id
+  redis_private_endpoint_subnet_id = var.redis_private_endpoint_subnet_id
+  admin_port                       = var.admin_port
+
 }
