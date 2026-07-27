@@ -393,6 +393,61 @@ warn_about_egress() {
   note "own services too, so the module adds service endpoints where it can."
 }
 
+# The Key Vault trap. Azure Key Vault names are globally unique, and this module
+# creates the vault with purge protection and a 30-day soft-delete window
+# (a disk encryption set requires purge protection, so it cannot be turned off).
+# Destroy a deployment and re-create it under the same name inside 30 days and
+# the apply fails, with no force-purge available — you wait, or you rename.
+#
+# The people running this wizard are exactly the people who will destroy and
+# redeploy a PoC next week, so ask up front rather than let them find out.
+pick_key_vault_name() {
+  KEY_VAULT_NAME=""
+  [ "$CLOUD" = azure ] || return 0
+  [ "$TIER" = ha ] || [ "$TIER" = autoscale ] || return 0
+
+  say ""
+  head2 "Key Vault naming"
+  warn "Azure Key Vault names are global, and this deployment's vault is created with"
+  warn "purge protection and a 30-day soft-delete window that cannot be waived."
+  note "If you destroy this deployment and re-create it under the same name within"
+  note "30 days, the apply FAILS and cannot be forced. A unique name per attempt"
+  note "avoids that entirely and costs nothing."
+
+  if confirm "Is this a trial or PoC you might tear down and re-create?"; then
+    # Date-stamped, since a wizard run is what identifies an attempt. 24-char
+    # limit, alphanumerics only.
+    local suffix
+    suffix="$(date -u +%m%d%H%M)"
+    KEY_VAULT_NAME="$(printf 'hb%s%s' "$PRODUCT" "$suffix" | cut -c1-24)"
+    ok "Vault will be named ${KEY_VAULT_NAME} — unique to this run."
+    note "Keep this value if you re-run terraform against the same deployment;"
+    note "changing it later REPLACES the vault holding your database password."
+  else
+    note "Using the module's derived name. If you later need to rebuild from"
+    note "scratch, set key_vault_name to something new in main.tf first."
+  fi
+}
+
+# The cache this deploys is a service Microsoft has dated. Say so at deploy time,
+# not after the customer has built a three-year plan on it.
+warn_about_redis_retirement() {
+  [ "$CLOUD" = azure ] || return 0
+  [ "$TIER" = ha ] || [ "$TIER" = autoscale ] || return 0
+
+  say ""
+  head2 "One thing to know about the cache"
+  warn "Azure Cache for Redis is being retired by Microsoft."
+  note "Basic / Standard / Premium retire 2028-09-30; Enterprise 2027-03-31."
+  note "This module still provisions it, and it is fully supported until then."
+  note ""
+  note "The successor, Azure Managed Redis, is zone-redundant by default and costs"
+  note "materially less (about \$26/month against \$101 at 1 GB). If your deployment"
+  note "is expected to run past 2028, plan the migration — and do NOT buy the"
+  note "Premium tier for zone redundancy, because the successor includes it."
+  note "See AZURE_COST_SHAPES.md for the verified comparison."
+}
+
 # ---------------------------------------------------------------------------
 # 4. Generate, plan, apply
 # ---------------------------------------------------------------------------
@@ -521,7 +576,9 @@ main() {
   pick_db_mode
   pick_scale_knobs
   pick_frontend
+  pick_key_vault_name
   warn_about_egress
+  warn_about_redis_retirement
 
   # Assemble the module settings. Kept as an array so main.tf stays readable.
   SETTINGS=()
@@ -537,6 +594,7 @@ main() {
     note "db_delegated_subnet_id, private_dns_zone_id). quickstart/azure-ha shows a"
     note "root config that creates them with modules/network/azure."
     [ "${APPGW:-false}" = true ] && SETTINGS+=("enable_application_gateway = true")
+    [ -n "${KEY_VAULT_NAME:-}" ] && SETTINGS+=("key_vault_name = \"${KEY_VAULT_NAME}\"")
   else
     SETTINGS+=("# vpc_id, public_subnet_ids, private_subnet_ids and acm_certificate_arn")
     SETTINGS+=("# are required — see modules/network/aws to create the network.")

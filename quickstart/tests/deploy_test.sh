@@ -119,5 +119,63 @@ else
 fi
 check_contains "main.tf points at the secrets file instead" "$src" "comes from secrets.auto.tfvars"
 
+printf '\nKey Vault naming avoids the 30-day purge-protection trap\n'
+# The vault name is what bites a PoC operator: purge protection plus a 30-day
+# soft-delete window means a same-named rebuild inside 30 days simply fails.
+kv_body="$(sed -n '/^pick_key_vault_name() {/,/^warn_about_redis_retirement() {/p' <<<"$src")"
+check_contains "the wizard explains why the name matters" "$kv_body" "purge protection"
+check_contains "it offers a unique name for PoCs" "$kv_body" "KEY_VAULT_NAME="
+check_contains "it warns that changing it later replaces the vault" "$kv_body" "REPLACES the vault"
+
+# Only the tiers that create a Key Vault should ask, and only on Azure.
+# NB: no subshells here — pass/fail counters incremented in a subshell are lost.
+# ${VAR-unset} (no colon) so a variable deliberately set to "" reads as "",
+# which is the state "asked, declined, use the module's derived name".
+CLOUD=aws TIER=ha PRODUCT=sat
+pick_key_vault_name >/dev/null 2>&1
+check "AWS is never asked about a Key Vault" "${KEY_VAULT_NAME-unset}" ""
+
+CLOUD=azure TIER=single PRODUCT=sat
+pick_key_vault_name >/dev/null 2>&1
+check "single-vm has no Key Vault to name" "${KEY_VAULT_NAME-unset}" ""
+
+# Declining the PoC prompt must leave the module's derived name alone.
+CLOUD=azure TIER=ha PRODUCT=sat
+pick_key_vault_name >/dev/null 2>&1 </dev/null
+check "declining leaves the derived name in place" "${KEY_VAULT_NAME-unset}" ""
+
+# Accepting produces a name Azure will accept: <=24 chars, starts with a letter,
+# alphanumeric only. A name Azure rejects fails at apply, not at plan.
+CLOUD=azure TIER=ha PRODUCT=sat
+pick_key_vault_name >/dev/null 2>&1 <<<"y"
+if [[ "${KEY_VAULT_NAME}" =~ ^[a-zA-Z][a-zA-Z0-9]{2,23}$ ]]; then
+  printf '  ok   generated vault name is valid for Azure (%s)\n' "$KEY_VAULT_NAME"; pass=$((pass+1))
+else
+  printf '  FAIL generated vault name %q is not a valid Azure Key Vault name\n' "${KEY_VAULT_NAME:-}"; fail=$((fail+1))
+fi
+# It must also satisfy the module's own validation regex, which additionally
+# caps at 24 and allows hyphens; a name the wizard emits that the module rejects
+# would fail at plan with a confusing error.
+if [ "${#KEY_VAULT_NAME}" -le 24 ]; then
+  printf '  ok   generated name is within the 24-char Key Vault limit\n'; pass=$((pass+1))
+else
+  printf '  FAIL generated name is %d chars, over the 24-char limit\n' "${#KEY_VAULT_NAME}"; fail=$((fail+1))
+fi
+
+printf '\nThe retiring cache is disclosed before it is deployed\n'
+redis_body="$(sed -n '/^warn_about_redis_retirement() {/,/^# ---/p' <<<"$src")"
+check_contains "retirement is stated" "$redis_body" "being retired"
+check_contains "the Basic/Standard/Premium date is given" "$redis_body" "2028-09-30"
+check_contains "the Enterprise date is given" "$redis_body" "2027-03-31"
+# The costly mistake this prevents: buying Premium for zone redundancy on a
+# service whose successor includes it for less.
+check_contains "it steers away from the Premium upsell" "$redis_body" "NOT buy the"
+
+printf '\nBoth new steps are actually wired into the wizard flow\n'
+main_body="$(sed -n '/^main() {/,/^}/p' <<<"$src")"
+check_contains "pick_key_vault_name runs" "$main_body" "pick_key_vault_name"
+check_contains "warn_about_redis_retirement runs" "$main_body" "warn_about_redis_retirement"
+check_contains "key_vault_name reaches the generated config" "$src" "key_vault_name = "
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
