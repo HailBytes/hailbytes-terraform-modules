@@ -87,7 +87,7 @@ resource "azurerm_key_vault" "main" {
     # key_vault_ip_rules and a Microsoft.KeyVault service endpoint on
     # vm_subnet_id. Defaulting to "Allow" preserves pre-ACL behavior;
     # data-plane access is still gated by RBAC and the AzureServices bypass.
-    default_action             = var.key_vault_network_default_action #tfsec:ignore:azure-keyvault-specify-network-acl
+    default_action             = var.key_vault_network_default_action
     bypass                     = "AzureServices"
     ip_rules                   = var.key_vault_ip_rules
     virtual_network_subnet_ids = [var.vm_subnet_id]

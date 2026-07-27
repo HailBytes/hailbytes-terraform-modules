@@ -403,7 +403,6 @@ resource "aws_s3_bucket_public_access_block" "alb_logs" {
 # ALB access-log buckets are documented by AWS as supporting only SSE-S3
 # (AES256); attempting SSE-KMS silently drops log delivery. See
 # https://docs.aws.amazon.com/elasticloadbalancing/latest/application/enable-access-logging.html#access-logging-bucket-permissions
-#tfsec:ignore:aws-s3-encryption-customer-key
 resource "aws_s3_bucket_server_side_encryption_configuration" "alb_logs" {
   bucket = aws_s3_bucket.alb_logs.id
 
@@ -459,7 +458,7 @@ resource "aws_lb" "main" {
   # in public subnets behind a security group that only allows ingress from
   # var.allowed_cidrs. Customers who want a fully private deployment can front
   # the module with their own internal ALB or API Gateway.
-  internal           = false #tfsec:ignore:aws-elb-alb-not-public
+  internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = var.public_subnet_ids
@@ -692,7 +691,6 @@ resource "aws_iam_role" "flow_logs" {
 # logs:DescribeLogGroups, which the API itself requires — IAM rejects ARN
 # scoping on that action. The role can still neither read nor write any other
 # log group.
-#tfsec:ignore:aws-iam-no-policy-wildcards
 resource "aws_iam_role_policy" "flow_logs" {
   count = var.enable_flow_logs ? 1 : 0
   name  = "${local.name_prefix}-flow-logs"

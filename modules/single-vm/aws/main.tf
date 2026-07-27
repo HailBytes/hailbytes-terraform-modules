@@ -452,7 +452,6 @@ resource "aws_iam_role" "flow_logs" {
 
 # logs:DescribeLogGroups requires Resource = "*" — the AWS IAM docs explicitly
 # state this action does not support resource-level restrictions.
-#tfsec:ignore:aws-iam-no-policy-wildcards
 resource "aws_iam_role_policy" "flow_logs" {
   count = var.enable_flow_logs ? 1 : 0
   name  = "${local.name_prefix}-flow-logs"

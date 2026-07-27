@@ -663,7 +663,7 @@ resource "aws_lb" "main" {
   # in public subnets behind a security group that only allows ingress from
   # var.allowed_cidrs. Customers who want a fully private deployment can front
   # the module with their own internal ALB or API Gateway.
-  internal           = false #tfsec:ignore:aws-elb-alb-not-public
+  internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = var.public_subnet_ids
@@ -763,10 +763,11 @@ resource "aws_wafv2_web_acl_association" "alb" {
 
 resource "aws_sns_topic" "alerts" {
   name = "${local.name_prefix}-alerts"
-  # CMK is opt-in via var.enable_customer_managed_key. tfsec's static analysis
-  # evaluates the false branch ("alias/aws/sns") of the ternary; customers who
-  # set enable_customer_managed_key = true get the module-owned CMK.
-  kms_master_key_id = var.enable_customer_managed_key ? aws_kms_key.main[0].id : "alias/aws/sns" #tfsec:ignore:aws-sns-topic-encryption-use-cmk
+  # CMK is opt-in via var.enable_customer_managed_key. Static analysis that
+  # evaluates the false branch ("alias/aws/sns") of the ternary may flag this
+  # as unencrypted; customers who set enable_customer_managed_key = true get
+  # the module-owned CMK.
+  kms_master_key_id = var.enable_customer_managed_key ? aws_kms_key.main[0].id : "alias/aws/sns"
   tags              = local.common_tags
 }
 
@@ -1230,7 +1231,6 @@ resource "aws_iam_role" "flow_logs" {
 # logs:DescribeLogGroups, which the API itself requires — IAM rejects ARN
 # scoping on that action. The role can still neither read nor write any other
 # log group.
-#tfsec:ignore:aws-iam-no-policy-wildcards
 resource "aws_iam_role_policy" "flow_logs" {
   count = var.enable_flow_logs ? 1 : 0
   name  = "${local.name_prefix}-flow-logs"
