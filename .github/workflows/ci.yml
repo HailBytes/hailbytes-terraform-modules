@@ -182,6 +182,43 @@ jobs:
       - name: Mock providers use realistic IDs and cite their sources
         run: python3 .github/scripts/mock_fidelity_check.py
 
+      # marketplace_image_version defaults to "latest", and the image reference
+      # forces replacement. Without ignore_changes, an apply made for an
+      # unrelated reason rebuilds the VM against whatever version the publisher
+      # shipped since — and in the HA tier, `count` means BOTH app VMs go at
+      # once. Image rotation must be an explicit `-replace`, which is what the
+      # patching runbooks document. A lifecycle block is invisible to
+      # `terraform test`, so this is asserted statically.
+      - name: VM image rotation is explicit, never a side effect of apply
+        run: |
+          set -eo pipefail
+          fail=0
+          check() {  # check <file> <resource> <attribute>
+            if ! awk -v r="resource \"$2\"" '
+                  index($0, r) { inres=1 }
+                  inres && /ignore_changes/ { print; found=1 }
+                  inres && /^}/ { inres=0 }
+                  END { exit(found ? 0 : 1) }
+                ' "$1" | grep -q "$3"; then
+              echo "::error file=$1::$2 has no lifecycle ignore_changes on $3."
+              echo "  A published image version would replace it on an unrelated apply."
+              fail=1
+            fi
+          }
+          check modules/single-vm/azure/main.tf 'azurerm_linux_virtual_machine" "vm' source_image_reference
+          check modules/ha-hot-hot/azure/main.tf 'azurerm_linux_virtual_machine" "vm'    source_image_reference
+          check modules/ha-hot-hot/azure/main.tf 'azurerm_linux_virtual_machine" "db_vm' source_image_reference
+          check modules/single-vm/aws/main.tf    'aws_instance" "vm'    ami
+          check modules/ha-hot-hot/aws/main.tf   'aws_instance" "vm'    ami
+          check modules/ha-hot-hot/aws/main.tf   'aws_instance" "db_ec2' ami
+          check modules/unlimited-scale/aws/main.tf 'aws_launch_template" "main' image_id
+          [ "${fail}" = "1" ] && exit 1
+          # Azure's autoscale tier is deliberately absent: the VMSS carries
+          # upgrade_mode = "Rolling" with a rolling_upgrade_policy, so an image
+          # change rolls through instances in batches rather than replacing the
+          # set. That is the intended mechanism, not a gap.
+          echo "Image rotation is explicit in every module that replaces a VM."
+
   # ---------------------------------------------------------------------
   # quickstart/deploy.sh is the guided Cloud Shell installer — the first
   # thing many customers run, and the only part of this repo that executes
