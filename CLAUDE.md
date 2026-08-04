@@ -65,5 +65,6 @@ GovCloud (AWS) and Azure Government are out of scope for v1.
 - [docs/AZURE_PATCHING_AND_MIGRATION.md](docs/AZURE_PATCHING_AND_MIGRATION.md) — the Azure procedure, incl. Postgres advisory-lock migration serialisation
 - [docs/AZURE_HA_PARITY_AUDIT.md](docs/AZURE_HA_PARITY_AUDIT.md) — Azure-vs-AWS HA gap table with effort estimates
 - [docs/MARKETPLACE_IMAGE_ACCESS_AUDIT.md](docs/MARKETPLACE_IMAGE_ACCESS_AUDIT.md) — no-retained-access claims, verified per claim
+- [docs/SKU_DEPLOYMENT_MATRIX.md](docs/SKU_DEPLOYMENT_MATRIX.md) — which published SKU each tier can actually deploy, per-cloud shape table, and the three gaps between the price ladder and the module defaults
 - [CONTRIBUTING.md](CONTRIBUTING.md) — PR requirements and contribution rules
 - [CHANGELOG.md](CHANGELOG.md) — release history
