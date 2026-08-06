@@ -44,8 +44,13 @@ flowchart TB
 ```
 
 **State:** managed Postgres Multi-AZ. VMs are stateless replicas of the marketplace image.
-**Failure mode:** AZ outage — LB drops unhealthy node, surviving VM serves all traffic, DB fails over automatically.
-**Trade-off:** ~6× cost of single-vm; production-grade availability without operator intervention.
+**Failure mode:** AZ outage — LB drops unhealthy node, surviving VM receives all traffic, DB fails over automatically. **Whether it can serve that traffic depends on how the pair was sized.** The two nodes are always identical (one `instance_type` / `vm_size` is applied to both, so an asymmetric pair is unexpressible), and the question is which tier they are:
+- **N** — a pair of the tier *below* what the roster needs. Meets the roster in normal operation, **half capacity during a failover**: slow, not down. Costs the same as the single VM it replaces.
+- **N+1** — a pair of the tier the roster needs. Full capacity straight through a failover.
+
+Choose N+1 when the failover window could land on a compliance deadline, which is exactly when a degraded node is least acceptable.
+
+**Trade-off:** ~2.8× the all-in cost of single-vm at equivalent per-node sizing (see [COST_SHAPES.md](COST_SHAPES.md)) — the *licence* is exactly 2× because the meter counts vCores rather than machines, and the rest is the added load balancer, Multi-AZ database and shared Redis. Production-grade availability without operator intervention.
 
 ---
 

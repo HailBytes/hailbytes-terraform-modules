@@ -27,6 +27,17 @@ A "shape" is the topology — single VM, HA two-node, or horizontally-scaling
 VM Scale Set. The three are not interpolatable: don't quote "2× a single VM"
 for HA.
 
+> **⚠️ These rows are sized at 2 vCPU per app node, which is BELOW the module
+> default as of 2026-08-06.** Every module now defaults to the 8-vCore training
+> floor (`Standard_D8s_v5`), because any instance serving training content or
+> running the recurring automations carries an 8-vCore floor and training ships
+> with the phish server. 2 vCPU is valid only for phishing-simulation-only
+> deployments, and it is not a purchasable rung in any case — the marketplace
+> floor is 8 vCPU. The infrastructure figures below remain verified against the
+> Azure Retail Prices API at the sizing shown; the **meter** column is exact at
+> any size (`metered vCores × 730h × $0.24`). Re-verify the infrastructure
+> column at `Standard_D8s_v5` before quoting an all-in total.
+
 All rows use **`Standard_D2s_v5` (2 vCPU)** as the app-VM size, the
 procurement-grade equivalent of the AWS table's `m6i.large`. It is also the
 module default on Azure, so — unlike the AWS table — the Azure procurement
@@ -36,8 +47,8 @@ sizing and the starter defaults coincide at this tier.
 |---|---|---|---|---|---|---|
 | **Single** | [`single-vm/azure`](modules/single-vm/azure) | 1× `Standard_D2s_v5` | NAT Gateway | €144 / $164 | 2 vCPU → €308 / $350 | **€451 / $514** |
 | **HA hot-hot** | [`ha-hot-hot/azure`](modules/ha-hot-hot/azure) | 2× `Standard_D2s_v5` | Standard LB + Azure Cache for Redis (Standard C1) + PostgreSQL Flexible Server `GP_Standard_D2ds_v5` **ZoneRedundant HA** | €642 / $732 | 4 vCPU → €615 / $701 | **€1,257 / $1,432** |
-| **HA hot-hot, self-managed DB** (`db_mode = "vm"`) | [`ha-hot-hot/azure`](modules/ha-hot-hot/azure) | 2× app + 1× `Standard_D2s_v5` DB VM | Standard LB + Redis Standard C1 | €467 / $532 | 6 vCPU → €923 / $1,051 | **€1,389 / $1,583** |
-| **Unlimited scale** | [`unlimited-scale/azure`](modules/unlimited-scale/azure) | 3× `Standard_D2s_v5` (VMSS min) | Standard LB + Redis Standard C1 + Flexible Server `GP_Standard_D4ds_v5` ZoneRedundant primary + 2 read replicas | €1,486 / $1,694 | 6 vCPU → €923 / $1,051 | **€2,409 / $2,745 at min** |
+| **HA hot-hot, self-managed DB** (`db_mode = "vm"`) | [`ha-hot-hot/azure`](modules/ha-hot-hot/azure) | 2× app + 1× `Standard_D2s_v5` DB VM | Standard LB + Redis Standard C1 | €467 / $532 | 4 vCPU → €615 / $701 | **€1,082 / $1,232** |
+| **Unlimited scale** | [`unlimited-scale/azure`](modules/unlimited-scale/azure) | 2× `Standard_D2s_v5` (VMSS min) | Standard LB + Redis Standard C1 + Flexible Server `GP_Standard_D4ds_v5` ZoneRedundant primary + 2 read replicas | €1,486 / $1,694 | 4 vCPU → €615 / $701 | **€2,101 / $2,395 at min** |
 
 ### Single-instance → HA multiplier
 
@@ -129,14 +140,25 @@ apt-installed PostgreSQL 16 on a 256 GiB Premium data disk.
 | Key Vault | ~1 | ~1 |
 | Standard Load Balancer base + NAT Gateway base + backup storage | 45.83 | 52.10 |
 | **Fixed monthly infrastructure** | **€466.70** | **$531.55** |
-| HailBytes per-vCPU meter (6 vCPU — the DB VM meters too) | 922.5 🔸 | 1,051.20 |
-| **All-in (at rest)** | **€1,389** | **$1,583** |
+| HailBytes per-vCPU meter (4 vCPU — the 2 app VMs only; the DB VM does **not** meter) | 615.0 🔸 | 700.80 |
+| **All-in (at rest)** | **€1,082** | **$1,232** |
 
-Cheaper infrastructure, **more expensive overall**: the DB VM is a HailBytes
-Marketplace image, so it carries the per-vCPU meter. Same inversion as the AWS
-`db_mode = "ec2"` row. Choose this mode for compliance/BYO-DBA reasons, never
-to save money. It also gives up automated backups, zone-redundant failover,
-and point-in-time restore.
+**Corrected 2026-08-06: this row previously metered 6 vCPU on the claim that
+the DB VM carries the meter. It does not.**
+`azurerm_linux_virtual_machine.db_vm` boots a `Canonical / ubuntu-24_04-lts`
+`source_image_reference` with **no `plan {}` block** — it is plain Ubuntu with
+apt-installed PostgreSQL 16, provisioned by
+`hailbytes-init-postgres.sh`. Only the application VMs reference
+`local.plan`, and the meter attaches to the Marketplace plan. The AWS
+equivalent is the same: `aws_instance.db_ec2` uses `data.aws_ami.ubuntu`, not
+the Marketplace AMI. The old figure over-stated the customer's licence cost by
+$350/mo on this shape.
+
+So this mode is **cheaper infrastructure and cheaper overall** — the earlier
+"more expensive overall" inversion was an artifact of the metering error. What
+you actually give up is managed backups, point-in-time restore and automatic
+failover, which is the real reason to choose it deliberately rather than
+to save money.
 
 ### Shape 3 — Unlimited scale (`unlimited-scale/azure`)
 
