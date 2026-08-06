@@ -100,7 +100,7 @@ variable "redis_endpoint_override_tls" {
 variable "asg_min_size" {
   description = "Minimum number of instances the ASG maintains."
   type        = number
-  default     = 3
+  default     = 2
   validation {
     condition     = var.asg_min_size >= 1
     error_message = "asg_min_size must be at least 1."
@@ -120,7 +120,7 @@ variable "asg_max_size" {
 variable "asg_desired_capacity" {
   description = "Starting instance count when the ASG is created. Must be between asg_min_size and asg_max_size."
   type        = number
-  default     = 3
+  default     = 2
   validation {
     condition     = var.asg_desired_capacity >= 1
     error_message = "asg_desired_capacity must be at least 1."
@@ -128,9 +128,25 @@ variable "asg_desired_capacity" {
 }
 
 variable "instance_type" {
-  description = "EC2 instance type for the ASG launch template. m6i.large is a balanced starting point; scale to m6i.xlarge for larger tenants."
+  description = "EC2 instance type for the HailBytes application node(s). Constrained to the portable m6i ladder; see the validation message. Defaults to the 8-vCore training floor."
   type        = string
-  default     = "m6i.large"
+  default     = "m6i.2xlarge"
+
+  validation {
+    # The portable ladder. Every entry is a stock m6i general-purpose shape at
+    # the same 4 GB-per-vCore ratio as the Azure Dsv5 equivalent, so a
+    # deployment can move between clouds without changing tier.
+    condition = contains([
+      "m6i.large",    # 2 vCPU  - phishing simulation only
+      "m6i.xlarge",   # 4 vCPU  - phishing simulation only
+      "m6i.2xlarge",  # 8 vCPU  - training floor and purchasable entry rung
+      "m6i.4xlarge",  # 16 vCPU
+      "m6i.8xlarge",  # 32 vCPU
+      "m6i.12xlarge", # 48 vCPU
+      "m6i.16xlarge", # 64 vCPU
+    ], var.instance_type)
+    error_message = "instance_type must be a portable HailBytes rung: m6i.large (2 vCPU), m6i.xlarge (4), m6i.2xlarge (8), m6i.4xlarge (16), m6i.8xlarge (32), m6i.12xlarge (48), m6i.16xlarge (64). AWS m6i has NO general-purpose size between 16 and 32 vCPU, so a 24-vCore deployment cannot be delivered as one VM or as a symmetric pair (2 x 12 does not exist either) -- quote 16 or 32. The 2 and 4 vCPU rungs are for phishing-simulation-only instances: anything serving training content or running the recurring automations carries an 8-vCore floor."
+  }
 }
 
 variable "enable_alb_deletion_protection" {
