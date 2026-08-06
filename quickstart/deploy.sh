@@ -293,9 +293,10 @@ pick_db_mode() {
         "the single biggest lever. Ask your account team before you commit."
       ;;
     "$vm_label")
-      cost_warning "A self-managed database VM is cheaper infrastructure but a HIGHER total." \
-        "The database VM runs the HailBytes image, so it carries the per-vCPU" \
-        "meter too — on metered billing this increases your total, not reduces it." \
+      cost_warning "A self-managed database VM is cheaper infrastructure AND a lower total." \
+        "The database VM boots plain Canonical Ubuntu with apt-installed" \
+        "PostgreSQL, not the HailBytes Marketplace image, so it does NOT carry" \
+        "the per-vCPU meter. Only nodes running the Marketplace image meter." \
         "" \
         "You also give up automated backups, point-in-time restore, and" \
         "zone-redundant failover. Choose this for compliance or BYO-DBA reasons," \
@@ -327,12 +328,15 @@ pick_db_mode() {
 
 pick_scale_knobs() {
   [ "$TIER" = autoscale ] || return 0
-  MIN_COUNT="$(ask "Minimum instances" "3")"
+  MIN_COUNT="$(ask "Minimum instances" "2")"
   MAX_COUNT="$(ask "Maximum instances the autoscaler may reach" "$MIN_COUNT")"
   if [ "$MAX_COUNT" -gt "$MIN_COUNT" ] 2>/dev/null; then
-    local extra=$(( (MAX_COUNT - MIN_COUNT) * 2 ))
+    # 8 vCPU per node: the module default is the 8-vCore training floor
+    # (m6i.2xlarge / Standard_D8s_v5). This was hardcoded at 2 when the
+    # defaults shipped below the floor.
+    local extra=$(( (MAX_COUNT - MIN_COUNT) * 8 ))
     cost_warning "Autoscaling is enabled: max ${MAX_COUNT} instances." \
-      "Scaling out meters every extra instance. At 2 vCPU per instance that is" \
+      "Scaling out meters every extra instance. At 8 vCPU per instance that is" \
       "up to ${extra} additional metered vCPUs, roughly" \
       "\$$(awk "BEGIN{printf \"%.0f\", ${extra}*730*${METER_PER_VCPU_HOUR}}")/month on top of your baseline if it" \
       "sits at maximum." \

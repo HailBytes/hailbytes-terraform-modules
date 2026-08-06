@@ -2,11 +2,34 @@
 
 > **Assessment date:** 2026-08-04
 > **Question asked:** is it easy to deploy each of our simplified SKUs via this repo?
-> **Short answer:** **no.** Three defects, one of them shipping in every module.
+> **Short answer at the time:** **no.** Three defects, one of them shipping in
+> every module.
 >
-> This document is an assessment plus a reference table. It **changes no
-> Terraform** — the headline fix would force instance replacement on running
-> deployments, so it needs a decision, not a drive-by commit. See §5.
+> ## ⚠️ STATUS UPDATE 2026-08-06 — the headline defects are now FIXED
+>
+> The decision this document asked for was taken, and the Terraform changed:
+>
+> - **Defaults now reach the floor.** Every module defaults to 8 vCores
+>   (`m6i.2xlarge` / `Standard_D8s_v5`) instead of 2. Finding 1 is closed. This
+>   is a **breaking change** — a re-apply that relied on the old defaults
+>   replaces instances, exactly the blast radius that made it a decision rather
+>   than a drive-by commit. See [CHANGELOG.md](../CHANGELOG.md).
+> - **Off-ladder sizes are rejected at plan time.** `instance_type` and
+>   `vm_size` carry `validation` blocks constraining them to the portable set
+>   (2, 4, 8, 16, 32, 48, 64 vCores). `Standard_D24s_v5`, `t3.large` and the
+>   `m5.*` family now fail `terraform plan`.
+> - **The 12- and 24-vCore SKUs are withdrawn, not made reachable.** That is
+>   the substantive change of direction in this document. §3 below treats 12 and
+>   24 as rungs to deliver somehow; the answer is that they should not be sold.
+>   Neither cloud has a general-purpose shape at either size, and nothing at all
+>   between 16 and 32. `HB-STD` and `HB-ENT` are retired.
+> - **The autoscale baseline moved from 3 nodes to 2**, and `HB-SCALE` is quoted
+>   as a range (`8 × instance count`) rather than at an arbitrary 6 × 8 snapshot.
+>
+> The sizing tables below are kept as the record of what was wrong. Where a row
+> conflicts with the update above, the update wins. Prices are also restated:
+> the 32-vCore annual list is **$67,300**, not $67,200 — see
+> [CHANGELOG.md](../CHANGELOG.md) for the rounding-convention correction.
 
 ---
 
@@ -52,17 +75,22 @@ Essential. Anyone sizing per-VM instead of per-envelope quotes half the true bil
 
 **Severity: high. Affects all six tier modules and all twelve product wrappers.**
 
-| Tier module | Sizing default | vCPU each | Instances | **Billable vCores** |
-|---|---|---:|---:|---:|
-| `single-vm/aws` | `t3.large` | 2 | 1 | **2** |
-| `single-vm/azure` | `Standard_D2s_v5` | 2 | 1 | **2** |
-| `ha-hot-hot/aws` | `t3.large` | 2 | 2 | **4** |
-| `ha-hot-hot/azure` | `Standard_D2s_v5` | 2 | 2 | **4** |
-| `unlimited-scale/aws` | `m6i.large` | 2 | 3 | **6** |
-| `unlimited-scale/azure` | `Standard_D2s_v5` | 2 | 3 | **6** |
+**FIXED 2026-08-06.** The defaults as they were, and as they are now:
 
-**Not one tier reaches 8 vCores at its defaults.** The smallest thing a customer
-can buy is 8 vCPU; the largest thing this repo deploys by default is 6 vCores.
+| Tier module | Old default | Old billable | **New default** | Instances | **New billable vCores** |
+|---|---|---:|---|---:|---:|
+| `single-vm/aws` | `t3.large` (2) | 2 | `m6i.2xlarge` (8) | 1 | **8** |
+| `single-vm/azure` | `Standard_D2s_v5` (2) | 2 | `Standard_D8s_v5` (8) | 1 | **8** |
+| `ha-hot-hot/aws` | `t3.large` (2) | 4 | `m6i.2xlarge` (8) | 2 | **16** |
+| `ha-hot-hot/azure` | `Standard_D2s_v5` (2) | 4 | `Standard_D8s_v5` (8) | 2 | **16** |
+| `unlimited-scale/aws` | `m6i.large` (2) | 6 | `m6i.2xlarge` (8) | 2 | **16** |
+| `unlimited-scale/azure` | `Standard_D2s_v5` (2) | 6 | `Standard_D8s_v5` (8) | 2 | **16** |
+
+Every tier now lands on a purchasable rung at its defaults: single-vm on
+`HB-ESS` (8 metered), and both HA and autoscale on `HB-PRO`/`HB-PRO-HA`
+(16 metered). Previously **not one tier reached 8 vCores at its defaults** —
+the smallest thing a customer could buy was 8 vCPU, and the largest thing this
+repo deployed by default was 6 vCores.
 
 Consequences, in order of how much they cost us:
 
@@ -241,11 +269,23 @@ Notes:
 - Database instances are **not** billable — stock Ubuntu on AWS
   (`db_ec2_instance_type`, default `m6i.large`), Flexible Server on Azure
   (`db_vm_size`). Size them for the database; they never touch the meter.
-- The 8 vCPU floor is per **deployment**, not per instance. 4 × 2 vCPU satisfies
-  Essential.
-- `Standard_D8s_v3` / `D16s_v3` follow `pricing.toml`'s `azure_shape` field. The
-  equivalent v5 shapes are newer and generally cheaper for the same vCPU; prefer
-  v5 where the region offers it.
+- **CORRECTED 2026-08-06: there are two different floors, and this bullet
+  conflated them.** The *commercial* floor is per deployment — 8 metered vCores
+  is the smallest thing a customer can buy. The **8-vCore training floor is per
+  INSTANCE**: any single instance that serves training content or runs the
+  recurring automations needs 8 vCores of its own, because learner
+  video/SCORM streaming, certificate PDF rendering and the one-minute automation
+  sweep contend with the co-located Postgres on that box. It is enforced
+  per-instance in code — `hailbytes-sat/controllers/api/sizing.go` compares
+  `runtime.NumCPU()` on the running node against `trainingVCoreFloor = 8`.
+  So **4 × 2 vCPU does NOT satisfy Essential** for anything serving training,
+  even though it sums to 8 metered vCores. Training ships with the phish server,
+  so treat that as the default case. Sub-8 nodes are for
+  phishing-simulation-only deployments.
+- `pricing.toml`'s `azure_shape` / `aws_shape` fields moved to the v5 / m6i
+  families on 2026-08-06 (`Standard_D8s_v5`, `m6i.2xlarge`, and so on up the
+  ladder). References to `Standard_D8s_v3` / `D16s_v3` and `m5.*` shapes
+  elsewhere in this document predate that and are stale.
 
 ---
 

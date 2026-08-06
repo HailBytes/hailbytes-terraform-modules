@@ -27,6 +27,17 @@ A "shape" is the topology — single VM, HA two-node, or horizontally-scaling
 VM Scale Set. The three are not interpolatable: don't quote "2× a single VM"
 for HA.
 
+> **⚠️ These rows are sized at 2 vCPU per app node, which is BELOW the module
+> default as of 2026-08-06.** Every module now defaults to the 8-vCore training
+> floor (`Standard_D8s_v5`), because any instance serving training content or
+> running the recurring automations carries an 8-vCore floor and training ships
+> with the phish server. 2 vCPU is valid only for phishing-simulation-only
+> deployments, and it is not a purchasable rung in any case — the marketplace
+> floor is 8 vCPU. The infrastructure figures below remain verified against the
+> Azure Retail Prices API at the sizing shown; the **meter** column is exact at
+> any size (`metered vCores × 730h × $0.24`). Re-verify the infrastructure
+> column at `Standard_D8s_v5` before quoting an all-in total.
+
 All rows use **`Standard_D2s_v5` (2 vCPU)** as the app-VM size, the
 procurement-grade equivalent of the AWS table's `m6i.large`. It is also the
 module default on Azure, so — unlike the AWS table — the Azure procurement
@@ -36,8 +47,8 @@ sizing and the starter defaults coincide at this tier.
 |---|---|---|---|---|---|---|
 | **Single** | [`single-vm/azure`](modules/single-vm/azure) | 1× `Standard_D2s_v5` | NAT Gateway | €144 / $164 | 2 vCPU → €308 / $350 | **€451 / $514** |
 | **HA hot-hot** | [`ha-hot-hot/azure`](modules/ha-hot-hot/azure) | 2× `Standard_D2s_v5` | Standard LB + Azure Cache for Redis (Standard C1) + PostgreSQL Flexible Server `GP_Standard_D2ds_v5` **ZoneRedundant HA** | €642 / $732 | 4 vCPU → €615 / $701 | **€1,257 / $1,432** |
-| **HA hot-hot, self-managed DB** (`db_mode = "vm"`) | [`ha-hot-hot/azure`](modules/ha-hot-hot/azure) | 2× app + 1× `Standard_D2s_v5` DB VM | Standard LB + Redis Standard C1 | €467 / $532 | 6 vCPU → €923 / $1,051 | **€1,389 / $1,583** |
-| **Unlimited scale** | [`unlimited-scale/azure`](modules/unlimited-scale/azure) | 3× `Standard_D2s_v5` (VMSS min) | Standard LB + Redis Standard C1 + Flexible Server `GP_Standard_D4ds_v5` ZoneRedundant primary + 2 read replicas | €1,486 / $1,694 | 6 vCPU → €923 / $1,051 | **€2,409 / $2,745 at min** |
+| **HA hot-hot, self-managed DB** (`db_mode = "vm"`) | [`ha-hot-hot/azure`](modules/ha-hot-hot/azure) | 2× app + 1× `Standard_D2s_v5` DB VM | Standard LB + Redis Standard C1 | €467 / $532 | 4 vCPU → €615 / $701 | **€1,082 / $1,232** |
+| **Unlimited scale** | [`unlimited-scale/azure`](modules/unlimited-scale/azure) | 2× `Standard_D2s_v5` (VMSS min) | Standard LB + Redis Standard C1 + Flexible Server `GP_Standard_D4ds_v5` ZoneRedundant primary + 2 read replicas | €1,486 / $1,694 | 4 vCPU → €615 / $701 | **€2,101 / $2,395 at min** |
 
 ### Single-instance → HA multiplier
 
@@ -129,14 +140,25 @@ apt-installed PostgreSQL 16 on a 256 GiB Premium data disk.
 | Key Vault | ~1 | ~1 |
 | Standard Load Balancer base + NAT Gateway base + backup storage | 45.83 | 52.10 |
 | **Fixed monthly infrastructure** | **€466.70** | **$531.55** |
-| HailBytes per-vCPU meter (6 vCPU — the DB VM meters too) | 922.5 🔸 | 1,051.20 |
-| **All-in (at rest)** | **€1,389** | **$1,583** |
+| HailBytes per-vCPU meter (4 vCPU — the 2 app VMs only; the DB VM does **not** meter) | 615.0 🔸 | 700.80 |
+| **All-in (at rest)** | **€1,082** | **$1,232** |
 
-Cheaper infrastructure, **more expensive overall**: the DB VM is a HailBytes
-Marketplace image, so it carries the per-vCPU meter. Same inversion as the AWS
-`db_mode = "ec2"` row. Choose this mode for compliance/BYO-DBA reasons, never
-to save money. It also gives up automated backups, zone-redundant failover,
-and point-in-time restore.
+**Corrected 2026-08-06: this row previously metered 6 vCPU on the claim that
+the DB VM carries the meter. It does not.**
+`azurerm_linux_virtual_machine.db_vm` boots a `Canonical / ubuntu-24_04-lts`
+`source_image_reference` with **no `plan {}` block** — it is plain Ubuntu with
+apt-installed PostgreSQL 16, provisioned by
+`hailbytes-init-postgres.sh`. Only the application VMs reference
+`local.plan`, and the meter attaches to the Marketplace plan. The AWS
+equivalent is the same: `aws_instance.db_ec2` uses `data.aws_ami.ubuntu`, not
+the Marketplace AMI. The old figure over-stated the customer's licence cost by
+$350/mo on this shape.
+
+So this mode is **cheaper infrastructure and cheaper overall** — the earlier
+"more expensive overall" inversion was an artifact of the metering error. What
+you actually give up is managed backups, point-in-time restore and automatic
+failover, which is the real reason to choose it deliberately rather than
+to save money.
 
 ### Shape 3 — Unlimited scale (`unlimited-scale/azure`)
 
@@ -206,10 +228,9 @@ plan instead of a usage meter. Those prices are the $0.24/vCPU-hour meter
 annualised at 730 h/month and rounded down to a clean figure — **each plan
 matches its metered equivalent to within 0.1%.**
 
-| SKU | Plan | Metered vCores | Fixed list price | Meter equivalent (vCores × 730 h × $0.24 × 12) | Δ |
+| SKU | Plan | Metered vCores | Fixed list price | Meter equivalent (vCores × 8760 h × $0.24) | Δ |
 |---|---|---|---|---|---|
 | `HB-ESS` | Essential | 8 | $16,800/yr · $1,400/mo | $16,819/yr | −0.1% |
-| `HB-STD` | Standard | 12 | $25,200/yr · $2,100/mo | $25,229/yr | −0.1% |
 | `HB-PRO` | Professional | 16 | $33,600/yr · $2,800/mo | $33,638/yr | −0.1% |
 | `HB-PRO-HA` | Professional HA | 16 (2 × 8) | $33,600/yr · $2,800/mo | $33,638/yr | −0.1% |
 | `HB-SCALE` | Consortium / national scale | 48 (6 × 8) | partner-desk quote | $100,915/yr | — |
@@ -244,7 +265,6 @@ verified North Europe unit prices in this document.
 | SKU | Module + sizing | Azure infra €/mo | Azure infra $/mo | Azure infra $/yr | Plan $/yr | **All-in $/yr** | Infra share |
 |---|---|---|---|---|---|---|---|
 | `HB-ESS` | `single-vm/azure`, 1× `Standard_D8s_v5` | €350 | $398 | $4,778 | $16,800 | **$21,578** | 22% |
-| `HB-STD` | `unlimited-scale/azure`, 3× `Standard_D4s_v5`, `GP_Standard_D4ds_v5` ZR + 2 replicas | €1,692 | $1,928 | $23,134 | $25,200 | **$48,334** | **48%** |
 | `HB-PRO` | `single-vm/azure`, 1× `Standard_D16s_v5` | €624 | $711 | $8,527 | $33,600 | **$42,127** | 20% |
 | `HB-PRO-HA` | `ha-hot-hot/azure`, 2× `Standard_D8s_v5`, module-default `GP_Standard_D2ds_v5` ZR | €1,054 | $1,200 | $14,403 | $33,600 | **$48,003** | 30% |
 | `HB-PRO-HA` | same, DB upsized to `GP_Standard_D4ds_v5` (the Azure analogue of the AWS mapping's `db.m6g.large`) | €1,307 | $1,489 | $17,872 | $33,600 | **$51,472** | 35% |
@@ -267,7 +287,13 @@ backup storage — at rest. Add traffic from the
    the plan price alone understates a customer's first-year spend by a fifth to
    nearly a half. Give finance the all-in column.
 
-2. **`HB-STD` is the outlier and should be examined before it is quoted.** At
+2. **`HB-STD` IS RETIRED as of 2026-08-06 — it can no longer be quoted at all,
+   which supersedes the analysis in this item.** It was a 12-metered-vCore SKU,
+   and no general-purpose shape exists at 12 vCores on either cloud; it was only
+   reachable as 3 × 4-vCore nodes, each below the 8-vCore training floor. The
+   cost profile below is retained because it is verified data about that shape,
+   and because the read-replica point it makes generalises to any small VMSS.
+   Historically: at
    48%, Azure costs nearly as much as the plan. The cause is the
    `unlimited-scale` module's default `db_replica_count = 2`: two
    `GP_Standard_D4ds_v5` read replicas add **€564/$643 per month ($7,715/yr)**
@@ -523,7 +549,7 @@ What that is worth per SKU, compute only:
 |---|---|---|---|---|---|---|---|
 | `HB-PRO-HA` (default DB) | $3,469 | $2,081 | $1,388 | $7,499 | $4,649 | $2,999 | **$6,580/yr** |
 | `HB-PRO-HA` (upsized DB) | $6,938 | $4,163 | $2,775 | $7,499 | $4,649 | $2,999 | **$8,663/yr** |
-| `HB-STD` | $13,876 | $8,326 | $5,550 | $5,624 | $3,487 | $2,250 | **$11,700/yr** |
+| `HB-STD` (retired) | $13,876 | $8,326 | $5,550 | $5,624 | $3,487 | $2,250 | **$11,700/yr** |
 | `HB-SCALE` | $38,964 | $23,379 | $15,586 | $22,496 | $13,947 | $8,998 | **$36,876/yr** |
 
 `HB-SCALE` on 3-year reservations drops from **$69,572 to ~$32,696 of Azure per
@@ -540,7 +566,7 @@ cover storage. Reserve the steady-state floor, not the peak.
 
 `unlimited-scale/azure` defaults to `db_replica_count = 2`. Each replica is a
 full `GP_Standard_D4ds_v5` plus its own 256 GiB: **$321/mo, $3,858/yr each**.
-On `HB-STD` (three app instances) two read replicas is over-provisioned by
+On the retired `HB-STD` shape (three app instances) two read replicas was over-provisioned by
 default:
 
 | `db_replica_count` | Azure infra/yr | All-in/yr | vs default |
