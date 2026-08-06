@@ -39,7 +39,7 @@ most:
 | HA tier | ~2.8× the all-in cost of a single VM — not 2×, because the zone-redundant database bills 2× compute *and* 2× storage for the standby |
 | Autoscale tier | Every scaled-out instance meters at $0.24/vCPU-hour, and the ceiling is whatever you set `max` to |
 | Read replicas | Each is a full database server — ~$3,858/year each, and a 3-instance deployment rarely needs any |
-| `db_mode` = self-managed VM | *Cheaper infrastructure, higher total* — the DB VM runs the HailBytes image, so it carries the meter too |
+| `db_mode` = self-managed VM | *Cheaper infrastructure and cheaper overall* — the DB VM boots plain Canonical Ubuntu with apt-installed PostgreSQL, **not** the HailBytes Marketplace image, so it does **not** carry the meter. What you give up is managed backups, point-in-time restore and automatic failover |
 | `db_mode` = external | Removes the database from your cloud bill entirely, but availability, backups and PITR become yours |
 | Application Gateway | ~$187/mo (or ~$336 with WAF) — 10–18× the load balancer it sits in front of, which stays in the topology |
 
