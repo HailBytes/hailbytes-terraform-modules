@@ -58,9 +58,26 @@ variable "name_prefix" {
 }
 
 variable "vm_size" {
-  description = "VM SKU. Standard_D2s_v5 is the default for ASM/SAT single-vm tier."
+  description = "Azure VM SKU for the HailBytes application node(s). Constrained to the portable Dsv5 ladder; see the validation message. Defaults to the 8-vCore training floor."
   type        = string
-  default     = "Standard_D2s_v5"
+  default     = "Standard_D8s_v5"
+
+  validation {
+    # The portable ladder. Every entry is a stock Dsv5 general-purpose shape at
+    # the same 4 GB-per-vCore ratio as the AWS m6i equivalent, so a deployment
+    # can move between clouds without changing tier. B2s is the pilot exception.
+    condition = contains([
+      "Standard_B2s",     # 2 vCPU  - pilot, phishing simulation only
+      "Standard_D2s_v5",  # 2 vCPU  - phishing simulation only
+      "Standard_D4s_v5",  # 4 vCPU  - phishing simulation only
+      "Standard_D8s_v5",  # 8 vCPU  - training floor and purchasable entry rung
+      "Standard_D16s_v5", # 16 vCPU
+      "Standard_D32s_v5", # 32 vCPU
+      "Standard_D48s_v5", # 48 vCPU
+      "Standard_D64s_v5", # 64 vCPU
+    ], var.vm_size)
+    error_message = "vm_size must be a portable HailBytes rung: Standard_B2s or Standard_D2s_v5 (2 vCPU), Standard_D4s_v5 (4), Standard_D8s_v5 (8), Standard_D16s_v5 (16), Standard_D32s_v5 (32), Standard_D48s_v5 (48), Standard_D64s_v5 (64). Azure Dsv5 has NO general-purpose size between 16 and 32 vCPU -- there is no Standard_D24s_v5 -- so a 24-vCore deployment cannot be delivered as one VM or as a symmetric pair; quote 16 or 32. The 2 and 4 vCPU rungs are for phishing-simulation-only instances: anything serving training content or running the recurring automations carries an 8-vCore floor."
+  }
 }
 
 variable "os_disk_size_gb" {
