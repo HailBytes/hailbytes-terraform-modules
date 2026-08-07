@@ -452,7 +452,11 @@ resource "aws_ebs_volume" "db_data" {
   tags              = merge(local.common_tags, { Name = "${local.name_prefix}-db-data" })
 
   lifecycle {
-    prevent_destroy = false
+    # Always-on: prevent_destroy cannot reference var.db_deletion_protection
+    # (Terraform requires a literal here). This is the only destroy guard for
+    # db_mode = "ec2" — there is no RDS-style final-snapshot escape hatch for
+    # a raw EBS volume, so it does not follow the variable's off setting.
+    prevent_destroy = true
   }
 }
 
