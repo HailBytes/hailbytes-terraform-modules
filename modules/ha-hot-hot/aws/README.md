@@ -59,6 +59,14 @@ EC2), drop the RDS line and add ~$70/month for the third `m6i.large`
 plus another 200 GB of gp3 (~$16/month). All-in lands at roughly
 **~$940/month (≈ 2.2× single)** at procurement-grade sizing.
 
+> [!NOTE]
+> `var.db_deletion_protection` only governs the `db_mode = "rds"` path
+> (RDS `deletion_protection` + final snapshot on destroy). For
+> `db_mode = "ec2"`, the self-managed Postgres data volume
+> (`aws_ebs_volume.db_data`) always has `prevent_destroy = true` —
+> unconditionally, regardless of this variable — since a raw EBS volume
+> has no snapshot-on-destroy equivalent to fall back on.
+
 ## Prerequisites
 
 - VPC with at least 2 public subnets (for ALB) and 2 private subnets in different AZs

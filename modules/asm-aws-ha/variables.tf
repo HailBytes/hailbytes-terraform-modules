@@ -106,8 +106,9 @@ variable "db_backup_retention_days" {
 }
 
 variable "db_deletion_protection" {
-  type    = bool
-  default = true
+  description = "Governs db_mode = \"rds\" only: sets the RDS instance's deletion_protection, disables skip_final_snapshot, and takes a final snapshot on destroy. Has no effect when db_mode = \"ec2\" — that path's data volume always has prevent_destroy = true regardless of this variable, since EBS has no snapshot-on-destroy equivalent to fall back on."
+  type        = bool
+  default     = true
 }
 
 variable "enable_customer_managed_key" {
