@@ -60,7 +60,7 @@ variable "key_name" {
 variable "root_volume_size_gb" {
   description = "Root volume size in GB."
   type        = number
-  default     = 50
+  default     = 100
 }
 
 variable "data_volume_size_gb" {

@@ -271,6 +271,7 @@ resource "azurerm_linux_virtual_machine_scale_set" "main" {
   os_disk {
     storage_account_type = "Premium_LRS"
     caching              = "ReadWrite"
+    disk_size_gb         = 100
   }
 
   network_interface {

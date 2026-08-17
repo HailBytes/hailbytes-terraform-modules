@@ -424,7 +424,7 @@ resource "azurerm_linux_virtual_machine" "vm" {
   os_disk {
     caching                = "ReadWrite"
     storage_account_type   = "Premium_LRS"
-    disk_size_gb           = 64
+    disk_size_gb           = 100
     disk_encryption_set_id = var.enable_customer_managed_key ? azurerm_disk_encryption_set.vm[0].id : null
   }
 
