@@ -41,7 +41,7 @@ These modules ship with security-conservative defaults. You should have to expli
 ## Logging & audit
 
 - **AWS:** VPC Flow Logs are enabled by default (`enable_flow_logs = true`), to a KMS-encrypted CloudWatch log group. ALB access logs are opt-in (`enable_alb_access_logging`) to a versioned, lifecycled S3 bucket.
-- **Azure:** VNet flow logs are enabled by default (`enable_flow_logs = true` on `network/azure`), to a Storage Account with shared-key auth disabled. Implemented as *VNet* flow logs rather than NSG flow logs, since NSG flow logs are being retired.
+- **Azure:** VNet flow logs are enabled by default (`enable_flow_logs = true` on `network/azure`), to a Storage Account with shared-key auth disabled, retained **180 days** (`flow_log_retention_days`). Retention must exceed 90 days to satisfy CKV_AZURE_12 and is validated in the variable; it drives Storage Account cost roughly linearly, so lower it only alongside a documented waiver. Implemented as *VNet* flow logs rather than NSG flow logs, since NSG flow logs are being retired.
 - **Azure:** diagnostic settings for the load balancer, database, cache and (when enabled) Application Gateway go to a Log Analytics workspace by default (`enable_diagnostics = true`); pass `log_analytics_workspace_id` to use your landing zone's central workspace instead. Note a Standard Load Balancer is Layer 4 and has **no** request-level access log — `ApplicationGatewayAccessLog` is the closest analogue of AWS ALB access logs, and it only exists when `enable_application_gateway = true`.
 - CloudTrail / Azure Activity Log are **not** managed by these modules — those are account-level concerns and should be owned by your landing-zone tooling.
 
