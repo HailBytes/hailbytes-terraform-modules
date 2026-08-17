@@ -84,7 +84,12 @@ variable "network_watcher_resource_group_name" {
 }
 
 variable "flow_log_retention_days" {
-  description = "Days to retain flow logs in the Storage Account."
+  description = "Days to retain flow logs in the Storage Account. Must exceed 90 to satisfy CKV_AZURE_12; the default is 180 (six months). Retention drives Storage Account cost roughly linearly, so tune it down only alongside a documented waiver."
   type        = number
-  default     = 30
+  default     = 180
+
+  validation {
+    condition     = var.flow_log_retention_days > 90
+    error_message = "flow_log_retention_days must be greater than 90 (CKV_AZURE_12)."
+  }
 }
