@@ -555,7 +555,7 @@ resource "aws_launch_template" "main" {
     device_name = "/dev/xvda"
     ebs {
       volume_type           = "gp3"
-      volume_size           = 50
+      volume_size           = 100
       encrypted             = true
       kms_key_id            = var.enable_customer_managed_key ? aws_kms_key.main[0].arn : null
       delete_on_termination = true
