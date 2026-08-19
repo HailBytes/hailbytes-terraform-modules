@@ -22,6 +22,48 @@ These modules ship with security-conservative defaults. You should have to expli
 - **Public IPs** are off by default. The LB has a public DNS name; the VMs sit in private subnets.
 - VMs are tagged for AWS Inspector / Azure Defender for Servers auto-enrollment when those services are enabled at the account level.
 
+## Subscription prerequisites (Azure)
+
+The Azure modules set `resource_provider_registrations = "none"` on the `azurerm`
+provider. This is deliberate, and it changes what your subscription must have in place
+before the first apply.
+
+Terraform's default (`"legacy"`) attempts to register roughly seventy resource providers
+on every apply — including many nothing here touches, such as `Microsoft.BotService`,
+`Microsoft.HealthcareApis` and `Microsoft.DataFactory`. Registration is a
+**subscription-scoped write** (`*/register/action`). A service principal scoped to a
+resource group, or any least-privilege operator role, does not hold it, so the apply dies
+on a wall of `AuthorizationFailed` 403s before creating a single resource. Granting
+subscription-wide write purely to satisfy a registration sweep is the wrong trade.
+
+With registration off, a subscription **owner** registers the providers the modules
+actually use, once per subscription:
+
+```bash
+for rp in Microsoft.Compute Microsoft.DBforPostgreSQL Microsoft.Insights \
+          Microsoft.KeyVault Microsoft.ManagedIdentity Microsoft.MarketplaceOrdering \
+          Microsoft.Network Microsoft.OperationalInsights Microsoft.Storage; do
+  az provider register --namespace "$rp" --wait
+done
+```
+
+Add `Microsoft.Cache` if you set `enable_redis = true`, and `Microsoft.Network` already
+covers Application Gateway.
+
+Most subscriptions that have ever deployed a VM already have `Microsoft.Compute`,
+`Microsoft.Network` and `Microsoft.Storage` registered; `Microsoft.DBforPostgreSQL` is the
+one most often missing. Check before you plan:
+
+```bash
+az provider show --namespace Microsoft.DBforPostgreSQL --query registrationState -o tsv
+```
+
+If a required provider is unregistered, the failure surfaces from whichever resource is
+created first and reads as `API version 20XX-XX-XX was not found for Microsoft.Foo` — a
+message that points at the API version rather than the real cause. The CI smoke in
+`hailbytes-sat` asserts registration state up front for exactly this reason, and names the
+missing provider.
+
 ## IAM / RBAC
 
 - Each module creates a **least-privilege instance profile / managed identity** scoped to:
