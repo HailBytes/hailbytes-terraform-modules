@@ -22,6 +22,18 @@ terraform {
 }
 
 provider "azurerm" {
+  # Terraform's azurerm provider defaults to registering ~70 resource providers
+  # on every apply. Registration is a SUBSCRIPTION-scoped write
+  # (*/register/action) that most delegated service principals and many
+  # least-privilege operator roles do not hold, so the apply fails closed with
+  # a wall of 403s before creating anything -- including for providers this
+  # stack never touches (Microsoft.BotService, Microsoft.HealthcareApis, ...).
+  #
+  # Turning it off makes the failure mode explicit instead: register the
+  # handful of providers this module actually needs, once, as a subscription
+  # owner. See SECURITY-DEFAULTS.md, "Subscription prerequisites".
+  resource_provider_registrations = "none"
+
   features {}
 }
 
