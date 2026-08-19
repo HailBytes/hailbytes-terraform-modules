@@ -10,6 +10,7 @@ module "this" {
   private_dns_zone_id    = var.private_dns_zone_id
   lb_subnet_id           = var.lb_subnet_id
   allowed_cidrs          = var.allowed_cidrs
+  health_check_path = var.health_check_path
   admin_username         = var.admin_username
   ssh_public_key         = var.ssh_public_key
 

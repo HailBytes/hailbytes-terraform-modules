@@ -7,6 +7,7 @@ module "this" {
   public_subnet_ids               = var.public_subnet_ids
   private_subnet_ids              = var.private_subnet_ids
   allowed_cidrs                   = var.allowed_cidrs
+  health_check_path = var.health_check_path
   acm_certificate_arn             = var.acm_certificate_arn
   alert_email                     = var.alert_email
   asg_min_size                    = var.asg_min_size

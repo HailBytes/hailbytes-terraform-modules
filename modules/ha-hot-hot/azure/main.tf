@@ -1269,7 +1269,7 @@ resource "azurerm_application_gateway" "main" {
   probe {
     name                                      = "backend-health"
     protocol                                  = var.appgw_backend_protocol
-    path                                      = "/health"
+    path                                      = local.health_check_path
     interval                                  = 15
     timeout                                   = 5
     unhealthy_threshold                       = 3

@@ -1,4 +1,12 @@
 locals {
+
+  # Load-balancer health probe path, per product. See the identical note in
+  # modules/ha-hot-hot: "/health" matches no route in either product -- SAT
+  # serves /api/health, ASM serves /api/ready -- so a hardcoded "/health" probe
+  # never marks a backend healthy and the pool comes up empty.
+  health_check_path = var.health_check_path != null ? var.health_check_path : (
+    var.product == "sat" ? "/api/health" : "/api/ready"
+  )
   name_prefix = coalesce(var.name_prefix, "hailbytes-${var.product}-${var.environment}")
 
   # AWS Marketplace listings (subscribe before applying):
@@ -485,7 +493,7 @@ resource "aws_lb_target_group" "main" {
 
   health_check {
     protocol            = "HTTPS"
-    path                = "/health"
+    path                = local.health_check_path
     port                = "443"
     matcher             = "200"
     healthy_threshold   = 2

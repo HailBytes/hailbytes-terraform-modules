@@ -385,3 +385,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "health_check_path" {
+  description = "Override the load-balancer health probe path. Leave null to use the product default: /api/health for SAT, /api/ready for ASM. Both are unauthenticated and return non-200 when the database is unreachable."
+  type        = string
+  default     = null
+}
