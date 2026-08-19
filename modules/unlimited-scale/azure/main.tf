@@ -1,4 +1,12 @@
 locals {
+
+  # Load-balancer health probe path, per product. See the identical note in
+  # modules/ha-hot-hot: "/health" matches no route in either product -- SAT
+  # serves /api/health, ASM serves /api/ready -- so a hardcoded "/health" probe
+  # never marks a backend healthy and the pool comes up empty.
+  health_check_path = var.health_check_path != null ? var.health_check_path : (
+    var.product == "sat" ? "/api/health" : "/api/ready"
+  )
   name_prefix = coalesce(var.name_prefix, "hailbytes-${var.product}-${var.environment}")
 
   # Listing slugs from the published Azure Marketplace offers:
@@ -194,7 +202,7 @@ resource "azurerm_lb_probe" "https" {
   name                = "health"
   protocol            = "Https"
   port                = 443
-  request_path        = "/health"
+  request_path        = local.health_check_path
   interval_in_seconds = 15
   number_of_probes    = 2
 }
@@ -767,7 +775,7 @@ resource "azurerm_application_gateway" "main" {
   probe {
     name                                      = "https-health"
     protocol                                  = "Https"
-    path                                      = "/health"
+    path                                      = local.health_check_path
     interval                                  = 15
     timeout                                   = 5
     unhealthy_threshold                       = 3
