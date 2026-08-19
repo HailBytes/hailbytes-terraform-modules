@@ -1,4 +1,19 @@
 locals {
+
+  # Load-balancer health probe path, per product.
+  #
+  # This was hardcoded to "/health", which matches NO route in either product:
+  # SAT serves /api/health (controllers/api/server.go) and ASM serves
+  # /api/ready (api/views/instance.py). A probe against a 404 never marks a
+  # backend healthy, so an HA deployment comes up with an empty pool and the
+  # load balancer serves 503 to every request.
+  #
+  # Both endpoints are unauthenticated, cheap and DB-touching, and both return
+  # a non-200 when the database is unreachable, so a node that cannot serve is
+  # drained rather than left in rotation.
+  health_check_path = var.health_check_path != null ? var.health_check_path : (
+    var.product == "sat" ? "/api/health" : "/api/ready"
+  )
   name_prefix = coalesce(var.name_prefix, "hailbytes-${var.product}-${var.environment}")
 
   # AWS Marketplace listings (subscribe before applying):
@@ -719,7 +734,7 @@ resource "aws_lb_target_group" "main" {
   health_check {
     enabled             = true
     protocol            = "HTTPS"
-    path                = "/health"
+    path                = local.health_check_path
     port                = "443"
     matcher             = "200"
     healthy_threshold   = 2

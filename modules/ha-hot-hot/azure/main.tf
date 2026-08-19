@@ -1,4 +1,19 @@
 locals {
+
+  # Load-balancer health probe path, per product.
+  #
+  # This was hardcoded to "/health", which matches NO route in either product:
+  # SAT serves /api/health (controllers/api/server.go) and ASM serves
+  # /api/ready (api/views/instance.py). A probe against a 404 never marks a
+  # backend healthy, so an HA deployment comes up with an empty pool and the
+  # load balancer serves 503 to every request.
+  #
+  # Both endpoints are unauthenticated, cheap and DB-touching, and both return
+  # a non-200 when the database is unreachable, so a node that cannot serve is
+  # drained rather than left in rotation.
+  health_check_path = var.health_check_path != null ? var.health_check_path : (
+    var.product == "sat" ? "/api/health" : "/api/ready"
+  )
   name_prefix = coalesce(var.name_prefix, "hailbytes-${var.product}-${var.environment}")
 
   # Listing slugs from the published Azure Marketplace offers:
@@ -354,7 +369,7 @@ resource "azurerm_lb_probe" "https" {
   name                = "health"
   protocol            = "Https"
   port                = 443
-  request_path        = "/health"
+  request_path        = local.health_check_path
   interval_in_seconds = 15
   number_of_probes    = 2
 }
@@ -1254,7 +1269,7 @@ resource "azurerm_application_gateway" "main" {
   probe {
     name                                      = "backend-health"
     protocol                                  = var.appgw_backend_protocol
-    path                                      = "/health"
+    path                                      = local.health_check_path
     interval                                  = 15
     timeout                                   = 5
     unhealthy_threshold                       = 3
