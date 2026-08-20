@@ -35,8 +35,10 @@ terraform init && terraform apply
 ## Step 3: Verify
 
 ```bash
-# Health endpoint through the load balancer
-curl -k https://$(terraform output -raw load_balancer_public_ip)/health
+# Health endpoint through the load balancer. SAT's path is /api/health --
+# there is no /health, and curling it returns 404, which looks like a failed
+# deployment when it is only a wrong URL.
+curl -k https://$(terraform output -raw load_balancer_public_ip)/api/health
 
 # Optional zone-failure drill: stop one VM, confirm the other keeps serving
 az vm deallocate -g rg-hailbytes-sat-prod \

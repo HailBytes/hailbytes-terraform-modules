@@ -40,15 +40,28 @@ With registration off, a subscription **owner** registers the providers the modu
 actually use, once per subscription:
 
 ```bash
-for rp in Microsoft.Compute Microsoft.DBforPostgreSQL Microsoft.Insights \
+for rp in Microsoft.Cache Microsoft.Compute Microsoft.DBforPostgreSQL Microsoft.Insights \
           Microsoft.KeyVault Microsoft.ManagedIdentity Microsoft.MarketplaceOrdering \
           Microsoft.Network Microsoft.OperationalInsights Microsoft.Storage; do
   az provider register --namespace "$rp" --wait
 done
 ```
 
-Add `Microsoft.Cache` if you set `enable_redis = true`, and `Microsoft.Network` already
-covers Application Gateway.
+`Microsoft.Cache` is in that list because the HA tier needs it by DEFAULT — this
+is not the optional extra it used to be documented as. `enable_managed_redis`
+defaults to `true` and `redis_endpoint_override` defaults to `null`, so a default
+HA apply creates an Azure Cache for Redis. (The variable is
+`enable_managed_redis`; there is no `enable_redis`.) Set it to `false` to skip
+both the cache and the namespace — Redis is a performance optimisation, not an HA
+requirement, since shared session keys make the default cookie store work across
+nodes (hailbytes-sat#907).
+
+The single-VM tier needs neither `Microsoft.Cache` nor `Microsoft.DBforPostgreSQL`:
+it runs PostgreSQL on the VM and provisions no cache. `Microsoft.Network` already
+covers Application Gateway on both tiers.
+
+`quickstart/preflight-azure.sh {ha|single}` checks and registers this whole list
+for you, and is idempotent.
 
 Most subscriptions that have ever deployed a VM already have `Microsoft.Compute`,
 `Microsoft.Network` and `Microsoft.Storage` registered; `Microsoft.DBforPostgreSQL` is the

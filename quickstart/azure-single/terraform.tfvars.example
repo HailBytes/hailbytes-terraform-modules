@@ -1,0 +1,15 @@
+# Copy to terraform.tfvars and edit. Two values are required.
+
+# CIDRs allowed to reach the admin UI. This tier exposes a public IP on the VM
+# itself, so this is the only thing standing in front of it -- do not use
+# 0.0.0.0/0. Your office egress IP as a /32 is the right shape.
+allowed_cidrs = ["203.0.113.10/32"]
+
+# Contents of your SSH public key, e.g. output of: cat ~/.ssh/id_ed25519.pub
+ssh_public_key = "ssh-ed25519 AAAAC3Nz... you@example.com"
+
+# Optional overrides:
+# resource_group_name = "rg-hailbytes-sat-single"
+# location            = "northeurope"
+# admin_username      = "hbadmin"
+# environment         = "prod"
