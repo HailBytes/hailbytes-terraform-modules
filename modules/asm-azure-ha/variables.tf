@@ -380,6 +380,12 @@ variable "admin_port" {
   default     = 3333
 }
 
+variable "phish_port" {
+  description = "Port the HailBytes phishing/tracking server listens on. The load balancer's 80 frontend forwards here. On SAT this is the landing-page and interaction-tracking surface; on ASM it is unused, but forwarded to keep the wrapper surface uniform with the tier module."
+  type        = number
+  default     = 80
+}
+
 variable "external_db_host" {
   description = "Hostname or private IP of a customer-operated PostgreSQL server. Required when db_mode = \"external\", ignored otherwise. Must be resolvable and reachable from vm_subnet_id."
   type        = string

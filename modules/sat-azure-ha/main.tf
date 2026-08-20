@@ -75,6 +75,7 @@ module "this" {
   redis_private_dns_zone_id        = var.redis_private_dns_zone_id
   redis_private_endpoint_subnet_id = var.redis_private_endpoint_subnet_id
   admin_port                       = var.admin_port
+  phish_port                       = var.phish_port
 
   external_db_host     = var.external_db_host
   external_db_port     = var.external_db_port
