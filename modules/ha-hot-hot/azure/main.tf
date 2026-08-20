@@ -186,6 +186,38 @@ resource "random_id" "session_enc_key" {
   byte_length = 32 # AES-256
 }
 
+# The initial admin password, shared by every node (hailbytes-sat#908).
+#
+# bootstrap.sh derives this with `openssl rand -hex 12` per VM, and models.Setup
+# re-seeds it on EVERY boot while PasswordChangeRequired is still set -- which is
+# deliberate on a single VM, so an operator who lost the password from the logs
+# can reboot and get a fresh one. On a hot-hot pair that same behaviour means
+# each node writes a DIFFERENT password to the shared database and whichever
+# booted last decides which one works; a reboot re-decides it.
+#
+# Rather than suppress the re-seed, give both nodes the SAME value: the re-seed
+# then converges instead of fighting, and the single-VM recovery property is
+# untouched.
+resource "random_password" "admin_initial" {
+  length  = 24
+  special = false # keeps the value safe in an EnvironmentFile and a shell DSN
+}
+
+resource "azurerm_key_vault_secret" "admin_initial_password" {
+  name         = "hailbytes-admin-initial-password"
+  value        = random_password.admin_initial.result
+  key_vault_id = azurerm_key_vault.main.id
+
+  content_type    = "application/x-hailbytes-initial-admin-password"
+  expiration_date = timeadd(timestamp(), "${var.db_secret_expiration_hours}h")
+
+  lifecycle {
+    ignore_changes = [expiration_date]
+  }
+
+  depends_on = [azurerm_role_assignment.kv_secret_writer]
+}
+
 resource "azurerm_key_vault_secret" "session_keys" {
   name         = "hailbytes-session-keys"
   value        = "${random_id.session_hash_key.hex}:${random_id.session_enc_key.hex}"
@@ -640,16 +672,19 @@ resource "azurerm_linux_virtual_machine" "vm" {
       # Shared session keys, "<hash hex>:<enc hex>". Both nodes read the same
       # secret so a cookie minted on one is decryptable on the other.
       session_keys_secret_name = azurerm_key_vault_secret.session_keys.name
-      db_fqdn                  = local.db_host
-      db_port                  = local.db_port
-      db_name                  = local.db_name
-      db_user                  = local.db_user
-      db_sslmode               = local.use_external_db ? var.external_db_sslmode : "require"
-      product                  = var.product
-      cluster_member_idx       = count.index
-      redis_host               = local.effective_redis_host
-      redis_port               = local.effective_redis_port
-      redis_tls                = local.provision_managed_redis ? true : var.redis_endpoint_override_tls
+      # Shared initial admin password, so the per-boot re-seed converges on one
+      # value across nodes instead of the last node to boot winning.
+      admin_password_secret_name = azurerm_key_vault_secret.admin_initial_password.name
+      db_fqdn                    = local.db_host
+      db_port                    = local.db_port
+      db_name                    = local.db_name
+      db_user                    = local.db_user
+      db_sslmode                 = local.use_external_db ? var.external_db_sslmode : "require"
+      product                    = var.product
+      cluster_member_idx         = count.index
+      redis_host                 = local.effective_redis_host
+      redis_port                 = local.effective_redis_port
+      redis_tls                  = local.provision_managed_redis ? true : var.redis_endpoint_override_tls
       # Azure Cache for Redis requires an access key. The VM reads it from the
       # same Key Vault as the DB password; only the secret name travels here.
       redis_secret_name = local.provision_managed_redis ? local.redis_secret_name : null
