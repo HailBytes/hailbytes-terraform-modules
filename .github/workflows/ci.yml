@@ -609,7 +609,13 @@ jobs:
           )
 
           # Variables intentionally hidden by wrappers.
-          hidden_in_wrapper="^(product)$"
+          #   product         — hardcoded by each wrapper.
+          #   source_image_id — the reviewed, test-only image-override escape
+          #     hatch is scoped to the SAT Azure HA wrapper on purpose (see
+          #     CLAUDE.md and docs/DEPLOY_FROM_GALLERY.md). It is deliberately
+          #     NOT exposed on asm-azure-ha, so it must not be a forwarding
+          #     requirement. sat-azure-ha still forwards it.
+          hidden_in_wrapper="^(product|source_image_id)$"
 
           fail=0
           for wrapper in "${!wrappers[@]}"; do
