@@ -13,8 +13,8 @@ one does nothing for the others.
       This is Microsoft's supported path for third-party sim tools: it skips EOP
       filtering, ZAP, and Safe Links/Attachments detonation, and delivers to the
       Inbox, without a broad transport rule.
-      Script: `Set-HailBytesPhishSimAllowList.ps1` (domains + sending IPs, and
-      optionally the simulation URLs).
+      Script: `quickstart/allowlisting/Set-HailBytesPhishSimAllowList.ps1`
+      (domains + sending IPs, and optionally the simulation URLs).
 - [ ] **Third-party gateway (e.g. TopSec, Mimecast, Proofpoint, Barracuda)** —
       if the client runs a gateway in front of or beside EOP, it does its OWN
       filtering. EOP allow-listing cannot reach it. Allow-list the same domains
