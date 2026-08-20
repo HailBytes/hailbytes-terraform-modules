@@ -15,6 +15,7 @@ Terraform modules for deploying HailBytes ASM and HailBytes SAT on AWS and Azure
 ## Hard Rules (non-negotiable)
 
 - **Never bypass marketplace billing.** No Dockerfiles or container manifests for HailBytes products. No `user_data`/cloud-init that downloads HailBytes binaries from a non-marketplace source. No modules that deploy from custom-built AMIs/VHDs. Contributions doing this are closed without merge.
+  - **One reviewed exception:** `source_image_id` on the Azure HA tier module and its SAT wrapper, for validating image-side fixes before marketplace publication. Null by default; accepts only a Compute Gallery image *version* id; and when set it drops the `plan` block so the deployment is **not** marketplace-metered and cannot be sold from. See [docs/DEPLOY_FROM_GALLERY.md](docs/DEPLOY_FROM_GALLERY.md). A non-null value outside CI is a defect. This exception does not license any further bypass.
 - Modules deploy exclusively from published HailBytes Marketplace images.
 - Checkov findings not waived in `.checkov.yaml` are CI failures. Fix them; don't suppress new ones without justification.
 - Don't remove or weaken security defaults (encryption, IMDSv2, IAM least-privilege, NSG defaults). If a task seems to require it, raise it explicitly.
@@ -63,6 +64,7 @@ GovCloud (AWS) and Azure Government are out of scope for v1.
 - [SECURITY-DEFAULTS.md](SECURITY-DEFAULTS.md) — security controls baked into all modules
 - [docs/PATCHING_AND_MIGRATION.md](docs/PATCHING_AND_MIGRATION.md) — pre-patch backups, rolling-replace, auto-rollback (AWS)
 - [docs/AZURE_PATCHING_AND_MIGRATION.md](docs/AZURE_PATCHING_AND_MIGRATION.md) — the Azure procedure, incl. Postgres advisory-lock migration serialisation
+- [docs/DEPLOY_FROM_GALLERY.md](docs/DEPLOY_FROM_GALLERY.md) — test-only: booting a self-built Compute Gallery image, and why such a deployment is not marketplace-metered
 - [docs/AZURE_HA_PARITY_AUDIT.md](docs/AZURE_HA_PARITY_AUDIT.md) — Azure-vs-AWS HA gap table with effort estimates
 - [docs/MARKETPLACE_IMAGE_ACCESS_AUDIT.md](docs/MARKETPLACE_IMAGE_ACCESS_AUDIT.md) — no-retained-access claims, verified per claim
 - [docs/SKU_DEPLOYMENT_MATRIX.md](docs/SKU_DEPLOYMENT_MATRIX.md) — which published SKU each tier can actually deploy, per-cloud shape table, and the three gaps between the price ladder and the module defaults

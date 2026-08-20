@@ -33,6 +33,7 @@ module "this" {
   db_high_availability_mode        = var.db_high_availability_mode
   accept_marketplace_terms         = var.accept_marketplace_terms
   marketplace_sku_override         = var.marketplace_sku_override
+  source_image_id                  = var.source_image_id
   marketplace_image_version        = var.marketplace_image_version
 
   # Patching and migration safety

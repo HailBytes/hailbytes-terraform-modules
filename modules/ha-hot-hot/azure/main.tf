@@ -165,6 +165,80 @@ resource "azurerm_role_assignment" "kv_secret_writer" {
   principal_id         = data.azurerm_client_config.current.object_id
 }
 
+# ----- Shared session keys (hailbytes-sat#907) -----
+#
+# Gorilla securecookie derives its hash and encryption keys per process. Two
+# nodes therefore mint different keys, and a cookie minted by node A is not
+# stale on node B -- it is UNDECRYPTABLE. Every de-pin becomes an unrecoverable
+# logout, which is why sticky sessions cannot paper over this.
+#
+# One key pair per deployment, shared by both nodes, makes the default cookie
+# store work across the pair with no Redis and no server-side session store:
+# the session payload is a handful of scalars and travels in the cookie.
+#
+# random_id is stable across applies unless `keepers` changes, which matters --
+# regenerating these would invalidate every live session on every apply.
+resource "random_id" "session_hash_key" {
+  byte_length = 32
+}
+
+resource "random_id" "session_enc_key" {
+  byte_length = 32 # AES-256
+}
+
+# The initial admin password, shared by every node (hailbytes-sat#908).
+#
+# bootstrap.sh derives this with `openssl rand -hex 12` per VM, and models.Setup
+# re-seeds it on EVERY boot while PasswordChangeRequired is still set -- which is
+# deliberate on a single VM, so an operator who lost the password from the logs
+# can reboot and get a fresh one. On a hot-hot pair that same behaviour means
+# each node writes a DIFFERENT password to the shared database and whichever
+# booted last decides which one works; a reboot re-decides it.
+#
+# Rather than suppress the re-seed, give both nodes the SAME value: the re-seed
+# then converges instead of fighting, and the single-VM recovery property is
+# untouched.
+resource "random_password" "admin_initial" {
+  length  = 24
+  special = false # keeps the value safe in an EnvironmentFile and a shell DSN
+}
+
+resource "azurerm_key_vault_secret" "admin_initial_password" {
+  name         = "hailbytes-admin-initial-password"
+  value        = random_password.admin_initial.result
+  key_vault_id = azurerm_key_vault.main.id
+
+  content_type    = "application/x-hailbytes-initial-admin-password"
+  expiration_date = timeadd(timestamp(), "${var.db_secret_expiration_hours}h")
+
+  lifecycle {
+    ignore_changes = [expiration_date]
+  }
+
+  depends_on = [azurerm_role_assignment.kv_secret_writer]
+}
+
+resource "azurerm_key_vault_secret" "session_keys" {
+  name         = "hailbytes-session-keys"
+  value        = "${random_id.session_hash_key.hex}:${random_id.session_enc_key.hex}"
+  key_vault_id = azurerm_key_vault.main.id
+
+  # Same checkov obligations as the DB secret: CKV_AZURE_114 (secret semantics)
+  # and CKV_AZURE_41 (rotation deadline). Reuses db_secret_expiration_hours
+  # rather than adding a second knob -- both secrets share one lifecycle, since
+  # a new apply regenerates neither unless explicitly tainted.
+  content_type    = "application/x-hailbytes-session-keys"
+  expiration_date = timeadd(timestamp(), "${var.db_secret_expiration_hours}h")
+
+  # Same reason as the DB secret: timestamp() would otherwise produce a
+  # perpetual diff and a new secret version on every apply.
+  lifecycle {
+    ignore_changes = [expiration_date]
+  }
+
+  depends_on = [azurerm_role_assignment.kv_secret_writer]
+}
+
 resource "azurerm_key_vault_secret" "db" {
   name         = "hailbytes-db-password"
   value        = local.db_password
@@ -288,6 +362,24 @@ resource "azurerm_network_security_rule" "lb_https_in" {
   network_security_group_name = azurerm_network_security_group.lb.name
 }
 
+# The phishing frontend. Separate from the 443 rule so an operator can see, and
+# revoke, the phishing surface independently of the admin surface.
+resource "azurerm_network_security_rule" "lb_phish_in" {
+  for_each = var.product == "sat" ? { for i, c in var.allowed_cidrs : tostring(i) => c } : {}
+
+  name                        = "allow-phish-${each.key}"
+  priority                    = 1000 + tonumber(each.key)
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = tostring(var.phish_port)
+  source_address_prefix       = each.value
+  destination_address_prefix  = "*"
+  resource_group_name         = var.resource_group_name
+  network_security_group_name = azurerm_network_security_group.lb.name
+}
+
 # Attach the NSG to the LB frontend subnet so the allow-https-* rules
 # actually take effect. Without this association the rules exist on the
 # NSG but the subnet routes traffic unfiltered.
@@ -311,17 +403,68 @@ resource "azurerm_network_security_group" "vm" {
   tags                = local.common_tags
 }
 
-resource "azurerm_network_security_rule" "vm_https_in" {
+# Azure Standard Load Balancer is a pass-through L4 device: for an inbound
+# load-balancing rule it does NOT SNAT, so the backend sees the ORIGINAL CLIENT
+# source IP, not the load balancer's. The AzureLoadBalancer service tag covers
+# only the health-probe source (168.63.129.16) and Azure infrastructure.
+#
+# So admin_port has to be allowed from allowed_cidrs as well as from the probe
+# tag. Allowing it from the probe tag alone is the trap: probes succeed, the
+# backend pool reports healthy, the topology looks green -- and every real
+# request is dropped by the NSG, which reads as an application bug rather than a
+# network one.
+#
+# This is not a widened public surface. The VMs have no public IP of their own
+# (azurerm_public_ip.lb is the only ingress), so the sole route to admin_port is
+# through the load balancer's 443 frontend, which allowed_cidrs already bounds.
+resource "azurerm_network_security_rule" "vm_admin_in" {
   for_each = var.vm_subnet_id != var.lb_subnet_id ? { for i, c in var.allowed_cidrs : tostring(i) => c } : {}
 
-  name                        = "allow-https-${each.key}"
+  name                        = "allow-admin-${each.key}"
   priority                    = 100 + tonumber(each.key)
   direction                   = "Inbound"
   access                      = "Allow"
   protocol                    = "Tcp"
   source_port_range           = "*"
-  destination_port_range      = "443"
+  destination_port_range      = tostring(var.admin_port)
   source_address_prefix       = each.value
+  destination_address_prefix  = "*"
+  resource_group_name         = var.resource_group_name
+  network_security_group_name = azurerm_network_security_group.vm[0].name
+}
+
+resource "azurerm_network_security_rule" "vm_phish_in" {
+  for_each = var.product == "sat" && var.vm_subnet_id != var.lb_subnet_id ? { for i, c in var.allowed_cidrs : tostring(i) => c } : {}
+
+  name                        = "allow-phish-${each.key}"
+  priority                    = 1000 + tonumber(each.key)
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = tostring(var.phish_port)
+  source_address_prefix       = each.value
+  destination_address_prefix  = "*"
+  resource_group_name         = var.resource_group_name
+  network_security_group_name = azurerm_network_security_group.vm[0].name
+}
+
+# Health probes only. Without this the probe is dropped, the pool never goes
+# healthy, and the frontend serves 503 no matter what the application is doing.
+resource "azurerm_network_security_rule" "vm_probe_in" {
+  count = var.vm_subnet_id != var.lb_subnet_id ? 1 : 0
+
+  name              = "allow-lb-probe"
+  priority          = 2000
+  direction         = "Inbound"
+  access            = "Allow"
+  protocol          = "Tcp"
+  source_port_range = "*"
+  destination_port_ranges = var.product == "sat" ? [
+    tostring(var.admin_port),
+    tostring(var.phish_port),
+  ] : [tostring(var.admin_port)]
+  source_address_prefix       = "AzureLoadBalancer"
   destination_address_prefix  = "*"
   resource_group_name         = var.resource_group_name
   network_security_group_name = azurerm_network_security_group.vm[0].name
@@ -364,11 +507,15 @@ resource "azurerm_lb_backend_address_pool" "main" {
   name            = "backend"
 }
 
+# The application binds admin on var.admin_port (TLS) and the phishing server
+# on var.phish_port (plaintext) -- see hailbytes-sat/config.json. Nothing binds
+# 443 on the backend, so both the probe and the rule have to target the real
+# ports or the pool never goes healthy and the frontend serves 503.
 resource "azurerm_lb_probe" "https" {
   loadbalancer_id     = azurerm_lb.main.id
   name                = "health"
   protocol            = "Https"
-  port                = 443
+  port                = var.admin_port
   request_path        = local.health_check_path
   interval_in_seconds = 15
   number_of_probes    = 2
@@ -379,10 +526,43 @@ resource "azurerm_lb_rule" "https" {
   name                           = "https"
   protocol                       = "Tcp"
   frontend_port                  = 443
-  backend_port                   = 443
+  backend_port                   = var.admin_port
   frontend_ip_configuration_name = "frontend"
   backend_address_pool_ids       = [azurerm_lb_backend_address_pool.main.id]
   probe_id                       = azurerm_lb_probe.https.id
+  idle_timeout_in_minutes        = 4
+  tcp_reset_enabled              = true
+}
+
+# The phishing and tracking surface. On SAT this carries the landing pages and
+# the click/open tracking that the product exists to deliver, so an HA pair that
+# only fronts the admin port is not serving the product.
+#
+# A Tcp probe rather than Http with a path: landing pages are campaign-specific
+# and there is no path on the phish server guaranteed to return 200 on a fresh
+# deployment, so a path-based probe would drain healthy nodes.
+resource "azurerm_lb_probe" "phish" {
+  count = var.product == "sat" ? 1 : 0
+
+  loadbalancer_id     = azurerm_lb.main.id
+  name                = "phish"
+  protocol            = "Tcp"
+  port                = var.phish_port
+  interval_in_seconds = 15
+  number_of_probes    = 2
+}
+
+resource "azurerm_lb_rule" "phish" {
+  count = var.product == "sat" ? 1 : 0
+
+  loadbalancer_id                = azurerm_lb.main.id
+  name                           = "phish"
+  protocol                       = "Tcp"
+  frontend_port                  = 80
+  backend_port                   = var.phish_port
+  frontend_ip_configuration_name = "frontend"
+  backend_address_pool_ids       = [azurerm_lb_backend_address_pool.main.id]
+  probe_id                       = azurerm_lb_probe.phish[0].id
   idle_timeout_in_minutes        = 4
   tcp_reset_enabled              = true
 }
@@ -443,40 +623,68 @@ resource "azurerm_linux_virtual_machine" "vm" {
     disk_encryption_set_id = var.enable_customer_managed_key ? azurerm_disk_encryption_set.vm[0].id : null
   }
 
-  source_image_reference {
-    publisher = local.plan.publisher
-    offer     = local.plan.offer
-    sku       = local.plan.sku
-    version   = local.plan.version
+  # Exactly one of these two paths is live. Default (source_image_id == null) is
+  # the marketplace image with its `plan` block, which is what every real
+  # deployment uses and what marketplace billing keys off. See the
+  # source_image_id variable for why the test-only path exists and what it gives
+  # up.
+  source_image_id = var.source_image_id
+
+  dynamic "source_image_reference" {
+    for_each = var.source_image_id == null ? [1] : []
+
+    content {
+      publisher = local.plan.publisher
+      offer     = local.plan.offer
+      sku       = local.plan.sku
+      version   = local.plan.version
+    }
   }
 
-  plan {
-    name      = local.plan.sku
-    publisher = local.plan.publisher
-    product   = local.plan.offer
+  dynamic "plan" {
+    for_each = var.source_image_id == null ? [1] : []
+
+    content {
+      name      = local.plan.sku
+      publisher = local.plan.publisher
+      product   = local.plan.offer
+    }
   }
 
   boot_diagnostics {}
 
-  # The marketplace image reads instance metadata (tags) to wire itself to the
-  # shared DB and Redis. Redis is required for HA; without it the second VM
-  # cannot share sessions or worker-lock state with the first.
+  # This payload is what the image is SUPPOSED to consume to wire itself to the
+  # shared DB. As of this commit the published marketplace image does not read
+  # it at all -- see hailbytes-sat#906. Until that lands, a VM booted from the
+  # marketplace image ignores every field below and comes up on its own local
+  # Postgres, which is a split-brain pair, not an HA pair. Do not read the
+  # presence of this block as evidence the wiring works.
+  #
+  # Redis is NOT required for HA. The session payload is a handful of scalars,
+  # so shared hash/encryption keys alone make the default cookie store work
+  # across nodes (hailbytes-sat#907); Redis is an optimisation.
   custom_data = base64encode(jsonencode({
     hailbytes = {
-      mode               = "ha"
-      db_mode            = var.db_mode
-      key_vault_uri      = azurerm_key_vault.main.vault_uri
-      db_secret_name     = azurerm_key_vault_secret.db.name
-      db_fqdn            = local.db_host
-      db_port            = local.db_port
-      db_name            = local.db_name
-      db_user            = local.db_user
-      db_sslmode         = local.use_external_db ? var.external_db_sslmode : "require"
-      product            = var.product
-      cluster_member_idx = count.index
-      redis_host         = local.effective_redis_host
-      redis_port         = local.effective_redis_port
-      redis_tls          = local.provision_managed_redis ? true : var.redis_endpoint_override_tls
+      mode           = "ha"
+      db_mode        = var.db_mode
+      key_vault_uri  = azurerm_key_vault.main.vault_uri
+      db_secret_name = azurerm_key_vault_secret.db.name
+      # Shared session keys, "<hash hex>:<enc hex>". Both nodes read the same
+      # secret so a cookie minted on one is decryptable on the other.
+      session_keys_secret_name = azurerm_key_vault_secret.session_keys.name
+      # Shared initial admin password, so the per-boot re-seed converges on one
+      # value across nodes instead of the last node to boot winning.
+      admin_password_secret_name = azurerm_key_vault_secret.admin_initial_password.name
+      db_fqdn                    = local.db_host
+      db_port                    = local.db_port
+      db_name                    = local.db_name
+      db_user                    = local.db_user
+      db_sslmode                 = local.use_external_db ? var.external_db_sslmode : "require"
+      product                    = var.product
+      cluster_member_idx         = count.index
+      redis_host                 = local.effective_redis_host
+      redis_port                 = local.effective_redis_port
+      redis_tls                  = local.provision_managed_redis ? true : var.redis_endpoint_override_tls
       # Azure Cache for Redis requires an access key. The VM reads it from the
       # same Key Vault as the DB password; only the secret name travels here.
       redis_secret_name = local.provision_managed_redis ? local.redis_secret_name : null

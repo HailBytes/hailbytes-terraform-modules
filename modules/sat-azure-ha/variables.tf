@@ -159,6 +159,17 @@ variable "accept_marketplace_terms" {
   default = true
 }
 
+# TEST ONLY. See modules/ha-hot-hot/azure/variables.tf for the full rationale
+# and the guard rails. Null by default; every real deployment leaves it null and
+# is marketplace-billed. Setting it drops the marketplace `plan` block, so such a
+# deployment is NOT metered and is unfit to sell from -- it exists so image-side
+# fixes can be validated before publication.
+variable "source_image_id" {
+  description = "TEST ONLY. Azure Compute Gallery image version id to boot instead of the published marketplace image. Leave null for all real deployments."
+  type        = string
+  default     = null
+}
+
 variable "marketplace_sku_override" {
   description = "Override the marketplace SKU (plan name) if your subscription points at a non-default plan."
   type        = string
