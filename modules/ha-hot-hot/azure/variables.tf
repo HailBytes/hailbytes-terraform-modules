@@ -185,6 +185,38 @@ variable "accept_marketplace_terms" {
   default = true
 }
 
+# ----- TEST-ONLY image override -----
+#
+# DELIBERATE, REVIEWED EXCEPTION to the "no modules that deploy from
+# custom-built AMIs/VHDs" rule in CLAUDE.md. Approved for one purpose: the
+# image-side fixes for hailbytes-sat#905/#906/#907/#908 cannot be observed on a
+# real two-node stack until a VM can boot an image that CONTAINS them, and the
+# published marketplace image by definition does not yet.
+#
+# Constraints that keep this from becoming a billing bypass:
+#   * null by default, so every default deployment is unchanged and marketplace-
+#     billed. Nothing about the shipped path moves.
+#   * Accepts only an Azure Compute Gallery image version id, validated below --
+#     not an arbitrary VHD or a managed image outside a gallery.
+#   * When set, the `plan` block is dropped, so the deployment is NOT
+#     marketplace-metered and is therefore unfit to sell from. That is the
+#     point: it is only usable for testing images we built ourselves.
+#
+# Do NOT set this in a customer deployment or in any published example.
+variable "source_image_id" {
+  description = "TEST ONLY. Azure Compute Gallery image version id to boot instead of the marketplace image. Leave null for all real deployments -- setting it drops the marketplace `plan` block, so the VMs are not marketplace-metered. Exists so image-side fixes can be validated before publication."
+  type        = string
+  default     = null
+
+  validation {
+    condition = var.source_image_id == null || can(regex(
+      "^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\\.Compute/galleries/[^/]+/images/[^/]+/versions/[^/]+$",
+      var.source_image_id
+    ))
+    error_message = "source_image_id must be a full Azure Compute Gallery image VERSION id (/subscriptions/../resourceGroups/../providers/Microsoft.Compute/galleries/../images/../versions/..). Arbitrary managed-image or VHD ids are refused on purpose."
+  }
+}
+
 variable "marketplace_sku_override" {
   description = "Override the marketplace SKU (plan name) if your subscription points at a non-default plan."
   type        = string
@@ -436,9 +468,15 @@ variable "redis_private_endpoint_subnet_id" {
 }
 
 variable "admin_port" {
-  description = "Port the HailBytes admin server listens on. Used by the post-patch verifier, which probes the instance over localhost."
+  description = "Port the HailBytes admin server listens on. The load balancer's 443 frontend forwards here, the health probe targets it, and the post-patch verifier probes it over localhost."
   type        = number
   default     = 3333
+}
+
+variable "phish_port" {
+  description = "Port the HailBytes phishing/tracking server listens on. The load balancer's 80 frontend forwards here. On SAT this is the landing-page and interaction-tracking surface, which is the product; on ASM it is unused."
+  type        = number
+  default     = 80
 }
 
 # ----- Customer-managed Postgres (db_mode = "external") -----

@@ -662,10 +662,17 @@ resource "aws_instance" "vm" {
     kms_key_id  = var.enable_customer_managed_key ? aws_kms_key.main[0].arn : null
   }
 
-  # The marketplace image reads these on first boot to wire itself to the shared
-  # DB and Redis. Values are not sensitive (they reference the secret ARN, not
-  # the password). Redis is required for HA; without it the second VM cannot
-  # share sessions or worker-lock state with the first.
+  # What the image is SUPPOSED to read on first boot to wire itself to the
+  # shared DB. As of this commit the published marketplace image does not read
+  # it -- see hailbytes-sat#906 -- so a VM booted from it ignores every field
+  # below and comes up on its own local Postgres. That is a split-brain pair,
+  # not an HA pair. Do not read this block as evidence the wiring works.
+  #
+  # Values are not sensitive (they reference the secret ARN, not the password).
+  #
+  # Redis is NOT required for HA. Shared session hash/encryption keys alone make
+  # the default cookie store work across nodes (hailbytes-sat#907); Redis is an
+  # optimisation.
   user_data = base64encode(jsonencode({
     hailbytes = {
       mode               = "ha"
