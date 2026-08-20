@@ -304,7 +304,7 @@ variable "enable_post_patch_run_command" {
 # ----- Shared session store (Azure Cache for Redis) -----
 
 variable "enable_managed_redis" {
-  description = "Provision an Azure Cache for Redis (Standard or Premium SKU, zone-redundant in Premium). Required for HA; set to false only when supplying redis_endpoint_override."
+  description = "Provision an Azure Cache for Redis (Standard or Premium SKU, zone-redundant in Premium). NOT required for HA -- shared session keys make the default cookie store work across nodes (hailbytes-sat#907), so this is a performance optimisation. Defaults true, which means a default apply needs the Microsoft.Cache provider registered; set false to skip both."
   type        = bool
   default     = true
 }
