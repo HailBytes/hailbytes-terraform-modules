@@ -123,3 +123,13 @@ output "db_is_customer_managed" {
   description = "True when db_mode = 'external'. When true, HailBytes provisions no database: availability, backups, patching and point-in-time restore are the customer's responsibility."
   value       = module.this.db_is_customer_managed
 }
+
+output "initial_admin_password_secret_arn" {
+  description = "Secrets Manager ARN holding the shared initial admin password. Read it with: aws secretsmanager get-secret-value --secret-id <arn> --query SecretString --output text"
+  value       = module.this.initial_admin_password_secret_arn
+}
+
+output "session_keys_secret_arn" {
+  description = "Secrets Manager ARN holding the shared session HMAC and encryption keys. Both nodes read this; rotating it invalidates every live session."
+  value       = module.this.session_keys_secret_arn
+}
