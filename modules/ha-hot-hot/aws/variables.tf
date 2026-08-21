@@ -401,9 +401,9 @@ variable "tags" {
 }
 
 variable "admin_port" {
-  description = "Port the HailBytes admin server listens on. Used by the post-patch verifier, which probes the instance over localhost."
+  description = "Port the HailBytes admin server listens on. The load balancer's 443 frontend forwards here, the health probe targets it, and the post-patch verifier probes it over localhost. Leave null to derive it from `product`: 3333 for SAT, 443 for ASM."
   type        = number
-  default     = 3333
+  default     = null
 }
 
 # ----- Customer-managed Postgres (db_mode = "external") -----

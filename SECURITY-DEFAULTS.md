@@ -16,7 +16,7 @@ These modules ship with security-conservative defaults. You should have to expli
 
 ## Network
 
-- **Security groups / NSGs** default to **deny all** inbound. Required ports (443 for the LB, 5432 between VMs and DB) are opened only to the CIDRs you pass in `allowed_cidrs`. Wide-open `0.0.0.0/0` requires `allow_internet_ingress = true` and emits a deprecation warning.
+- **Security groups / NSGs** default to **deny all** inbound. Required ports are opened only to the CIDRs you pass in `allowed_cidrs`: the public frontend (443, plus 80 for the SAT phishing/landing surface), the application port behind it (SAT 3333, ASM 443 — see `admin_port` / `phish_port`), and 5432 between VMs and the database. On the `single-vm` tier there is no load balancer, so the application port *is* the public frontend. Wide-open `0.0.0.0/0` requires `allow_internet_ingress = true` and emits a deprecation warning.
 - **SSH** is **not** exposed by default. For break-glass access, `enable_management_access = true` wires up **AWS SSM Session Manager** (IAM-gated, via `AmazonSSMManagedInstanceCore`) on AWS, and the **`AADSSHLoginForLinux`** extension on Azure — Entra-authenticated, RBAC-gated SSH through `az ssh vm` with no public IP. Azure Bastion is *not* provisioned by the modules; the extension is the lighter-weight equivalent, and operators still need the `Virtual Machine Administrator Login` or `Virtual Machine User Login` role granted to them.
 - **IMDSv2** is required on every EC2 launch (`http_tokens = "required"`).
 - **Public IPs** are off by default. The LB has a public DNS name; the VMs sit in private subnets.

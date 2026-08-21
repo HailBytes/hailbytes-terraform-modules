@@ -14,6 +14,21 @@ locals {
   health_check_path = var.health_check_path != null ? var.health_check_path : (
     var.product == "sat" ? "/api/health" : "/api/ready"
   )
+  # ----- Application ports -----
+  #
+  # Derived from var.product rather than taken as a literal default so the
+  # mapping lives in exactly one place across all tiers:
+  #
+  #   SAT  admin UI on 3333 (config.json `listen_url`), phishing/landing on 80.
+  #   ASM  Django on :8000 behind a proxy container publishing 443, so its admin
+  #        surface IS 443, and it has no phishing surface.
+  #
+  # The wrapper defaults were the bug: asm-*-ha inherited SAT's 3333, so the
+  # load balancer probed and forwarded to a port nothing on an ASM node binds.
+  # The pool never went healthy and the frontend served nothing, which reads as
+  # an application fault rather than a configuration one.
+  admin_port = coalesce(var.admin_port, var.product == "sat" ? 3333 : 443)
+
   name_prefix = coalesce(var.name_prefix, "hailbytes-${var.product}-${var.environment}")
 
   # AWS Marketplace listings (subscribe before applying):
@@ -134,8 +149,8 @@ resource "aws_vpc_security_group_ingress_rule" "alb_http_redirect" {
 resource "aws_vpc_security_group_egress_rule" "alb_out" {
   security_group_id            = aws_security_group.alb.id
   referenced_security_group_id = aws_security_group.vm.id
-  from_port                    = var.admin_port
-  to_port                      = var.admin_port
+  from_port                    = local.admin_port
+  to_port                      = local.admin_port
   ip_protocol                  = "tcp"
   description                  = "ALB to VM admin port"
 }
@@ -150,8 +165,8 @@ resource "aws_security_group" "vm" {
 resource "aws_vpc_security_group_ingress_rule" "vm_from_alb" {
   security_group_id            = aws_security_group.vm.id
   referenced_security_group_id = aws_security_group.alb.id
-  from_port                    = var.admin_port
-  to_port                      = var.admin_port
+  from_port                    = local.admin_port
+  to_port                      = local.admin_port
   ip_protocol                  = "tcp"
   description                  = "HTTPS from ALB on the admin port"
 }
@@ -743,7 +758,7 @@ resource "aws_lb_target_group" "main" {
   #
   # PUBLIC ports are unchanged -- the listener and the ALB's own ingress stay on
   # 443/80. Only the ALB-to-instance hop moves.
-  port        = var.admin_port
+  port        = local.admin_port
   protocol    = "HTTPS"
   vpc_id      = var.vpc_id
   target_type = "instance"
@@ -752,7 +767,7 @@ resource "aws_lb_target_group" "main" {
     enabled             = true
     protocol            = "HTTPS"
     path                = local.health_check_path
-    port                = tostring(var.admin_port)
+    port                = tostring(local.admin_port)
     matcher             = "200"
     healthy_threshold   = 2
     unhealthy_threshold = 3
@@ -1135,7 +1150,7 @@ resource "aws_ssm_document" "post_patch_verify" {
             # The verifier takes the admin host as a positional argument and
             # exits 1 on its usage check without one. Running on-box, that is
             # localhost.
-            "if [ -x /opt/hailbytes/bin/ha-post-patch-verify.sh ]; then sudo -E /opt/hailbytes/bin/ha-post-patch-verify.sh 127.0.0.1 ${var.admin_port}; else echo 'ERROR: /opt/hailbytes/bin/ha-post-patch-verify.sh not present on this AMI.'; exit 1; fi",
+            "if [ -x /opt/hailbytes/bin/ha-post-patch-verify.sh ]; then sudo -E /opt/hailbytes/bin/ha-post-patch-verify.sh 127.0.0.1 ${local.admin_port}; else echo 'ERROR: /opt/hailbytes/bin/ha-post-patch-verify.sh not present on this AMI.'; exit 1; fi",
           ]
         }
       }

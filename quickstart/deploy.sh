@@ -543,6 +543,19 @@ run_plan_and_apply() {
   head2 "Done"
   terraform output || true
   say ""
+  # The URL is worth spelling out. SAT serves its admin UI on 3333, so on the
+  # single-VM tier -- where there is no load balancer to translate 443 to it --
+  # an operator who visits the bare IP gets a connection refused and reasonably
+  # concludes the deployment failed.
+  local admin_url_port=""
+  if [ "$PRODUCT" = sat ] && [ "$TIER" = single ]; then
+    admin_url_port=":3333"
+  fi
+  say ""
+  note "Admin UI:  https://<endpoint from above>${admin_url_port}"
+  note "  The certificate is self-signed unless you fronted this with a gateway,"
+  note "  so expect a browser warning on the first visit."
+  say ""
   note "Next steps:"
   note "  • Retrieve the initial admin password from the VM's serial console output,"
   note "    or from ~/hailbytes-sat-initial-credentials.txt on the instance."

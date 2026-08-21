@@ -386,15 +386,15 @@ variable "redis_private_endpoint_subnet_id" {
 }
 
 variable "admin_port" {
-  description = "Port the HailBytes admin server listens on. Used by the post-patch verifier, which probes the instance over localhost."
+  description = "Port the HailBytes admin server listens on. The load balancer's 443 frontend forwards here, the health probe targets it, and the post-patch verifier probes it over localhost. Leave null to derive it from `product`: 3333 for SAT, 443 for ASM."
   type        = number
-  default     = 3333
+  default     = null
 }
 
 variable "phish_port" {
-  description = "Port the HailBytes phishing/tracking server listens on. The load balancer's 80 frontend forwards here. On SAT this is the landing-page and interaction-tracking surface; on ASM it is unused, but forwarded to keep the wrapper surface uniform with the tier module."
+  description = "Port the HailBytes phishing/tracking server listens on. The load balancer's 80 frontend forwards here. On SAT this is the landing-page and interaction-tracking surface, which is the product; on ASM it is unused. Leave null for the image default of 80."
   type        = number
-  default     = 80
+  default     = null
 }
 
 variable "external_db_host" {

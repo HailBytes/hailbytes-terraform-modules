@@ -40,6 +40,25 @@ locals {
     for c in var.allowed_cidrs : c if c != "0.0.0.0/0"
   ]
 
+
+  # ----- Application ports -----
+  #
+  # The two products do not bind the same ports, and until now every tier but
+  # ha-hot-hot assumed 443 for both. That is correct for ASM and wrong for SAT:
+  #
+  #   SAT  admin UI on 3333 (config.json `listen_url` = "0.0.0.0:3333", TLS on;
+  #        the image's bootstrap banner prints https://<ip>:3333 verbatim) and
+  #        the phishing/landing surface on 80. Nothing in the image listens on
+  #        443, so a rule that opens only 443 yields a VM that answers nothing
+  #        on the address the banner just told the operator to visit.
+  #   ASM  Django on :8000 behind a proxy container publishing 443, so its
+  #        admin surface IS 443. It has no phishing surface.
+  #
+  # Derived from var.product here rather than defaulted per wrapper so the
+  # mapping lives in exactly one place. A wrapper carrying its own literal is a
+  # wrapper that can silently drift from the image it deploys.
+  admin_port                  = coalesce(var.admin_port, var.product == "sat" ? 3333 : 443)
+  phish_port                  = coalesce(var.phish_port, 80)
   create_backup_storage       = var.create_backup_storage_account
   backup_storage_account_name = local.create_backup_storage ? azurerm_storage_account.backup[0].name : var.backup_storage_account_name
   backup_container_name       = "hailbytes-${var.product}-bundles"
@@ -81,6 +100,9 @@ resource "azurerm_network_security_group" "vm" {
   tags                = local.common_tags
 }
 
+# The admin surface. Port comes from local.admin_port, not a literal 443: SAT
+# serves it on 3333 and there is no proxy in the single-VM image to bridge the
+# two, so a hardcoded 443 leaves the dashboard unreachable.
 resource "azurerm_network_security_rule" "https_in" {
   for_each = { for i, c in local.ingress_cidrs : tostring(i) => c }
 
@@ -90,7 +112,26 @@ resource "azurerm_network_security_rule" "https_in" {
   access                      = "Allow"
   protocol                    = "Tcp"
   source_port_range           = "*"
-  destination_port_range      = "443"
+  destination_port_range      = tostring(local.admin_port)
+  source_address_prefix       = each.value
+  destination_address_prefix  = "*"
+  resource_group_name         = var.resource_group_name
+  network_security_group_name = azurerm_network_security_group.vm.name
+}
+
+# The phishing/landing surface. Separate from the admin rule so an operator can
+# see, and revoke, the phishing surface independently -- and gated on SAT, since
+# ASM has no such surface. Mirrors ha-hot-hot/azure.lb_phish_in.
+resource "azurerm_network_security_rule" "phish_in" {
+  for_each = var.product == "sat" ? { for i, c in local.ingress_cidrs : tostring(i) => c } : {}
+
+  name                        = "allow-phish-${each.key}"
+  priority                    = 1000 + tonumber(each.key)
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = tostring(local.phish_port)
   source_address_prefix       = each.value
   destination_address_prefix  = "*"
   resource_group_name         = var.resource_group_name

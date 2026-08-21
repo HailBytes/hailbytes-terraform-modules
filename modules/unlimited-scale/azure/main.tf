@@ -7,6 +7,22 @@ locals {
   health_check_path = var.health_check_path != null ? var.health_check_path : (
     var.product == "sat" ? "/api/health" : "/api/ready"
   )
+  # ----- Application ports -----
+  #
+  # Same derivation as every other tier: SAT serves its admin UI on 3333
+  # (config.json `listen_url`) and ASM publishes 443 from its proxy container.
+  # This tier hardcoded 443 everywhere, which meant a SAT autoscale deployment
+  # probed and forwarded to a port no instance binds -- an empty backend pool
+  # and a frontend that answers nothing.
+  #
+  # NOTE: unlike ha-hot-hot, this tier has no phishing frontend at all (no
+  # port-80 LB rule, no NSG/SG rule). phish_port is therefore declared for
+  # surface parity but not yet wired; SAT landing pages are not reachable
+  # through this tier. Tracked separately -- adding a frontend is a feature,
+  # not a port correction.
+  admin_port = coalesce(var.admin_port, var.product == "sat" ? 3333 : 443)
+  phish_port = coalesce(var.phish_port, 80)
+
   name_prefix = coalesce(var.name_prefix, "hailbytes-${var.product}-${var.environment}")
 
   # Listing slugs from the published Azure Marketplace offers:
@@ -154,7 +170,7 @@ resource "azurerm_network_security_rule" "vmss_https_in" {
   access                      = "Allow"
   protocol                    = "Tcp"
   source_port_range           = "*"
-  destination_port_range      = "443"
+  destination_port_range      = tostring(local.admin_port)
   source_address_prefix       = each.value
   destination_address_prefix  = "*"
   resource_group_name         = var.resource_group_name
@@ -201,7 +217,7 @@ resource "azurerm_lb_probe" "https" {
   loadbalancer_id     = azurerm_lb.main.id
   name                = "health"
   protocol            = "Https"
-  port                = 443
+  port                = local.admin_port
   request_path        = local.health_check_path
   interval_in_seconds = 15
   number_of_probes    = 2
@@ -212,7 +228,7 @@ resource "azurerm_lb_rule" "https" {
   name                           = "https"
   protocol                       = "Tcp"
   frontend_port                  = 443
-  backend_port                   = 443
+  backend_port                   = local.admin_port
   frontend_ip_configuration_name = "frontend"
   backend_address_pool_ids       = [azurerm_lb_backend_address_pool.main.id]
   probe_id                       = azurerm_lb_probe.https.id
@@ -765,7 +781,7 @@ resource "azurerm_application_gateway" "main" {
   backend_http_settings {
     name                                = "https-passthrough"
     cookie_based_affinity               = "Enabled"
-    port                                = 443
+    port                                = local.admin_port
     protocol                            = "Https"
     request_timeout                     = 60
     pick_host_name_from_backend_address = false

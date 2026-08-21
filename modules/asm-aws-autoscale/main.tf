@@ -62,5 +62,9 @@ module "this" {
   rds_performance_insights_enabled        = var.rds_performance_insights_enabled
   rds_performance_insights_retention_days = var.rds_performance_insights_retention_days
 
+  # Application ports -- null means "derive from product" in the tier module.
+  admin_port = var.admin_port
+  phish_port = var.phish_port
+
   tags = var.tags
 }
