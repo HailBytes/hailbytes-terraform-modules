@@ -14,6 +14,22 @@ locals {
   health_check_path = var.health_check_path != null ? var.health_check_path : (
     var.product == "sat" ? "/api/health" : "/api/ready"
   )
+  # ----- Application ports -----
+  #
+  # Derived from var.product rather than taken as a literal default so the
+  # mapping lives in exactly one place across all tiers:
+  #
+  #   SAT  admin UI on 3333 (config.json `listen_url`), phishing/landing on 80.
+  #   ASM  Django on :8000 behind a proxy container publishing 443, so its admin
+  #        surface IS 443, and it has no phishing surface.
+  #
+  # The wrapper defaults were the bug: asm-*-ha inherited SAT's 3333, so the
+  # load balancer probed and forwarded to a port nothing on an ASM node binds.
+  # The pool never went healthy and the frontend served nothing, which reads as
+  # an application fault rather than a configuration one.
+  admin_port = coalesce(var.admin_port, var.product == "sat" ? 3333 : 443)
+  phish_port = coalesce(var.phish_port, 80)
+
   name_prefix = coalesce(var.name_prefix, "hailbytes-${var.product}-${var.environment}")
 
   # Listing slugs from the published Azure Marketplace offers:
@@ -373,7 +389,7 @@ resource "azurerm_network_security_rule" "lb_phish_in" {
   access                      = "Allow"
   protocol                    = "Tcp"
   source_port_range           = "*"
-  destination_port_range      = tostring(var.phish_port)
+  destination_port_range      = tostring(local.phish_port)
   source_address_prefix       = each.value
   destination_address_prefix  = "*"
   resource_group_name         = var.resource_group_name
@@ -426,7 +442,7 @@ resource "azurerm_network_security_rule" "vm_admin_in" {
   access                      = "Allow"
   protocol                    = "Tcp"
   source_port_range           = "*"
-  destination_port_range      = tostring(var.admin_port)
+  destination_port_range      = tostring(local.admin_port)
   source_address_prefix       = each.value
   destination_address_prefix  = "*"
   resource_group_name         = var.resource_group_name
@@ -442,7 +458,7 @@ resource "azurerm_network_security_rule" "vm_phish_in" {
   access                      = "Allow"
   protocol                    = "Tcp"
   source_port_range           = "*"
-  destination_port_range      = tostring(var.phish_port)
+  destination_port_range      = tostring(local.phish_port)
   source_address_prefix       = each.value
   destination_address_prefix  = "*"
   resource_group_name         = var.resource_group_name
@@ -461,9 +477,9 @@ resource "azurerm_network_security_rule" "vm_probe_in" {
   protocol          = "Tcp"
   source_port_range = "*"
   destination_port_ranges = var.product == "sat" ? [
-    tostring(var.admin_port),
-    tostring(var.phish_port),
-  ] : [tostring(var.admin_port)]
+    tostring(local.admin_port),
+    tostring(local.phish_port),
+  ] : [tostring(local.admin_port)]
   source_address_prefix       = "AzureLoadBalancer"
   destination_address_prefix  = "*"
   resource_group_name         = var.resource_group_name
@@ -507,15 +523,15 @@ resource "azurerm_lb_backend_address_pool" "main" {
   name            = "backend"
 }
 
-# The application binds admin on var.admin_port (TLS) and the phishing server
-# on var.phish_port (plaintext) -- see hailbytes-sat/config.json. Nothing binds
+# The application binds admin on local.admin_port (TLS) and the phishing server
+# on local.phish_port (plaintext) -- see hailbytes-sat/config.json. Nothing binds
 # 443 on the backend, so both the probe and the rule have to target the real
 # ports or the pool never goes healthy and the frontend serves 503.
 resource "azurerm_lb_probe" "https" {
   loadbalancer_id     = azurerm_lb.main.id
   name                = "health"
   protocol            = "Https"
-  port                = var.admin_port
+  port                = local.admin_port
   request_path        = local.health_check_path
   interval_in_seconds = 15
   number_of_probes    = 2
@@ -526,7 +542,7 @@ resource "azurerm_lb_rule" "https" {
   name                           = "https"
   protocol                       = "Tcp"
   frontend_port                  = 443
-  backend_port                   = var.admin_port
+  backend_port                   = local.admin_port
   frontend_ip_configuration_name = "frontend"
   backend_address_pool_ids       = [azurerm_lb_backend_address_pool.main.id]
   probe_id                       = azurerm_lb_probe.https.id
@@ -547,7 +563,7 @@ resource "azurerm_lb_probe" "phish" {
   loadbalancer_id     = azurerm_lb.main.id
   name                = "phish"
   protocol            = "Tcp"
-  port                = var.phish_port
+  port                = local.phish_port
   interval_in_seconds = 15
   number_of_probes    = 2
 }
@@ -559,7 +575,7 @@ resource "azurerm_lb_rule" "phish" {
   name                           = "phish"
   protocol                       = "Tcp"
   frontend_port                  = 80
-  backend_port                   = var.phish_port
+  backend_port                   = local.phish_port
   frontend_ip_configuration_name = "frontend"
   backend_address_pool_ids       = [azurerm_lb_backend_address_pool.main.id]
   probe_id                       = azurerm_lb_probe.phish[0].id
@@ -1371,7 +1387,7 @@ resource "azurerm_virtual_machine_run_command" "post_patch_verify" {
       # The verifier takes the admin host as a positional argument and exits 1
       # on the usage check without one. Running on-box, that is localhost.
       if [ -x /opt/hailbytes/bin/ha-post-patch-verify.sh ]; then
-        sudo -E /opt/hailbytes/bin/ha-post-patch-verify.sh 127.0.0.1 ${var.admin_port}
+        sudo -E /opt/hailbytes/bin/ha-post-patch-verify.sh 127.0.0.1 ${local.admin_port}
       else
         echo "ERROR: /opt/hailbytes/bin/ha-post-patch-verify.sh not present on this VM image." >&2
         echo "       Rebuild the marketplace image from main; provision.sh installs the script." >&2

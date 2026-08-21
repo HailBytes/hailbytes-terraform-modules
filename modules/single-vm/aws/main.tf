@@ -35,6 +35,25 @@ locals {
     for c in var.allowed_cidrs : c if c != "0.0.0.0/0"
   ]
 
+
+  # ----- Application ports -----
+  #
+  # The two products do not bind the same ports, and until now every tier but
+  # ha-hot-hot assumed 443 for both. That is correct for ASM and wrong for SAT:
+  #
+  #   SAT  admin UI on 3333 (config.json `listen_url` = "0.0.0.0:3333", TLS on;
+  #        the image's bootstrap banner prints https://<ip>:3333 verbatim) and
+  #        the phishing/landing surface on 80. Nothing in the image listens on
+  #        443, so a rule that opens only 443 yields an instance that answers
+  #        nothing on the address the banner just told the operator to visit.
+  #   ASM  Django on :8000 behind a proxy container publishing 443, so its
+  #        admin surface IS 443. It has no phishing surface.
+  #
+  # Derived from var.product here rather than defaulted per wrapper so the
+  # mapping lives in exactly one place. A wrapper carrying its own literal is a
+  # wrapper that can silently drift from the image it deploys.
+  admin_port              = coalesce(var.admin_port, var.product == "sat" ? 3333 : 443)
+  phish_port              = coalesce(var.phish_port, 80)
   create_backup_bucket    = var.create_backup_bucket
   effective_backup_bucket = local.create_backup_bucket ? aws_s3_bucket.backup[0].id : var.backup_bucket_name
   backup_object_prefix    = "hailbytes-${var.product}-"
@@ -101,15 +120,32 @@ resource "aws_security_group" "vm" {
   tags        = local.common_tags
 }
 
+# The admin surface. Port comes from local.admin_port, not a literal 443: SAT
+# serves it on 3333 and there is no proxy in the single-VM image to bridge the
+# two, so a hardcoded 443 leaves the dashboard unreachable.
 resource "aws_vpc_security_group_ingress_rule" "https" {
   for_each = toset(local.ingress_cidrs)
 
   security_group_id = aws_security_group.vm.id
   cidr_ipv4         = each.value
-  from_port         = 443
-  to_port           = 443
+  from_port         = local.admin_port
+  to_port           = local.admin_port
   ip_protocol       = "tcp"
-  description       = "HTTPS from ${each.value}"
+  description       = "Admin UI (${local.admin_port}) from ${each.value}"
+}
+
+# The phishing/landing surface. Separate from the admin rule so an operator can
+# see, and revoke, the phishing surface independently -- and gated on SAT, since
+# ASM has no such surface.
+resource "aws_vpc_security_group_ingress_rule" "phish" {
+  for_each = var.product == "sat" ? toset(local.ingress_cidrs) : toset([])
+
+  security_group_id = aws_security_group.vm.id
+  cidr_ipv4         = each.value
+  from_port         = local.phish_port
+  to_port           = local.phish_port
+  ip_protocol       = "tcp"
+  description       = "Phishing/landing surface (${local.phish_port}) from ${each.value}"
 }
 
 resource "aws_vpc_security_group_egress_rule" "all" {

@@ -17,11 +17,13 @@ One marketplace VM with an attached encrypted data volume. Suited for dev, PoC, 
 
 ```mermaid
 flowchart TB
-    User([Operator]) -->|HTTPS 443| EIP[Elastic IP / Public IP]
+    User([Operator]) -->|"HTTPS: SAT 3333, ASM 443"| EIP[Elastic IP / Public IP]
     EIP --> VM[(Marketplace VM<br/>HailBytes ASM/SAT)]
     VM --> EBS[(Encrypted EBS/Disk<br/>gp3 / Premium SSD)]
     VM -.->|optional| KMS[KMS / Key Vault]
 ```
+
+**Ports:** there is no load balancer in this tier, so the browser connects to the port the image actually binds: **SAT on 3333** (its `config.json` `listen_url`) plus **80** for the phishing/landing surface, and **ASM on 443** (published by its proxy container). Override with `admin_port` / `phish_port` only if you have changed the port inside the image.
 
 **State:** local to the VM (SQLite or local Postgres inside the marketplace image).
 **Failure mode:** VM loss = data loss unless customer enables snapshots (encouraged via `enable_snapshots = true`).
@@ -35,7 +37,7 @@ Two marketplace VMs in active/active behind a Layer-7 load balancer, with shared
 
 ```mermaid
 flowchart TB
-    User([Operators]) -->|HTTPS 443| LB[ALB / Azure LB<br/>Health checks on /health]
+    User([Operators]) -->|HTTPS 443| LB["ALB / Azure LB<br/>Probes SAT /api/health, ASM /api/ready<br/>Forwards to SAT 3333 / ASM 443"]
     LB --> VM1[(Marketplace VM #1<br/>AZ-a)]
     LB --> VM2[(Marketplace VM #2<br/>AZ-b)]
     VM1 --> DB[(Managed Postgres<br/>Multi-AZ primary)]
@@ -60,7 +62,7 @@ Auto Scaling Group / VM Scale Set of marketplace VMs, managed Postgres with read
 
 ```mermaid
 flowchart TB
-    User([Tenants / Operators]) -->|HTTPS 443| LB[ALB / Azure LB]
+    User([Tenants / Operators]) -->|HTTPS 443| LB["ALB / Azure LB<br/>Forwards to SAT 3333 / ASM 443"]
     LB --> ASG[ASG / VMSS<br/>min=3, max=20<br/>scaling on CPU + req/s]
     ASG --> VMn[(Marketplace VMs<br/>across 3 AZs)]
     VMn -->|writes| DBP[(Postgres primary<br/>Multi-AZ)]

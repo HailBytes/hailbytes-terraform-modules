@@ -332,3 +332,15 @@ variable "health_check_path" {
   type        = string
   default     = null
 }
+
+variable "admin_port" {
+  description = "Port the admin UI listens on inside each instance. Leave null to derive it from `product`: 3333 for SAT (the image's config.json `listen_url`), 443 for ASM (its proxy container publishes 443). The load-balancer frontend stays on 443 regardless; this is the backend port."
+  type        = number
+  default     = null
+}
+
+variable "phish_port" {
+  description = "Port the phishing/tracking server listens on inside each instance (SAT only). Declared for parity with the other tiers, but this tier exposes no phishing frontend, so it is not currently wired to any load-balancer rule."
+  type        = number
+  default     = null
+}
