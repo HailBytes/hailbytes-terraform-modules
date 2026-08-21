@@ -7,6 +7,26 @@ locals {
   health_check_path = var.health_check_path != null ? var.health_check_path : (
     var.product == "sat" ? "/api/health" : "/api/ready"
   )
+  # ----- Application ports -----
+  #
+  # Same derivation as every other tier: SAT serves its admin UI on 3333
+  # (config.json `listen_url`) and ASM publishes 443 from its proxy container.
+  # This tier hardcoded 443 on the target group, its health check, and both
+  # sides of the ALB-to-instance hop, which meant a SAT autoscale deployment
+  # health-checked a port no instance binds: an empty target group and an ALB
+  # returning 503 to everything.
+  #
+  # The ALB's own listener stays on 443 -- that is the public port and is not
+  # what was broken.
+  #
+  # NOTE: unlike ha-hot-hot, this tier has no phishing frontend at all (the
+  # port-80 listener is an HTTPS redirect, not the SAT landing surface).
+  # phish_port is declared for surface parity but not wired; SAT landing pages
+  # are not reachable through this tier. Tracked separately -- adding a
+  # frontend is a feature, not a port correction.
+  admin_port = coalesce(var.admin_port, var.product == "sat" ? 3333 : 443)
+  phish_port = coalesce(var.phish_port, 80)
+
   name_prefix = coalesce(var.name_prefix, "hailbytes-${var.product}-${var.environment}")
 
   # AWS Marketplace listings (subscribe before applying):
@@ -126,10 +146,10 @@ resource "aws_vpc_security_group_ingress_rule" "alb_http_redirect" {
 resource "aws_vpc_security_group_egress_rule" "alb_to_vm" {
   security_group_id            = aws_security_group.alb.id
   referenced_security_group_id = aws_security_group.vm.id
-  from_port                    = 443
-  to_port                      = 443
+  from_port                    = local.admin_port
+  to_port                      = local.admin_port
   ip_protocol                  = "tcp"
-  description                  = "ALB to ASG instances 443"
+  description                  = "ALB to ASG instances ${local.admin_port}"
 }
 
 resource "aws_security_group" "vm" {
@@ -142,10 +162,10 @@ resource "aws_security_group" "vm" {
 resource "aws_vpc_security_group_ingress_rule" "vm_from_alb" {
   security_group_id            = aws_security_group.vm.id
   referenced_security_group_id = aws_security_group.alb.id
-  from_port                    = 443
-  to_port                      = 443
+  from_port                    = local.admin_port
+  to_port                      = local.admin_port
   ip_protocol                  = "tcp"
-  description                  = "HTTPS from ALB"
+  description                  = "HTTPS from ALB on ${local.admin_port}"
 }
 
 resource "aws_vpc_security_group_egress_rule" "vm_egress" {
@@ -486,7 +506,7 @@ resource "aws_lb" "main" {
 
 resource "aws_lb_target_group" "main" {
   name        = "${local.name_prefix}-tg"
-  port        = 443
+  port        = local.admin_port
   protocol    = "HTTPS"
   vpc_id      = var.vpc_id
   target_type = "instance"
@@ -494,7 +514,7 @@ resource "aws_lb_target_group" "main" {
   health_check {
     protocol            = "HTTPS"
     path                = local.health_check_path
-    port                = "443"
+    port                = tostring(local.admin_port)
     matcher             = "200"
     healthy_threshold   = 2
     unhealthy_threshold = 3

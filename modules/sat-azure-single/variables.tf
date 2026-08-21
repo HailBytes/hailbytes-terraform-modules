@@ -170,3 +170,15 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "admin_port" {
+  description = "Port the admin UI listens on inside the VM. Leave null to derive it from `product`: 3333 for SAT (the image's config.json `listen_url`), 443 for ASM (its proxy container publishes 443). Set it only if you have changed the port inside the image."
+  type        = number
+  default     = null
+}
+
+variable "phish_port" {
+  description = "Port the phishing/tracking server listens on inside the VM. SAT only -- it is the landing-page and interaction-tracking surface, which is the product. Ignored when `product` is \"asm\", which has no phishing surface. Leave null for the image default of 80."
+  type        = number
+  default     = null
+}

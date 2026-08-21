@@ -26,5 +26,9 @@ module "this" {
   backup_object_lock_retention_days         = var.backup_object_lock_retention_days
   backup_noncurrent_version_expiration_days = var.backup_noncurrent_version_expiration_days
 
+  # Application ports -- null means "derive from product" in the tier module.
+  admin_port = var.admin_port
+  phish_port = var.phish_port
+
   tags = var.tags
 }

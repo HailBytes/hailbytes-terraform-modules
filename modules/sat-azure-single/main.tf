@@ -31,5 +31,9 @@ module "this" {
   backup_blob_noncurrent_expiration_days = var.backup_blob_noncurrent_expiration_days
   enable_pre_patch_run_command           = var.enable_pre_patch_run_command
 
+  # Application ports -- null means "derive from product" in the tier module.
+  admin_port = var.admin_port
+  phish_port = var.phish_port
+
   tags = var.tags
 }
