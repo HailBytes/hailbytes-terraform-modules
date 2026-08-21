@@ -109,3 +109,17 @@ output "db_is_customer_managed" {
   description = "True when db_mode = 'external'. When true, HailBytes provisions no database: availability, backups, patching and point-in-time restore are the customer's responsibility, and the pre-patch SSM document takes no server-side snapshot."
   value       = local.use_external_db
 }
+
+# Operators need this to log in for the first time. The Azure module surfaces
+# its Key Vault URI; the AWS equivalent is the secret ARN, and leaving it
+# undiscoverable meant falling back to the serial console -- which on a pair
+# shows one node's guess at a password the other node may have overwritten.
+output "initial_admin_password_secret_arn" {
+  description = "Secrets Manager ARN holding the shared initial admin password. Read it with: aws secretsmanager get-secret-value --secret-id <arn> --query SecretString --output text"
+  value       = aws_secretsmanager_secret.admin_initial_password.arn
+}
+
+output "session_keys_secret_arn" {
+  description = "Secrets Manager ARN holding the shared session HMAC and encryption keys. Both nodes read this; rotating it invalidates every live session."
+  value       = aws_secretsmanager_secret.session_keys.arn
+}

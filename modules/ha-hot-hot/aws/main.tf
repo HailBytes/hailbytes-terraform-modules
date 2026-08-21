@@ -234,16 +234,22 @@ resource "aws_iam_role_policy_attachment" "ssm" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+# Read access to this deployment's secrets, and only this deployment's: the
+# resource list is three explicit ARNs, not a wildcard.
 resource "aws_iam_role_policy" "secrets" {
-  name = "${local.name_prefix}-read-db-secret"
+  name = "${local.name_prefix}-read-deployment-secrets"
   role = aws_iam_role.vm.id
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect   = "Allow"
-      Action   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
-      Resource = aws_secretsmanager_secret.db.arn
+      Effect = "Allow"
+      Action = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+      Resource = [
+        aws_secretsmanager_secret.db.arn,
+        aws_secretsmanager_secret.session_keys.arn,
+        aws_secretsmanager_secret.admin_initial_password.arn,
+      ]
     }]
   })
 }
@@ -292,6 +298,73 @@ resource "aws_secretsmanager_secret_version" "db" {
     mode     = var.db_mode
     sslmode  = local.use_external_db ? var.external_db_sslmode : "require"
   })
+}
+
+# ----- Shared per-deployment secrets (hailbytes-sat#907, #908) -----
+#
+# These are the AWS half of what the Azure module already had. Without them an
+# AWS hot-hot pair is not a working pair:
+#
+#   Session keys — securecookie derives hash/encryption keys PER PROCESS, so two
+#   nodes with generated keys mint mutually unreadable cookies. A cookie from
+#   node A is not stale on node B, it is UNDECRYPTABLE, which makes every hop
+#   an unrecoverable logout. Sticky sessions cannot paper over it: source-IP
+#   affinity pins a whole office behind one NAT to a single node, so the second
+#   node is never exercised until the first one dies. Sharing the keys is
+#   sufficient on its own — the payload is a handful of scalars and travels
+#   inside the cookie — so Redis stays an optimisation, not a requirement.
+#
+#   Initial admin password — bootstrap derives one per VM and models.Setup
+#   re-seeds it on EVERY boot while the change-required flag is set. On one
+#   instance that is a feature: reboot and recover a lost password. On a pair it
+#   means each node writes a DIFFERENT password to the shared database and
+#   whichever booted last decides which one works, with a reboot re-deciding it.
+#   Handing both nodes the same value makes that re-seed converge instead of
+#   fight, and leaves the single-VM recovery property untouched.
+#
+# Kept out of the db-credentials secret deliberately: that one holds the
+# RDS-style JSON blob the image parses for .password, and these are raw strings
+# read by a different code path.
+
+resource "random_id" "session_hash_key" {
+  byte_length = 32
+}
+
+resource "random_id" "session_enc_key" {
+  byte_length = 32 # AES-256
+}
+
+resource "random_password" "admin_initial" {
+  length  = 24
+  special = false # keeps the value safe in an EnvironmentFile and a shell DSN
+}
+
+resource "aws_secretsmanager_secret" "session_keys" {
+  name                    = "${local.name_prefix}-session-keys"
+  description             = "HailBytes ${var.product} shared session HMAC and encryption keys (hailbytes-sat#907)"
+  kms_key_id              = var.enable_customer_managed_key ? aws_kms_key.main[0].arn : null
+  recovery_window_in_days = 7
+  tags                    = local.common_tags
+}
+
+resource "aws_secretsmanager_secret_version" "session_keys" {
+  secret_id = aws_secretsmanager_secret.session_keys.id
+  # "hash:enc" — the image splits on the colon. Hex, so the colon is
+  # unambiguous.
+  secret_string = "${random_id.session_hash_key.hex}:${random_id.session_enc_key.hex}"
+}
+
+resource "aws_secretsmanager_secret" "admin_initial_password" {
+  name                    = "${local.name_prefix}-admin-initial-password"
+  description             = "HailBytes ${var.product} shared initial admin password (hailbytes-sat#908)"
+  kms_key_id              = var.enable_customer_managed_key ? aws_kms_key.main[0].arn : null
+  recovery_window_in_days = 7
+  tags                    = local.common_tags
+}
+
+resource "aws_secretsmanager_secret_version" "admin_initial_password" {
+  secret_id     = aws_secretsmanager_secret.admin_initial_password.id
+  secret_string = random_password.admin_initial.result
 }
 
 # ----- DB: RDS Multi-AZ mode (default) -----
@@ -688,17 +761,28 @@ resource "aws_instance" "vm" {
   # Redis is NOT required for HA. Shared session hash/encryption keys alone make
   # the default cookie store work across nodes (hailbytes-sat#907); Redis is an
   # optimisation.
+  #
+  # This was true of the Azure module and false here until the session_keys and
+  # admin_initial_password secrets above were added: nothing created them and
+  # nothing passed them, so the claim described a design rather than this code.
+  # The image side was missing too -- its secret reader was Key-Vault-only, so
+  # an ARN would not have been resolved even if passed.
   user_data = base64encode(jsonencode({
     hailbytes = {
-      mode               = "ha"
-      db_mode            = var.db_mode
-      db_secret_arn      = aws_secretsmanager_secret.db.arn
-      db_secret_region   = data.aws_region.current.id
-      product            = var.product
-      cluster_member_idx = count.index
-      redis_host         = local.effective_redis_host
-      redis_port         = local.effective_redis_port
-      redis_tls          = local.provision_managed_redis ? true : var.redis_endpoint_override_tls
+      mode          = "ha"
+      db_mode       = var.db_mode
+      db_secret_arn = aws_secretsmanager_secret.db.arn
+      # The image resolves *_secret_arn through Secrets Manager and
+      # *_secret_name through Key Vault, so these are the AWS spelling of what
+      # the Azure module passes as names. Still ARNs, not values.
+      session_keys_secret_arn   = aws_secretsmanager_secret.session_keys.arn
+      admin_password_secret_arn = aws_secretsmanager_secret.admin_initial_password.arn
+      db_secret_region          = data.aws_region.current.id
+      product                   = var.product
+      cluster_member_idx        = count.index
+      redis_host                = local.effective_redis_host
+      redis_port                = local.effective_redis_port
+      redis_tls                 = local.provision_managed_redis ? true : var.redis_endpoint_override_tls
     }
   }))
 
