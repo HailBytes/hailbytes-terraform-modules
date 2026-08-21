@@ -134,10 +134,10 @@ resource "aws_vpc_security_group_ingress_rule" "alb_http_redirect" {
 resource "aws_vpc_security_group_egress_rule" "alb_out" {
   security_group_id            = aws_security_group.alb.id
   referenced_security_group_id = aws_security_group.vm.id
-  from_port                    = 443
-  to_port                      = 443
+  from_port                    = var.admin_port
+  to_port                      = var.admin_port
   ip_protocol                  = "tcp"
-  description                  = "ALB to VM 443"
+  description                  = "ALB to VM admin port"
 }
 
 resource "aws_security_group" "vm" {
@@ -150,10 +150,10 @@ resource "aws_security_group" "vm" {
 resource "aws_vpc_security_group_ingress_rule" "vm_from_alb" {
   security_group_id            = aws_security_group.vm.id
   referenced_security_group_id = aws_security_group.alb.id
-  from_port                    = 443
-  to_port                      = 443
+  from_port                    = var.admin_port
+  to_port                      = var.admin_port
   ip_protocol                  = "tcp"
-  description                  = "HTTPS from ALB"
+  description                  = "HTTPS from ALB on the admin port"
 }
 
 resource "aws_vpc_security_group_egress_rule" "vm_out" {
@@ -732,8 +732,18 @@ resource "aws_lb" "main" {
 }
 
 resource "aws_lb_target_group" "main" {
-  name        = "${local.name_prefix}-tg"
-  port        = 443
+  name = "${local.name_prefix}-tg"
+
+  # admin_port, not 443. The app listens on 3333 (config.json
+  # admin_server.listen_url = 0.0.0.0:3333; bootstrap.sh ADMIN_PORT="3333") and
+  # nothing binds 443 on the instance, so a target group and health check aimed
+  # at 443 could never mark a target healthy: the group stayed empty and the ALB
+  # returned 503 to every request. The Azure twin was corrected in #86; this is
+  # the AWS half.
+  #
+  # PUBLIC ports are unchanged -- the listener and the ALB's own ingress stay on
+  # 443/80. Only the ALB-to-instance hop moves.
+  port        = var.admin_port
   protocol    = "HTTPS"
   vpc_id      = var.vpc_id
   target_type = "instance"
@@ -742,7 +752,7 @@ resource "aws_lb_target_group" "main" {
     enabled             = true
     protocol            = "HTTPS"
     path                = local.health_check_path
-    port                = "443"
+    port                = tostring(var.admin_port)
     matcher             = "200"
     healthy_threshold   = 2
     unhealthy_threshold = 3
