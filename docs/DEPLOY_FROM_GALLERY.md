@@ -118,14 +118,24 @@ smaller sizes are fine for a topology-only check.
 
 ## Before it will apply at all
 
-Three resource providers must be registered in the subscription. This is what
-has stopped every HA smoke run so far — both dispatches died in preflight, before
-`terraform init`, and the smoke's OIDC principal deliberately does not hold
-subscription-scoped write, so it cannot self-heal. A subscription **owner** runs
-this once:
+Four resource providers must be registered in the subscription: this list grew
+from three to four on 2026-08-20 (hailbytes-sat#912) when Microsoft.Cache
+turned out to be missing too — `enable_managed_redis` defaults to `true`, so a
+default HA apply creates an Azure Cache for Redis whether or not an earlier
+version of this doc mentioned it. Treat the list below, not this doc's git
+history, as current; the canonical copy lives in
+[`quickstart/preflight-azure.sh`](../quickstart/preflight-azure.sh)'s
+`HA_ONLY_PROVIDERS` and is asserted against by
+[`quickstart/tests/cloud_prereqs_test.sh`](../quickstart/tests/cloud_prereqs_test.sh).
+
+As of 2026-08-23 this is still what stops every HA smoke run: four consecutive
+dispatches (2026-08-19 through 2026-08-22, mixing D2s/D4s/D8s_v5) all died in
+preflight, before `terraform init`, because the smoke's OIDC principal
+deliberately does not hold subscription-scoped write, so it cannot self-heal. A
+subscription **owner** runs this once:
 
 ```bash
-for ns in Microsoft.DBforPostgreSQL Microsoft.KeyVault Microsoft.OperationalInsights; do
+for ns in Microsoft.Cache Microsoft.DBforPostgreSQL Microsoft.KeyVault Microsoft.OperationalInsights; do
   az provider register --namespace "$ns" --wait
 done
 ```
@@ -133,12 +143,12 @@ done
 Confirm before spending an apply on it:
 
 ```bash
-for ns in Microsoft.DBforPostgreSQL Microsoft.KeyVault Microsoft.OperationalInsights; do
+for ns in Microsoft.Cache Microsoft.DBforPostgreSQL Microsoft.KeyVault Microsoft.OperationalInsights; do
   printf '%-34s %s\n' "$ns" "$(az provider show --namespace "$ns" --query registrationState -o tsv)"
 done
 ```
 
-All three must read `Registered`.
+All four must read `Registered`.
 
 ## Checking it actually works
 
