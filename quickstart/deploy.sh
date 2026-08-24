@@ -202,7 +202,138 @@ check_marketplace_subscription() {
 }
 
 # ---------------------------------------------------------------------------
-# 3. Deployment questions
+# 3. Cloud account prerequisites (resource providers / service-linked roles)
+# ---------------------------------------------------------------------------
+# Both clouds gate a class of first-time resource creation behind an
+# account-level activation step that a least-privilege deploying identity may
+# not be allowed to perform -- and it fails LATE, mid-apply, after some
+# resources already exist, with an error that names an API version rather
+# than the real cause.
+#
+# Azure: resource providers. The modules set resource_provider_registrations
+# = "none" (see SECURITY-DEFAULTS.md), so nothing is registered automatically.
+# AWS has no equivalent concept, but RDS, ElastiCache and Elastic Load
+# Balancing each depend on a one-time, account-level service-linked role that
+# AWS normally creates for you silently on first use -- PROVIDED the calling
+# identity holds iam:CreateServiceLinkedRole, which a narrowly-scoped deploy
+# role may not.
+#
+# KEEP IN SYNC WITH quickstart/preflight-azure.sh's COMMON_PROVIDERS /
+# HA_ONLY_PROVIDERS and quickstart/preflight-aws.sh's SLR list --
+# quickstart/tests/deploy_test.sh asserts the Azure list matches.
+azure_providers_for_tier() {  # azure_providers_for_tier <tier> -> one per line
+  printf '%s\n' Microsoft.Compute Microsoft.Network Microsoft.Storage \
+    Microsoft.ManagedIdentity Microsoft.MarketplaceOrdering \
+    Microsoft.Insights Microsoft.OperationalInsights Microsoft.KeyVault
+  [ "$1" = single ] && return 0
+  printf '%s\n' Microsoft.DBforPostgreSQL Microsoft.Cache
+}
+
+# AWS analogue of the list above: the service principal each required
+# service-linked role is created under, one per line. Empty for the
+# single-VM tier -- it creates no RDS/ElastiCache/ELB, and the DLM execution
+# role it does create is an ordinary IAM role the module creates itself, not
+# a service-linked role, so DLM needs no entry here.
+aws_service_linked_roles_for_tier() {  # aws_service_linked_roles_for_tier <tier>
+  [ "$1" = single ] && return 0
+  printf '%s\n' rds.amazonaws.com elasticache.amazonaws.com elasticloadbalancing.amazonaws.com
+  [ "$1" = autoscale ] && printf '%s\n' autoscaling.amazonaws.com
+  return 0
+}
+
+aws_slr_exists() {  # aws_slr_exists <service-principal>
+  local svc="$1" found
+  found="$(aws iam list-roles --path-prefix "/aws-service-role/${svc}/" \
+             --query 'Roles[0].RoleName' --output text 2>/dev/null || true)"
+  [ -n "$found" ] && [ "$found" != "None" ]
+}
+
+check_cloud_prerequisites() {
+  local cloud="$1" tier="$2"
+  head2 "Cloud account prerequisites"
+
+  if [ "$cloud" = azure ]; then
+    local ns state to_register=() unreadable=()
+    while IFS= read -r ns; do
+      state="$(az provider show --namespace "$ns" --query registrationState -o tsv 2>/dev/null || true)"
+      if [ -z "$state" ]; then
+        unreadable+=("$ns"); continue
+      fi
+      [ "$state" = Registered ] || to_register+=("$ns")
+    done < <(azure_providers_for_tier "$tier")
+
+    if [ "${#unreadable[@]}" -gt 0 ]; then
+      warn "Could not read registration state for: ${unreadable[*]}."
+      note "That read is itself subscription-scoped, so a narrow role may lack it."
+      note "If apply later fails with 'API version ... was not found for Microsoft.X', X is the cause."
+    fi
+
+    if [ "${#to_register[@]}" -eq 0 ]; then
+      ok "All required resource providers are registered."
+      return 0
+    fi
+
+    warn "Not yet registered: ${to_register[*]}"
+    note "Registering a provider creates no resources and is not billable."
+    if ! confirm "Register ${#to_register[@]} provider(s) now?"; then
+      note "Skipping -- quickstart/preflight-azure.sh ${tier} does the same check standalone."
+      note "Unregistered providers surface later as an apply failure, not a plan failure."
+      return 0
+    fi
+    local ns2 failed=()
+    for ns2 in "${to_register[@]}"; do
+      if az provider register --namespace "$ns2" --wait >/dev/null 2>&1; then
+        ok "registered ${ns2}"
+      else
+        failed+=("$ns2")
+      fi
+    done
+    if [ "${#failed[@]}" -gt 0 ]; then
+      die "Could not register: ${failed[*]}
+   This needs */register/action at SUBSCRIPTION scope, which Contributor on a
+   resource group does not include. Ask an Owner to run:
+$(for ns2 in "${failed[@]}"; do printf '     az provider register --namespace %s --wait\n' "$ns2"; done)"
+    fi
+  else
+    local svc missing=() failed=() out rc
+    while IFS= read -r svc; do
+      [ -z "$svc" ] && continue
+      aws_slr_exists "$svc" || missing+=("$svc")
+    done < <(aws_service_linked_roles_for_tier "$tier")
+
+    if [ "${#missing[@]}" -eq 0 ]; then
+      ok "All required service-linked roles already exist."
+      return 0
+    fi
+
+    warn "Service-linked role not yet created for: ${missing[*]}"
+    note "Creating a service-linked role creates no billable resource."
+    if ! confirm "Create ${#missing[@]} service-linked role(s) now?"; then
+      note "Skipping -- quickstart/preflight-aws.sh ${tier} does the same check standalone."
+      note "A missing role surfaces later as an apply failure, not a plan failure."
+      return 0
+    fi
+    for svc in "${missing[@]}"; do
+      out="$(aws iam create-service-linked-role --aws-service-name "$svc" 2>&1)"
+      rc=$?
+      if [ "$rc" -eq 0 ] || aws_slr_exists "$svc"; then
+        ok "service-linked role ready for ${svc}"
+      else
+        warn "${out}"
+        failed+=("$svc")
+      fi
+    done
+    if [ "${#failed[@]}" -gt 0 ]; then
+      die "Could not create service-linked role(s) for: ${failed[*]}
+   This needs iam:CreateServiceLinkedRole, which many least-privilege deploy
+   roles do not include. Ask someone with IAM admin rights to run:
+$(for svc in "${failed[@]}"; do printf '     aws iam create-service-linked-role --aws-service-name %s\n' "$svc"; done)"
+    fi
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# 4. Deployment questions
 # ---------------------------------------------------------------------------
 pick_product() {
   local c
@@ -453,7 +584,7 @@ warn_about_redis_retirement() {
 }
 
 # ---------------------------------------------------------------------------
-# 4. Generate, plan, apply
+# 5. Generate, plan, apply
 # ---------------------------------------------------------------------------
 module_path() {
   case "${TIER}" in
@@ -588,6 +719,7 @@ main() {
 
   pick_product
   pick_tier
+  check_cloud_prerequisites "$CLOUD" "$TIER"
   pick_region
   check_marketplace_subscription "$CLOUD" "$PRODUCT" "$REGION"
   pick_db_mode

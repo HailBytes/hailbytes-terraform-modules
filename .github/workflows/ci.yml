@@ -296,8 +296,12 @@ jobs:
   # thing many customers run, and the only part of this repo that executes
   # on their machine. It gets shellcheck plus unit tests over the logic that
   # can fail silently: cloud detection, the tier -> module-name mapping, the
-  # marketplace identifiers matching the modules, and the assertion that
-  # every billing-relevant branch actually warns about cost.
+  # marketplace identifiers matching the modules, the assertion that every
+  # billing-relevant branch actually warns about cost, and (cloud_prereqs_test.sh)
+  # that the Azure resource-provider list and AWS service-linked-role list
+  # deploy.sh checks before apply stay in sync with the standalone
+  # preflight-azure.sh / preflight-aws.sh scripts that document the same
+  # requirement outside the wizard.
   # ---------------------------------------------------------------------
   quickstart-wizard:
     name: quickstart wizard — shellcheck + unit tests
@@ -310,10 +314,13 @@ jobs:
       - name: shellcheck
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-          shellcheck -S warning quickstart/deploy.sh quickstart/tests/deploy_test.sh
+          shellcheck -S warning quickstart/deploy.sh quickstart/preflight-azure.sh             quickstart/preflight-aws.sh quickstart/tests/deploy_test.sh             quickstart/tests/cloud_prereqs_test.sh
 
       - name: Unit tests
         run: bash quickstart/tests/deploy_test.sh
+
+      - name: Cloud account prerequisites tests (mocked az/aws, no credentials)
+        run: bash quickstart/tests/cloud_prereqs_test.sh
 
       - name: Cloud Shell tool availability
         # Both Cloud Shells ship terraform, git and their own CLI. If the

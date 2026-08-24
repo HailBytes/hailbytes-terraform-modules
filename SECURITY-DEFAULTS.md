@@ -22,7 +22,18 @@ These modules ship with security-conservative defaults. You should have to expli
 - **Public IPs** are off by default. The LB has a public DNS name; the VMs sit in private subnets.
 - VMs are tagged for AWS Inspector / Azure Defender for Servers auto-enrollment when those services are enabled at the account level.
 
-## Subscription prerequisites (Azure)
+## Cloud account prerequisites
+
+Both clouds gate a class of first-time resource creation behind an
+account-level activation step that a least-privilege deploying identity may
+not be allowed to perform. Left unchecked, it fails LATE — mid-apply, after
+some resources already exist — with an error that names an API version or an
+IAM action rather than the real cause. `quickstart/deploy.sh` checks both
+(`check_cloud_prerequisites`, run right after you pick a tier) and offers to
+fix what it can; `quickstart/preflight-azure.sh` / `quickstart/preflight-aws.sh`
+do the same checks standalone, for anyone not using the wizard.
+
+### Azure: resource providers
 
 The Azure modules set `resource_provider_registrations = "none"` on the `azurerm`
 provider. This is deliberate, and it changes what your subscription must have in place
@@ -76,6 +87,44 @@ created first and reads as `API version 20XX-XX-XX was not found for Microsoft.F
 message that points at the API version rather than the real cause. The CI smoke in
 `hailbytes-sat` asserts registration state up front for exactly this reason, and names the
 missing provider.
+
+### AWS: service-linked roles
+
+AWS has no direct equivalent of resource-provider registration, but RDS,
+ElastiCache and Elastic Load Balancing each depend on a one-time,
+account-level **service-linked role** — an IAM role AWS itself uses to manage
+the service on your behalf. AWS normally creates the role for you, silently,
+the first time you touch that service — PROVIDED the calling identity holds
+`iam:CreateServiceLinkedRole`. A least-privilege deploy role scoped down to
+"create EC2/RDS/ElastiCache resources" often does **not** include that action,
+because it reads as an IAM-admin permission rather than an
+EC2/RDS/ElastiCache one.
+
+Without the role, apply does not fail at the start the way an unregistered
+Azure provider does — it fails when Terraform creates the FIRST resource of
+that kind (an `aws_db_instance`, an `aws_elasticache_replication_group`, or an
+`aws_lb`), with an `AccessDenied` error naming the missing IAM action, not
+"you are missing a service-linked role".
+
+The single-VM tier needs none of these roles: it has no RDS, no ElastiCache
+and no load balancer. The HA and autoscale tiers need `AWSServiceRoleForRDS`,
+`AWSServiceRoleForElastiCache` and `AWSServiceRoleForElasticLoadBalancing`;
+autoscale additionally needs `AWSServiceRoleForAutoScaling`. Check whether a
+role already exists (existence, not just permission, since most accounts that
+have ever created a load balancer already have the ELB role):
+
+```bash
+aws iam list-roles --path-prefix /aws-service-role/rds.amazonaws.com/ --query 'Roles[0].RoleName' --output text
+```
+
+`quickstart/preflight-aws.sh {single|ha|autoscale}` checks and creates this
+whole list for you, and is idempotent — creating a service-linked role creates
+no billable resource.
+
+Unlike Azure's marketplace-terms CLI action (`az vm image terms accept`), AWS
+Marketplace subscription has no CLI equivalent — it is a console-only action
+(the listing's "Continue to Subscribe" button), so no script can complete that
+step on your behalf.
 
 ## IAM / RBAC
 

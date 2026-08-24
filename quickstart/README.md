@@ -88,14 +88,25 @@ The wizard is interactive, but its pure logic is unit-tested and runs in CI:
 
 ```bash
 bash quickstart/tests/deploy_test.sh
+bash quickstart/tests/cloud_prereqs_test.sh
 ```
 
-That covers cloud detection, the tier → module-name mapping (a typo there would
-point a customer at a module that doesn't exist), the marketplace identifiers
-matching the Terraform modules, the apply gate requiring the literal word
-`APPLY`, external-DB password file handling, and an assertion that **every**
-billing-relevant branch emits a cost warning — so a future contributor can't
-add an expensive option without one.
+`deploy_test.sh` covers cloud detection, the tier → module-name mapping (a typo
+there would point a customer at a module that doesn't exist), the marketplace
+identifiers matching the Terraform modules, the apply gate requiring the
+literal word `APPLY`, external-DB password file handling, and an assertion
+that **every** billing-relevant branch emits a cost warning — so a future
+contributor can't add an expensive option without one.
+
+`cloud_prereqs_test.sh` covers the cloud-account-prerequisites check the
+wizard runs right after you pick a tier (`check_cloud_prerequisites` — Azure
+resource-provider registration state, AWS service-linked-role existence)
+against a mocked `az`/`aws`, no real cloud credentials needed. It also asserts
+that the provider/role lists in the standalone `preflight-azure.sh` /
+`preflight-aws.sh` scripts stay in sync with the wizard's copies — the two
+paths would otherwise silently drift apart, which is exactly what happened to
+[`docs/DEPLOY_FROM_GALLERY.md`](../docs/DEPLOY_FROM_GALLERY.md)'s provider list
+before this test existed.
 
 `deploy.sh` can be sourced for testing without running the wizard:
 
