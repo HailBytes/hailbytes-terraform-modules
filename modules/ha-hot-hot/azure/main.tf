@@ -44,6 +44,20 @@ locals {
 
   name_prefix = coalesce(var.name_prefix, "hailbytes-${var.product}-${var.environment}")
 
+  # VM names. name_prefix governs every other resource, but the VMs themselves
+  # are what a customer's host-naming policy actually constrains -- an operator
+  # looking at a portal blade or a CMDB entry expects the name their standard
+  # produces, not ours. `<prefix>-vm-1` satisfies nobody's convention, and it
+  # cannot be coerced into one through name_prefix alone because the `-vm-N`
+  # suffix is ours and the index is 1-based and unpadded.
+  #
+  # vm_names overrides them outright, in zone order: element 0 lands in zone 1,
+  # element 1 in zone 2. Null keeps the derived names.
+  vm_names = var.vm_names != null ? var.vm_names : [
+    for i in range(local.vm_count) : "${local.name_prefix}-vm-${i + 1}"
+  ]
+  db_vm_name = coalesce(var.db_vm_name, "${local.name_prefix}-db-vm")
+
   # Listing slugs from the published Azure Marketplace offers:
   #   ASM: lcmcon1687976613543.hardened_ubuntu_with_rengine
   #   SAT: lcmcon1687976613543.gophish-phishing-simulator
@@ -623,7 +637,7 @@ resource "azurerm_network_interface_backend_address_pool_association" "vm" {
 resource "azurerm_linux_virtual_machine" "vm" {
   count = local.vm_count
 
-  name                            = "${local.name_prefix}-vm-${count.index + 1}"
+  name                            = local.vm_names[count.index]
   resource_group_name             = var.resource_group_name
   location                        = var.location
   size                            = var.vm_size
@@ -1071,7 +1085,7 @@ resource "azurerm_managed_disk" "db_data" {
 
 resource "azurerm_linux_virtual_machine" "db_vm" {
   count                           = local.use_vm_db ? 1 : 0
-  name                            = "${local.name_prefix}-db-vm"
+  name                            = local.db_vm_name
   resource_group_name             = var.resource_group_name
   location                        = var.location
   size                            = var.db_vm_size

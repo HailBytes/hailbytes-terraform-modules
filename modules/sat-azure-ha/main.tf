@@ -25,6 +25,8 @@ module "this" {
   environment                      = var.environment
   name_prefix                      = var.name_prefix
   vm_size                          = var.vm_size
+  vm_names                         = var.vm_names
+  db_vm_name                       = var.db_vm_name
   data_disk_size_gb                = var.data_disk_size_gb
   enable_customer_managed_key      = var.enable_customer_managed_key
   db_sku_name                      = var.db_sku_name

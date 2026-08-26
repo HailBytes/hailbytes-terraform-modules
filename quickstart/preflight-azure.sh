@@ -11,6 +11,12 @@
 #   ./quickstart/preflight-azure.sh ha        # HA hot-hot tier (two VMs + Flexible Server)
 #   ./quickstart/preflight-azure.sh single    # single-VM tier
 #
+# Add --location <region> (or set HB_LOCATION) to check the region you will
+# actually deploy into. Three of the checks below are regional -- marketplace
+# image availability, availability zones, and compute quota -- and getting a
+# "no" on any of them during the deployment call is the expensive way to find
+# out.
+#
 # WHY THIS EXISTS
 # The Terraform modules set resource_provider_registrations = "none" on the
 # azurerm provider on purpose. The provider's default sweeps ~70 providers on
@@ -37,8 +43,23 @@ set -uo pipefail
 
 TIER="${1:-ha}"
 ACCEPT_TERMS=0
-for arg in "$@"; do
-    [ "$arg" = "--accept-terms" ] && ACCEPT_TERMS=1
+LOCATION="${HB_LOCATION:-northeurope}"
+
+# Parse the flags after the tier. --location takes a value, so a plain
+# `for arg in "$@"` cannot read it.
+shift $(( $# > 0 ? 1 : 0 ))
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --accept-terms) ACCEPT_TERMS=1 ;;
+        --location)
+            [ $# -ge 2 ] || { echo "--location needs a region, e.g. --location northeurope" >&2; exit 2; }
+            LOCATION="$2"
+            shift
+            ;;
+        --location=*) LOCATION="${1#--location=}" ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+    shift
 done
 
 case "$TIER" in
@@ -54,6 +75,13 @@ esac
 PUBLISHER="lcmcon1687976613543"
 OFFER="gophish-phishing-simulator"
 SKU="standard-v2"
+
+# The module default application-node size, and its vCPU count. Keep in sync
+# with the vm_size defaults in modules/*/azure/variables.tf -- the quota check
+# below is only useful if it asks about the size Terraform will actually ask
+# for.
+VM_SKU="Standard_D8s_v5"
+VM_SKU_VCPUS=8
 
 # Providers each tier genuinely creates resources under.
 #
@@ -206,31 +234,133 @@ else
 fi
 echo
 
-# ---------- 4. Compute quota ----------
+# ---------- 4. Marketplace image availability in the target region ----------
+#
+# Accepted terms and an available image are different things. Terms are
+# subscription-scoped; availability is regional, and an offer enabled for one
+# region is not thereby enabled for another. Getting this wrong surfaces as a
+# terraform apply that fails on the VM -- after the vnet, the Key Vault and the
+# database already exist.
 echo "--------------------------------------------------------------"
-echo " Compute quota (informational)"
+echo " Marketplace image in ${LOCATION}"
 echo "--------------------------------------------------------------"
-if [ "$TIER" = "ha" ]; then
-    echo "The HA tier builds TWO application VMs plus a Flexible Server and an"
-    echo "Azure Cache for Redis. The default VM SKU is"
-    echo "Standard_D8s_v5 (8 vCPUs each), so it needs 16 vCPUs of"
-    echo "'Standard DSv5 Family' quota in your chosen region, plus headroom"
-    echo "for the Flexible Server."
+
+active="$(az vm image list --publisher "$PUBLISHER" --offer "$OFFER" --sku "$SKU" \
+            --all -l "$LOCATION" \
+            --query "[?imageDeprecationStatus.imageState=='Active'].version" -o tsv 2>/dev/null || true)"
+deprecating="$(az vm image list --publisher "$PUBLISHER" --offer "$OFFER" --sku "$SKU" \
+            --all -l "$LOCATION" \
+            --query "[?imageDeprecationStatus.imageState!='Active'].[version,imageDeprecationStatus.scheduledDeprecationTime]" \
+            -o tsv 2>/dev/null || true)"
+
+if [ -z "$active" ] && [ -z "$deprecating" ]; then
+    echo "  NO image visible for ${PUBLISHER}:${OFFER}:${SKU} in ${LOCATION}."
+    echo
+    echo "  Most likely one of:"
+    echo "    * the subscription has not subscribed to the offer yet, or"
+    echo "    * the offer is not enabled for ${LOCATION} in Partner Center, or"
+    echo "    * ${LOCATION} is not a valid region name."
+    echo
+    echo "  Subscribe: https://marketplace.microsoft.com/en-us/product/virtual-machines/${PUBLISHER}.${OFFER}"
+    echo "  A deployment into this region fails at the VM until this reads Active."
+elif [ -z "$active" ]; then
+    echo "  Images are visible but NONE is Active -- every published version"
+    echo "  carries a deprecation date. Check Partner Center before deploying."
 else
-    echo "The single-VM tier builds ONE application VM. The default SKU is"
-    echo "Standard_D8s_v5 (8 vCPUs), so it needs 8 vCPUs of"
-    echo "'Standard DSv5 Family' quota in your chosen region."
+    echo "  Active version(s): $(printf '%s' "$active" | tr '\n' ' ')"
+    echo "  marketplace_image_version defaults to \"latest\", which resolves to"
+    echo "  this. Pin it explicitly for a reproducible deployment."
+fi
+
+if [ -n "$deprecating" ]; then
+    echo
+    echo "  Scheduled for deprecation -- do not pin these:"
+    printf '%s\n' "$deprecating" | awk -F'\t' '{printf "    %-14s deprecates %s\n", $1, $2}'
 fi
 echo
-echo "Check the region you plan to deploy into, e.g.:"
-echo "  az vm list-usage --location northeurope -o table | grep -i 'DSv5'"
-echo
-echo "Below 8 vCPUs the product's own sizing advisory reports 'upsize' for"
-echo "training workloads and says so on screen, so smaller SKUs are suitable"
-echo "for phishing simulation only."
+
+# ---------- 5. Availability zones ----------
+#
+# The HA tier pins its two VMs to zones 1 and 2 (ha-hot-hot/azure vm_zones) and
+# runs a ZoneRedundant Flexible Server. Neither is optional, and not every
+# Azure region has zones -- in one that does not, apply fails on the first VM.
+if [ "$TIER" = "ha" ]; then
+    echo "--------------------------------------------------------------"
+    echo " Availability zones in ${LOCATION}"
+    echo "--------------------------------------------------------------"
+    zones="$(az vm list-skus -l "$LOCATION" --resource-type virtualMachines \
+               --query "[?name=='${VM_SKU}'].locationInfo[0].zones | [0]" -o tsv 2>/dev/null || true)"
+    if [ -z "$zones" ]; then
+        echo "  Could not read zone support for ${VM_SKU} in ${LOCATION}."
+        echo "  Either the SKU is not offered there, the region name is wrong, or"
+        echo "  the identity lacks subscription read. The HA tier REQUIRES zones 1"
+        echo "  and 2; verify before deploying:"
+        echo "    az vm list-skus -l ${LOCATION} --resource-type virtualMachines --query \"[?name=='${VM_SKU}']\" -o json"
+    else
+        echo "  ${VM_SKU} is offered in zones: $(printf '%s' "$zones" | tr '\n\t' '  ')"
+        for z in 1 2; do
+            if ! printf '%s' "$zones" | grep -qw "$z"; then
+                echo "  WARNING: zone ${z} is not available for ${VM_SKU} here."
+                echo "  The HA tier pins zones 1 and 2 and will fail to apply."
+            fi
+        done
+    fi
+    echo
+fi
+
+# ---------- 6. Compute quota ----------
+echo "--------------------------------------------------------------"
+echo " Compute quota in ${LOCATION}"
+echo "--------------------------------------------------------------"
+if [ "$TIER" = "ha" ]; then
+    node_count=2
+else
+    node_count=1
+fi
+needed=$(( node_count * VM_SKU_VCPUS ))
+
+echo "The ${TIER} tier builds ${node_count} application VM(s) at ${VM_SKU}"
+echo "(${VM_SKU_VCPUS} vCPUs each) by default, so it needs ${needed} vCPUs of"
+echo "'Standard DSv5 Family' quota here."
+if [ "$TIER" = "ha" ]; then
+    echo "The Flexible Server and the Redis cache draw their own quotas, separate"
+    echo "from this one."
+fi
 echo
 
-# ---------- 5. RBAC the deploying principal needs ----------
+usage_line="$(az vm list-usage --location "$LOCATION" -o tsv 2>/dev/null \
+                | grep -i 'standardDSv5Family' || true)"
+if [ -z "$usage_line" ]; then
+    echo "  Could not read quota for ${LOCATION} (needs subscription read)."
+    echo "  Check it by hand:"
+    echo "    az vm list-usage --location ${LOCATION} -o table | grep -i DSv5"
+else
+    current="$(printf '%s' "$usage_line" | awk '{print $(NF-1)}')"
+    limit="$(printf '%s' "$usage_line" | awk '{print $NF}')"
+    if [ -n "$limit" ] && [ "$limit" -eq "$limit" ] 2>/dev/null; then
+        available=$(( limit - current ))
+        echo "  Standard DSv5 Family: ${current} used of ${limit} — ${available} available."
+        if [ "$available" -lt "$needed" ]; then
+            echo
+            echo "  NOT ENOUGH. This deployment needs ${needed} and can get ${available}."
+            echo "  Request an increase in the portal (Subscription > Usage + quotas)"
+            echo "  before the deployment call -- approval is not instant."
+        else
+            echo "  Sufficient for the default sizing."
+        fi
+    else
+        echo "  ${usage_line}"
+    fi
+fi
+echo
+echo "Smaller SKUs are supported. Since 2026-08-26 the product's sizing advisory"
+echo "escalates on MEASURED load rather than on core count, so a deliberately"
+echo "small instance is not told to upsize while it has headroom -- see"
+echo "hailbytes-sat/docs/VM_SCALING.md. Which sizes you can BUY is a separate"
+echo "question, set by the SKUs published on the marketplace listing."
+echo
+
+# ---------- 7. RBAC the deploying principal needs ----------
 echo "--------------------------------------------------------------"
 echo " Permissions the deploying identity needs"
 echo "--------------------------------------------------------------"
@@ -249,5 +379,5 @@ echo "providers, and it surfaces late -- after VMs already exist."
 echo
 
 echo "=============================================================="
-echo " Preflight complete for the ${TIER} tier."
+echo " Preflight complete for the ${TIER} tier in ${LOCATION}."
 echo "=============================================================="

@@ -122,6 +122,41 @@ variable "name_prefix" {
   default = null
 }
 
+variable "vm_names" {
+  description = "Exact names for the two application VMs, in zone order -- element 0 lands in zone 1, element 1 in zone 2. Leave null to derive them as <name_prefix>-vm-1 and -vm-2. Set this when a host-naming standard governs VM names (e.g. [\"simsphishing-web-P-01\", \"simsphishing-web-P-02\"]); name_prefix still governs every other resource. Renaming an existing VM REPLACES it, so on a live deployment change one element at a time and apply with -target, or accept that both nodes are rebuilt at once -- which on a two-node HA pair is a full outage."
+  type        = list(string)
+  default     = null
+
+  validation {
+    condition     = var.vm_names == null || length(coalesce(var.vm_names, [])) == 2
+    error_message = "vm_names must contain exactly two names -- the HA tier runs exactly two application VMs."
+  }
+
+  validation {
+    condition = alltrue([
+      for n in coalesce(var.vm_names, []) :
+      can(regex("^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}[a-zA-Z0-9_]$", n))
+    ])
+    error_message = "Each vm_names entry must be 2-64 characters of letters, digits, hyphens, underscores or periods, and may not begin or end with a hyphen or period -- Azure rejects the rest."
+  }
+
+  validation {
+    condition     = var.vm_names == null || length(distinct(coalesce(var.vm_names, []))) == length(coalesce(var.vm_names, []))
+    error_message = "vm_names entries must be distinct."
+  }
+}
+
+variable "db_vm_name" {
+  description = "Exact name for the self-managed Postgres VM when db_mode = \"vm\". Leave null to derive it as <name_prefix>-db-vm. Ignored in flexible_server and external modes, where there is no VM to name. Renaming replaces the VM, which on this tier means restoring the database."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.db_vm_name == null || can(regex("^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}[a-zA-Z0-9_]$", var.db_vm_name))
+    error_message = "db_vm_name must be 2-64 characters of letters, digits, hyphens, underscores or periods, and may not begin or end with a hyphen or period."
+  }
+}
+
 variable "vm_size" {
   description = "Azure VM SKU for the HailBytes application node(s). Constrained to the portable Dsv5 ladder; see the validation message. Defaults to the 8-vCore training floor."
   type        = string
