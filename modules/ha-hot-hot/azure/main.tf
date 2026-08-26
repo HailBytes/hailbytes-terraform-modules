@@ -30,6 +30,18 @@ locals {
   admin_port = coalesce(var.admin_port, var.product == "sat" ? 3333 : 443)
   phish_port = coalesce(var.phish_port, 80)
 
+  # Who may reach the phishing/landing surface, as opposed to the admin UI.
+  #
+  # These were one list. That is wrong for SAT specifically: the admin allow-list
+  # is an office or VPN range, and the landing pages have to be reachable by the
+  # simulation targets, who are by definition somewhere else. Sharing the list
+  # means a deployment locked down correctly for the console silently serves
+  # nothing to the targets -- the campaign sends, and records no interactions,
+  # which reads as a product fault rather than a firewall one.
+  #
+  # Null inherits allowed_cidrs, so an existing deployment plans clean.
+  phish_cidrs = var.phish_allowed_cidrs != null ? var.phish_allowed_cidrs : var.allowed_cidrs
+
   name_prefix = coalesce(var.name_prefix, "hailbytes-${var.product}-${var.environment}")
 
   # Listing slugs from the published Azure Marketplace offers:
@@ -381,7 +393,7 @@ resource "azurerm_network_security_rule" "lb_https_in" {
 # The phishing frontend. Separate from the 443 rule so an operator can see, and
 # revoke, the phishing surface independently of the admin surface.
 resource "azurerm_network_security_rule" "lb_phish_in" {
-  for_each = var.product == "sat" ? { for i, c in var.allowed_cidrs : tostring(i) => c } : {}
+  for_each = var.product == "sat" ? { for i, c in local.phish_cidrs : tostring(i) => c } : {}
 
   name                        = "allow-phish-${each.key}"
   priority                    = 1000 + tonumber(each.key)
@@ -450,7 +462,7 @@ resource "azurerm_network_security_rule" "vm_admin_in" {
 }
 
 resource "azurerm_network_security_rule" "vm_phish_in" {
-  for_each = var.product == "sat" && var.vm_subnet_id != var.lb_subnet_id ? { for i, c in var.allowed_cidrs : tostring(i) => c } : {}
+  for_each = var.product == "sat" && var.vm_subnet_id != var.lb_subnet_id ? { for i, c in local.phish_cidrs : tostring(i) => c } : {}
 
   name                        = "allow-phish-${each.key}"
   priority                    = 1000 + tonumber(each.key)

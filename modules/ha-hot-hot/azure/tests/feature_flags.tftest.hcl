@@ -281,3 +281,69 @@ run "management_access_installs_on_every_vm" {
     error_message = "Break-glass access is useless on only one of two VMs."
   }
 }
+
+# The admin allow-list and the phishing allow-list were one variable, which is a
+# silent product failure on SAT: an operator locks the console to their office
+# range, the landing pages inherit that range, and every simulation target
+# outside it gets nothing. The campaign still sends. It just records no
+# interactions, which reads as a product fault rather than a firewall one.
+run "phish_allow_list_inherits_admin_list_by_default" {
+  command = plan
+
+  variables {
+    product       = "sat"
+    allowed_cidrs = ["10.0.0.0/8", "192.168.0.0/16"]
+  }
+
+  assert {
+    condition     = length(azurerm_network_security_rule.lb_phish_in) == 2
+    error_message = "With phish_allowed_cidrs unset, the phishing rules must mirror allowed_cidrs one-for-one — an existing deployment has to plan clean."
+  }
+
+  assert {
+    condition = alltrue([
+      for k, r in azurerm_network_security_rule.lb_phish_in :
+      contains(["10.0.0.0/8", "192.168.0.0/16"], r.source_address_prefix)
+    ])
+    error_message = "The inherited phishing rules must carry the same source prefixes as the admin rules."
+  }
+}
+
+run "phish_allow_list_is_independent_when_set" {
+  command = plan
+
+  variables {
+    product             = "sat"
+    allowed_cidrs       = ["87.44.47.0/24"]
+    phish_allowed_cidrs = ["0.0.0.0/0"]
+  }
+
+  assert {
+    condition = alltrue([
+      for k, r in azurerm_network_security_rule.lb_phish_in :
+      r.source_address_prefix == "0.0.0.0/0"
+    ])
+    error_message = "phish_allowed_cidrs must govern the phishing frontend on its own."
+  }
+
+  assert {
+    condition = alltrue([
+      for k, r in azurerm_network_security_rule.lb_https_in :
+      r.source_address_prefix == "87.44.47.0/24"
+    ])
+    error_message = "Opening the phishing surface must NOT widen the admin surface — that is the whole point of splitting the lists."
+  }
+}
+
+run "phish_allow_list_stays_inert_on_asm" {
+  command = plan
+
+  variables {
+    phish_allowed_cidrs = ["0.0.0.0/0"]
+  }
+
+  assert {
+    condition     = length(azurerm_network_security_rule.lb_phish_in) == 0
+    error_message = "ASM has no phishing surface, so setting phish_allowed_cidrs must open nothing."
+  }
+}
