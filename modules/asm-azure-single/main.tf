@@ -7,6 +7,7 @@ module "this" {
   location                    = var.location
   subnet_id                   = var.subnet_id
   allowed_cidrs               = var.allowed_cidrs
+  phish_allowed_cidrs         = var.phish_allowed_cidrs
   admin_username              = var.admin_username
   ssh_public_key              = var.ssh_public_key
   environment                 = var.environment

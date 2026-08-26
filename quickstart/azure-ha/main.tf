@@ -59,6 +59,12 @@ variable "ssh_public_key" {
   type        = string
 }
 
+variable "phish_allowed_cidrs" {
+  description = "CIDRs allowed to reach the phishing/landing surface. Leave null and it inherits allowed_cidrs — correct only if every simulation target sits inside your admin range. For a live simulation the targets are elsewhere, so set this (usually [\"0.0.0.0/0\"]); otherwise the campaign sends and then records no interactions."
+  type        = list(string)
+  default     = null
+}
+
 variable "admin_username" {
   type    = string
   default = "hbadmin"
@@ -99,6 +105,7 @@ module "hailbytes_sat" {
   db_delegated_subnet_id = module.network.db_delegated_subnet_id
   private_dns_zone_id    = module.network.private_dns_zone_id
   allowed_cidrs          = var.allowed_cidrs
+  phish_allowed_cidrs    = var.phish_allowed_cidrs
   admin_username         = var.admin_username
   ssh_public_key         = var.ssh_public_key
 }

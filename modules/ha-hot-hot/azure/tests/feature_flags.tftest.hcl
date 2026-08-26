@@ -4,6 +4,18 @@
 mock_provider "azurerm" {
   # Key Vault validates tenant_id as a UUID; it comes from the client_config
   # data source, which the mock provider would otherwise fill with a short token.
+  # db_mode = "vm" reads the workload subnet to build the Postgres NSG rule.
+  # Without a mocked address_prefixes the data source returns an empty list and
+  # the rule fails on an index, which reads as a module bug rather than a
+  # fixture gap. northeurope.tftest.hcl already mocks it for the same reason.
+  mock_data "azurerm_subnet" {
+    defaults = {
+      id                   = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.Network/virtualNetworks/vnet/subnets/vm"
+      address_prefixes     = ["10.0.1.0/24"]
+      virtual_network_name = "vnet"
+    }
+  }
+
   mock_data "azurerm_client_config" {
     defaults = {
       tenant_id       = "00000000-0000-0000-0000-000000000000"
@@ -279,5 +291,132 @@ run "management_access_installs_on_every_vm" {
   assert {
     condition     = length(azurerm_virtual_machine_extension.aad_ssh_login) == 2
     error_message = "Break-glass access is useless on only one of two VMs."
+  }
+}
+
+# The admin allow-list and the phishing allow-list were one variable, which is a
+# silent product failure on SAT: an operator locks the console to their office
+# range, the landing pages inherit that range, and every simulation target
+# outside it gets nothing. The campaign still sends. It just records no
+# interactions, which reads as a product fault rather than a firewall one.
+run "phish_allow_list_inherits_admin_list_by_default" {
+  command = plan
+
+  variables {
+    product       = "sat"
+    allowed_cidrs = ["10.0.0.0/8", "192.168.0.0/16"]
+  }
+
+  assert {
+    condition     = length(azurerm_network_security_rule.lb_phish_in) == 2
+    error_message = "With phish_allowed_cidrs unset, the phishing rules must mirror allowed_cidrs one-for-one — an existing deployment has to plan clean."
+  }
+
+  assert {
+    condition = alltrue([
+      for k, r in azurerm_network_security_rule.lb_phish_in :
+      contains(["10.0.0.0/8", "192.168.0.0/16"], r.source_address_prefix)
+    ])
+    error_message = "The inherited phishing rules must carry the same source prefixes as the admin rules."
+  }
+}
+
+run "phish_allow_list_is_independent_when_set" {
+  command = plan
+
+  variables {
+    product             = "sat"
+    allowed_cidrs       = ["87.44.47.0/24"]
+    phish_allowed_cidrs = ["0.0.0.0/0"]
+  }
+
+  assert {
+    condition = alltrue([
+      for k, r in azurerm_network_security_rule.lb_phish_in :
+      r.source_address_prefix == "0.0.0.0/0"
+    ])
+    error_message = "phish_allowed_cidrs must govern the phishing frontend on its own."
+  }
+
+  assert {
+    condition = alltrue([
+      for k, r in azurerm_network_security_rule.lb_https_in :
+      r.source_address_prefix == "87.44.47.0/24"
+    ])
+    error_message = "Opening the phishing surface must NOT widen the admin surface — that is the whole point of splitting the lists."
+  }
+}
+
+run "phish_allow_list_stays_inert_on_asm" {
+  command = plan
+
+  variables {
+    phish_allowed_cidrs = ["0.0.0.0/0"]
+  }
+
+  assert {
+    condition     = length(azurerm_network_security_rule.lb_phish_in) == 0
+    error_message = "ASM has no phishing surface, so setting phish_allowed_cidrs must open nothing."
+  }
+}
+
+# name_prefix governs every other resource, but a customer's host-naming
+# standard constrains the VMs specifically, and `<prefix>-vm-1` satisfies
+# nobody's convention. The `-vm-N` suffix and the 1-based unpadded index are
+# ours, so name_prefix alone cannot reach a name like `svc-web-P-01`.
+run "vm_names_default_to_the_derived_pattern" {
+  command = plan
+
+  variables {
+    name_prefix = "simsphishing"
+  }
+
+  assert {
+    condition = alltrue([
+      for i, vm in azurerm_linux_virtual_machine.vm :
+      vm.name == "simsphishing-vm-${i + 1}"
+    ])
+    error_message = "With vm_names unset the VMs must keep the derived <name_prefix>-vm-N names."
+  }
+}
+
+run "vm_names_override_exactly" {
+  command = plan
+
+  variables {
+    name_prefix = "simsphishing"
+    vm_names    = ["simsphishing-web-P-01", "simsphishing-web-P-02"]
+  }
+
+  assert {
+    condition     = azurerm_linux_virtual_machine.vm[0].name == "simsphishing-web-P-01"
+    error_message = "vm_names[0] must name the zone-1 VM verbatim."
+  }
+
+  assert {
+    condition     = azurerm_linux_virtual_machine.vm[1].name == "simsphishing-web-P-02"
+    error_message = "vm_names[1] must name the zone-2 VM verbatim."
+  }
+
+  # The override is scoped to the VMs. Everything else still follows
+  # name_prefix, which is what the customer asked for.
+  assert {
+    condition     = azurerm_public_ip.lb.name == "simsphishing-lb-pip"
+    error_message = "vm_names must not leak into the naming of anything but the VMs."
+  }
+}
+
+run "db_vm_name_overrides_the_self_managed_postgres_vm" {
+  command = plan
+
+  variables {
+    name_prefix = "simsphishing"
+    db_mode     = "vm"
+    db_vm_name  = "simsphishing-db-P-01"
+  }
+
+  assert {
+    condition     = azurerm_linux_virtual_machine.db_vm[0].name == "simsphishing-db-P-01"
+    error_message = "db_vm_name must name the self-managed Postgres VM verbatim."
   }
 }

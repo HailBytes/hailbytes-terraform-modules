@@ -40,6 +40,16 @@ locals {
     for c in var.allowed_cidrs : c if c != "0.0.0.0/0"
   ]
 
+  # Who may reach the phishing/landing surface, as opposed to the admin UI.
+  # See the phish_allowed_cidrs variable: one shared list means a console
+  # locked to an office range also locks the simulation targets out of the
+  # landing pages. Null inherits, so an existing deployment plans clean.
+  #
+  # allow_internet_ingress deliberately does NOT filter this list -- it guards
+  # the admin surface, and applying it here would silently strip the 0.0.0.0/0
+  # that a live simulation needs.
+  phish_cidrs = var.phish_allowed_cidrs != null ? var.phish_allowed_cidrs : local.ingress_cidrs
+
 
   # ----- Application ports -----
   #
@@ -123,7 +133,7 @@ resource "azurerm_network_security_rule" "https_in" {
 # see, and revoke, the phishing surface independently -- and gated on SAT, since
 # ASM has no such surface. Mirrors ha-hot-hot/azure.lb_phish_in.
 resource "azurerm_network_security_rule" "phish_in" {
-  for_each = var.product == "sat" ? { for i, c in local.ingress_cidrs : tostring(i) => c } : {}
+  for_each = var.product == "sat" ? { for i, c in local.phish_cidrs : tostring(i) => c } : {}
 
   name                        = "allow-phish-${each.key}"
   priority                    = 1000 + tonumber(each.key)

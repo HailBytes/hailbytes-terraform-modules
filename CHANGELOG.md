@@ -22,7 +22,36 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 - **Auto-scaling baseline reduced from 3 nodes to 2** (`asg_min_size`, `asg_desired_capacity`, `vmss_min_count`). A fixed three-node steady state picked an arbitrary point on what is really a range of identical 8-vCore nodes. Two is the smallest baseline that survives a node loss, and it lines up with the HA pair at 16 metered vCores so the two shapes agree. `asg_max_size` / `vmss_max_count` are unchanged at 20. Combined with the size default, the autoscale baseline meters 16 vCores (2 × 8) instead of 6 (3 × 2).
 
+### Added
+
+- **`vm_names` and `db_vm_name` on the Azure HA tier**, so a customer's host-naming standard can govern the VM names outright. `name_prefix` sets every other resource, but the VMs are what a naming policy actually constrains, and `<prefix>-vm-1` cannot be coerced into `svc-web-P-01` through a prefix alone — the `-vm-N` suffix and the 1-based unpadded index are ours. `vm_names` takes exactly two names in zone order (element 0 → zone 1); `db_vm_name` names the self-managed Postgres VM in `db_mode = "vm"`. Both default to `null` and keep the derived names. Renaming an existing VM **replaces** it, which on a two-node pair applied in one go is a full outage — the variable description says so. Forwarded by `sat-azure-ha` and `asm-azure-ha`.
+
+### Changed
+
+- **The Azure preflight is now regional, and checks rather than advises.** `quickstart/preflight-azure.sh` takes `--location` (or `HB_LOCATION`, default `northeurope`) and adds three checks that were previously prose telling the operator to go and look:
+
+  - **Marketplace image availability in that region**, printing the Active version and flagging every version scheduled for deprecation. Accepted terms and an available image are different things — terms are subscription-scoped, availability is regional — and the failure mode is a `terraform apply` that dies at the VM, after the vnet, the Key Vault and the database already exist.
+  - **Availability zones for the application SKU.** The HA tier pins zones 1 and 2 and runs a ZoneRedundant Flexible Server; neither is optional and not every region has zones.
+  - **Regional vCPU quota**, compared against what the tier will actually request rather than printed for the operator to compare themselves. Short quota now says how much is needed and how much is available.
+
+  `preflight-aws.sh` gains the same needed-vs-available comparison, with the honest caveat that Service Quotas reports the limit and not current consumption, so it can only catch a limit that is too small outright.
+
+  Every new check degrades to a readable "could not read this, here is the command" rather than failing the script — a preflight that exits 1 because the operator lacks subscription read is worse than one that says so.
+
+  `preflight-azure.sh` is now exercised end to end as a subprocess against the mocked CLI in `quickstart/tests/cloud_prereqs_test.sh`, which it never was — only its provider arrays were compared. Nine new subprocess cases and six output assertions, including the three regional failures.
+
+- **A stale claim removed from the preflight output.** It said that below 8 vCPUs "the product's own sizing advisory reports 'upsize' for training workloads". That behaviour changed in `hailbytes-sat`: the advisory now escalates on measured load rather than core count, so a deliberately small instance is not told to upsize while it has headroom.
+
 ### Fixed
+
+- **The phishing surface shared the admin allow-list, so a correctly locked-down SAT deployment served nothing to its targets.** `allowed_cidrs` governed both the admin console (443 → `admin_port`) and the phishing/landing surface (80 → `phish_port`) on `ha-hot-hot/azure`, `single-vm/azure` and `single-vm/aws`. Those two surfaces have opposite audiences: the console is for operators on an office or VPN range, and the landing pages are for simulation targets, who are by definition somewhere else.
+
+  With one list, an operator who locks the console to their egress range also locks every target out of the landing pages. The campaign still sends. The targets get a connection timeout, no open or click is recorded, and the deployment presents as a broken product rather than a firewall rule — the failure is silent on the operator's side, which is what makes it expensive.
+
+  New `phish_allowed_cidrs` on all three tier modules and their six wrappers governs the phishing surface alone. It defaults to `null`, which inherits `allowed_cidrs` and reproduces the previous behaviour exactly, so **no existing deployment changes on the next apply**. `allow_internet_ingress` deliberately does not gate it: that flag guards the admin surface, and applying it here would silently strip the `0.0.0.0/0` a live simulation needs, re-coupling the two lists this variable exists to separate. Inert on ASM, which has no phishing surface. Regression tests in `modules/ha-hot-hot/azure/tests/feature_flags.tftest.hcl` assert the inheritance default, the independence of the two lists, and that opening the phishing surface does not widen the admin one.
+
+  Not addressed here: `ha-hot-hot/aws` exposes no phishing surface at all — no ALB rule, no security-group rule — so SAT on the AWS HA tier serves no landing pages. That is a separate gap from this one and is not fixed by this change.
+
 
 - **Every tier but `ha-hot-hot` routed traffic to a port SAT does not listen on, and `ha-hot-hot` routed ASM's to a port ASM does not listen on.** The two products bind different ports — SAT serves its admin UI on **3333** (`config.json` `listen_url`, which the image's bootstrap banner prints verbatim as `https://<ip>:3333`) plus **80** for the phishing/landing surface, while ASM runs Django on `:8000` behind a proxy container that publishes **443**. Only `ha-hot-hot` had been corrected (#85, #87), and only for SAT.
 

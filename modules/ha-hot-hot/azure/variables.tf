@@ -44,6 +44,17 @@ variable "allowed_cidrs" {
   }
 }
 
+variable "phish_allowed_cidrs" {
+  description = "CIDRs permitted to reach the phishing/landing surface (SAT only; ASM has no such surface). Leave null to inherit allowed_cidrs, which is the historical behaviour and keeps existing deployments planning clean. Set it whenever the simulation targets are not inside the admin allow-list -- with one shared list, locking the console to an office range also locks every target out of the landing pages, and the campaign sends and then records no interactions. \"0.0.0.0/0\" is the usual value for a live simulation and is accepted here without allow_internet_ingress: that flag guards the admin surface, and requiring it would re-couple the two lists this variable exists to separate."
+  type        = list(string)
+  default     = null
+
+  validation {
+    condition     = alltrue([for c in coalesce(var.phish_allowed_cidrs, []) : can(cidrhost(c, 0))])
+    error_message = "All phish_allowed_cidrs entries must be valid CIDR blocks (e.g. \"0.0.0.0/0\")."
+  }
+}
+
 variable "associate_vm_subnet_nsg" {
   description = "Associate the module-managed NSG (allow-https-* rules built from allowed_cidrs) with vm_subnet_id. Only applies when vm_subnet_id differs from lb_subnet_id (when they're the same subnet, the lb NSG already covers it). Set false if the subnet already has an NSG attached and your landing-zone tooling manages ingress; the NSG ID is still exported as vm_nsg_id for you to reference."
   type        = bool
@@ -109,6 +120,41 @@ variable "environment" {
 variable "name_prefix" {
   type    = string
   default = null
+}
+
+variable "vm_names" {
+  description = "Exact names for the two application VMs, in zone order -- element 0 lands in zone 1, element 1 in zone 2. Leave null to derive them as <name_prefix>-vm-1 and -vm-2. Set this when a host-naming standard governs VM names (e.g. [\"simsphishing-web-P-01\", \"simsphishing-web-P-02\"]); name_prefix still governs every other resource. Renaming an existing VM REPLACES it, so on a live deployment change one element at a time and apply with -target, or accept that both nodes are rebuilt at once -- which on a two-node HA pair is a full outage."
+  type        = list(string)
+  default     = null
+
+  validation {
+    condition     = var.vm_names == null || length(coalesce(var.vm_names, [])) == 2
+    error_message = "vm_names must contain exactly two names -- the HA tier runs exactly two application VMs."
+  }
+
+  validation {
+    condition = alltrue([
+      for n in coalesce(var.vm_names, []) :
+      can(regex("^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}[a-zA-Z0-9_]$", n))
+    ])
+    error_message = "Each vm_names entry must be 2-64 characters of letters, digits, hyphens, underscores or periods, and may not begin or end with a hyphen or period -- Azure rejects the rest."
+  }
+
+  validation {
+    condition     = var.vm_names == null || length(distinct(coalesce(var.vm_names, []))) == length(coalesce(var.vm_names, []))
+    error_message = "vm_names entries must be distinct."
+  }
+}
+
+variable "db_vm_name" {
+  description = "Exact name for the self-managed Postgres VM when db_mode = \"vm\". Leave null to derive it as <name_prefix>-db-vm. Ignored in flexible_server and external modes, where there is no VM to name. Renaming replaces the VM, which on this tier means restoring the database."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.db_vm_name == null || can(regex("^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}[a-zA-Z0-9_]$", var.db_vm_name))
+    error_message = "db_vm_name must be 2-64 characters of letters, digits, hyphens, underscores or periods, and may not begin or end with a hyphen or period."
+  }
 }
 
 variable "vm_size" {
@@ -303,8 +349,30 @@ variable "enable_post_patch_run_command" {
 
 # ----- Shared session store (Azure Cache for Redis) -----
 
+# Whether to provision the cache at all. Three facts decide it, and the third
+# is the one that gets missed:
+#
+#  1. It is not required. Shared session hash/encryption keys make the default
+#     cookie store work across both nodes (hailbytes-sat#907); the session
+#     payload is a handful of scalars and travels in the cookie.
+#  2. On the default Standard SKU it is NOT zone-redundant. Both nodes of the
+#     primary/replica pair sit in one zone -- Azure offers zone redundancy for
+#     this service on Premium and above only (+~$304/mo). So at the default it
+#     is a single-zone dependency inside a zone-redundant topology.
+#  3. When it is unreachable the application does not degrade evenly. SAT picks
+#     its session store once, at boot (middleware.InitSessionStore), so a cache
+#     that dies later stays selected: reads treat "Redis down" as "no session"
+#     and log everyone out, and writes return the error, so nobody can log back
+#     IN until it returns. A zonal outage that takes the cache therefore takes
+#     the admin console -- the failure this tier exists to survive.
+#
+# Turning it off removes a single-zone dependency from the critical path and
+# saves ~$101/mo. Leaving it on is defensible if session payloads may outgrow
+# the 4 KB cookie limit, or with redis_sku_name = "Premium" and the cost
+# accepted. The default is unchanged pending a product decision -- it is not
+# the obvious choice it looks like.
 variable "enable_managed_redis" {
-  description = "Provision an Azure Cache for Redis (Standard or Premium SKU, zone-redundant in Premium). NOT required for HA -- shared session keys make the default cookie store work across nodes (hailbytes-sat#907), so this is a performance optimisation. Defaults true, which means a default apply needs the Microsoft.Cache provider registered; set false to skip both."
+  description = "Provision an Azure Cache for Redis. NOT required for HA -- shared session keys make the default cookie store work across nodes (hailbytes-sat#907), so this is an optimisation, and at the default Standard SKU it is a single-zone one. Read the comment above before leaving it on. Defaults true, which means a default apply needs the Microsoft.Cache provider registered; set false to skip both."
   type        = bool
   default     = true
 }

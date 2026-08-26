@@ -6,6 +6,7 @@ module "this" {
   vpc_id                      = var.vpc_id
   subnet_id                   = var.subnet_id
   allowed_cidrs               = var.allowed_cidrs
+  phish_allowed_cidrs         = var.phish_allowed_cidrs
   environment                 = var.environment
   name_prefix                 = var.name_prefix
   instance_type               = var.instance_type

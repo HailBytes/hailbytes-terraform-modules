@@ -17,6 +17,17 @@ variable "allowed_cidrs" {
   type        = list(string)
 }
 
+variable "phish_allowed_cidrs" {
+  description = "CIDRs permitted to reach the phishing/landing surface (SAT only; ASM has no such surface). Leave null to inherit allowed_cidrs, which is the historical behaviour and keeps existing deployments planning clean. Set it whenever the simulation targets are not inside the admin allow-list -- with one shared list, locking the console to an office range also locks every target out of the landing pages, and the campaign sends and then records no interactions. \"0.0.0.0/0\" is the usual value for a live simulation."
+  type        = list(string)
+  default     = null
+
+  validation {
+    condition     = alltrue([for c in coalesce(var.phish_allowed_cidrs, []) : can(cidrhost(c, 0))])
+    error_message = "All phish_allowed_cidrs entries must be valid CIDR blocks (e.g. \"0.0.0.0/0\")."
+  }
+}
+
 variable "environment" {
   description = "Environment tag (e.g. dev, staging, prod). Used in resource names and tags."
   type        = string
