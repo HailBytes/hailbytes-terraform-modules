@@ -22,6 +22,38 @@ flowchart TB
     RC -.failover.-> RCS[(Replica — same zone unless<br/>redis_sku_name = Premium)]
 ```
 
+## Network exposure: two surfaces, two allow-lists
+
+SAT deployments front **two** things, and they have opposite audiences:
+
+| Surface | Frontend port | Backend | Governed by | Who reaches it |
+|---|---|---|---|---|
+| Admin console | 443 | `admin_port` (3333) | `allowed_cidrs` | Your operators — an office or VPN range |
+| Phishing / landing pages | 80 | `phish_port` (80) | `phish_allowed_cidrs` | Your simulation targets — wherever they are |
+
+`phish_allowed_cidrs` defaults to `null`, which inherits `allowed_cidrs` and
+reproduces the historical single-list behaviour exactly, so an existing
+deployment plans clean.
+
+**Inheriting is the wrong answer for most real simulations.** A console locked
+to `203.0.113.0/24` also locks every target outside that range out of the
+landing pages. The campaign still sends; the targets get a connection timeout;
+and the deployment records no opens and no clicks — which looks like a broken
+product rather than a firewall rule. Set the list explicitly:
+
+```hcl
+allowed_cidrs       = ["203.0.113.0/24"]  # operators only
+phish_allowed_cidrs = ["0.0.0.0/0"]       # targets, i.e. the internet
+```
+
+`allow_internet_ingress` does not gate `phish_allowed_cidrs`. That flag guards
+the admin surface, and requiring it here would re-couple the two lists this
+variable exists to separate.
+
+ASM has no phishing surface, so `phish_allowed_cidrs` is inert on
+`asm-azure-ha` — it is exposed only because wrappers forward the full core
+surface.
+
 ## TLS termination
 
 The default frontend is the Standard Load Balancer, which does **TCP passthrough on 443** — the operator's browser terminates TLS directly against the VM's self-signed certificate. The marketplace AMI generates that certificate on first boot with the per-VM hostname as the CN, so it will **not** match the LB public IP nor any DNS record (Azure Private DNS, Route 53, etc.) you point at it. Browsers will warn on every visit.

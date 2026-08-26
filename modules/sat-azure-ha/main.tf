@@ -10,6 +10,7 @@ module "this" {
   private_dns_zone_id    = var.private_dns_zone_id
   lb_subnet_id           = var.lb_subnet_id
   allowed_cidrs          = var.allowed_cidrs
+  phish_allowed_cidrs    = var.phish_allowed_cidrs
   health_check_path      = var.health_check_path
   admin_username         = var.admin_username
   ssh_public_key         = var.ssh_public_key
@@ -24,6 +25,8 @@ module "this" {
   environment                      = var.environment
   name_prefix                      = var.name_prefix
   vm_size                          = var.vm_size
+  vm_names                         = var.vm_names
+  db_vm_name                       = var.db_vm_name
   data_disk_size_gb                = var.data_disk_size_gb
   enable_customer_managed_key      = var.enable_customer_managed_key
   db_sku_name                      = var.db_sku_name

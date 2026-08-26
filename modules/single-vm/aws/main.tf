@@ -35,6 +35,16 @@ locals {
     for c in var.allowed_cidrs : c if c != "0.0.0.0/0"
   ]
 
+  # Who may reach the phishing/landing surface, as opposed to the admin UI.
+  # See the phish_allowed_cidrs variable: one shared list means a console
+  # locked to an office range also locks the simulation targets out of the
+  # landing pages. Null inherits, so an existing deployment plans clean.
+  #
+  # allow_internet_ingress deliberately does NOT filter this list -- it guards
+  # the admin surface, and applying it here would silently strip the 0.0.0.0/0
+  # that a live simulation needs.
+  phish_cidrs = var.phish_allowed_cidrs != null ? var.phish_allowed_cidrs : local.ingress_cidrs
+
 
   # ----- Application ports -----
   #
@@ -138,7 +148,7 @@ resource "aws_vpc_security_group_ingress_rule" "https" {
 # see, and revoke, the phishing surface independently -- and gated on SAT, since
 # ASM has no such surface.
 resource "aws_vpc_security_group_ingress_rule" "phish" {
-  for_each = var.product == "sat" ? toset(local.ingress_cidrs) : toset([])
+  for_each = var.product == "sat" ? toset(local.phish_cidrs) : toset([])
 
   security_group_id = aws_security_group.vm.id
   cidr_ipv4         = each.value

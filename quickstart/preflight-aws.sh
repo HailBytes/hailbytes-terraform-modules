@@ -205,19 +205,54 @@ echo "--------------------------------------------------------------"
 quota="$(aws service-quotas get-service-quota --region "$REGION" \
            --service-code ec2 --quota-code L-1216C47A \
            --query 'Quota.Value' --output text 2>/dev/null || true)"
+# The module default application-node size, and its vCPU count. Keep in sync
+# with the instance_type defaults in modules/*/aws/variables.tf -- comparing
+# against a size Terraform will not ask for is worse than not comparing.
+INSTANCE_TYPE="m6i.2xlarge"
+INSTANCE_VCPUS=8
+case "$TIER" in
+    ha)        node_count=2 ;;
+    autoscale) node_count=2 ;;   # asg_desired_capacity default; max_size is the real ceiling
+    *)         node_count=1 ;;
+esac
+needed=$(( node_count * INSTANCE_VCPUS ))
+
+echo "The ${TIER} tier builds ${node_count} application instance(s) at"
+echo "${INSTANCE_TYPE} (${INSTANCE_VCPUS} vCPUs each) by default, so it needs"
+echo "${needed} vCPUs of Standard on-demand quota here."
+echo
+
 if [ -n "$quota" ] && [ "$quota" != "None" ]; then
     echo "Running On-Demand Standard (A/C/D/H/I/M/R/T/Z) instance vCPU limit in"
     echo "${REGION}: ${quota}"
+    # Service Quotas reports the LIMIT; current consumption needs CloudWatch and
+    # a different permission, so this can only catch a limit that is too small
+    # outright -- not one already consumed by other workloads.
+    quota_int="${quota%%.*}"
+    if [ -n "$quota_int" ] && [ "$quota_int" -eq "$quota_int" ] 2>/dev/null && [ "$quota_int" -lt "$needed" ]; then
+        echo
+        echo "  NOT ENOUGH. The limit itself (${quota_int}) is below the ${needed} vCPUs"
+        echo "  this tier needs, before anything else in the account is counted."
+        echo "  Request an increase in the Service Quotas console before the"
+        echo "  deployment call -- approval is not instant."
+    else
+        echo "  At or above the ${needed} vCPUs this tier needs. Note this is the"
+        echo "  LIMIT, not the headroom: other running instances count against it"
+        echo "  and Service Quotas does not report current consumption."
+    fi
 else
     echo "Could not read the quota (Service Quotas read access may be missing)."
+    echo "Check by hand before deploying -- this tier needs ${needed} vCPUs:"
+    echo "  aws service-quotas get-service-quota --region ${REGION} \\"
+    echo "    --service-code ec2 --quota-code L-1216C47A"
 fi
 if [ "$TIER" = ha ]; then
-    echo "The HA tier builds TWO application instances plus an RDS instance and"
-    echo "an ElastiCache replication group -- size the vCPU quota above against"
-    echo "2x your chosen instance type."
+    echo "The RDS instance and the ElastiCache replication group draw their own"
+    echo "quotas, separate from this one."
 elif [ "$TIER" = autoscale ]; then
-    echo "The autoscale tier's ceiling is whatever you set the ASG max size to --"
-    echo "size the vCPU quota above against max_size x your chosen instance type."
+    echo "The figure above is the ASG's DESIRED capacity. Its ceiling is whatever"
+    echo "you set asg_max_size to, so size the quota against max_size x"
+    echo "${INSTANCE_VCPUS} vCPUs, not against ${needed}."
 fi
 echo "New accounts sometimes start with a default of a few dozen vCPUs; request"
 echo "an increase via the Service Quotas console if you expect to be close to it."

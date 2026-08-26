@@ -30,7 +30,33 @@ locals {
   admin_port = coalesce(var.admin_port, var.product == "sat" ? 3333 : 443)
   phish_port = coalesce(var.phish_port, 80)
 
+  # Who may reach the phishing/landing surface, as opposed to the admin UI.
+  #
+  # These were one list. That is wrong for SAT specifically: the admin allow-list
+  # is an office or VPN range, and the landing pages have to be reachable by the
+  # simulation targets, who are by definition somewhere else. Sharing the list
+  # means a deployment locked down correctly for the console silently serves
+  # nothing to the targets -- the campaign sends, and records no interactions,
+  # which reads as a product fault rather than a firewall one.
+  #
+  # Null inherits allowed_cidrs, so an existing deployment plans clean.
+  phish_cidrs = var.phish_allowed_cidrs != null ? var.phish_allowed_cidrs : var.allowed_cidrs
+
   name_prefix = coalesce(var.name_prefix, "hailbytes-${var.product}-${var.environment}")
+
+  # VM names. name_prefix governs every other resource, but the VMs themselves
+  # are what a customer's host-naming policy actually constrains -- an operator
+  # looking at a portal blade or a CMDB entry expects the name their standard
+  # produces, not ours. `<prefix>-vm-1` satisfies nobody's convention, and it
+  # cannot be coerced into one through name_prefix alone because the `-vm-N`
+  # suffix is ours and the index is 1-based and unpadded.
+  #
+  # vm_names overrides them outright, in zone order: element 0 lands in zone 1,
+  # element 1 in zone 2. Null keeps the derived names.
+  vm_names = var.vm_names != null ? var.vm_names : [
+    for i in range(local.vm_count) : "${local.name_prefix}-vm-${i + 1}"
+  ]
+  db_vm_name = coalesce(var.db_vm_name, "${local.name_prefix}-db-vm")
 
   # Listing slugs from the published Azure Marketplace offers:
   #   ASM: lcmcon1687976613543.hardened_ubuntu_with_rengine
@@ -381,7 +407,7 @@ resource "azurerm_network_security_rule" "lb_https_in" {
 # The phishing frontend. Separate from the 443 rule so an operator can see, and
 # revoke, the phishing surface independently of the admin surface.
 resource "azurerm_network_security_rule" "lb_phish_in" {
-  for_each = var.product == "sat" ? { for i, c in var.allowed_cidrs : tostring(i) => c } : {}
+  for_each = var.product == "sat" ? { for i, c in local.phish_cidrs : tostring(i) => c } : {}
 
   name                        = "allow-phish-${each.key}"
   priority                    = 1000 + tonumber(each.key)
@@ -450,7 +476,7 @@ resource "azurerm_network_security_rule" "vm_admin_in" {
 }
 
 resource "azurerm_network_security_rule" "vm_phish_in" {
-  for_each = var.product == "sat" && var.vm_subnet_id != var.lb_subnet_id ? { for i, c in var.allowed_cidrs : tostring(i) => c } : {}
+  for_each = var.product == "sat" && var.vm_subnet_id != var.lb_subnet_id ? { for i, c in local.phish_cidrs : tostring(i) => c } : {}
 
   name                        = "allow-phish-${each.key}"
   priority                    = 1000 + tonumber(each.key)
@@ -611,7 +637,7 @@ resource "azurerm_network_interface_backend_address_pool_association" "vm" {
 resource "azurerm_linux_virtual_machine" "vm" {
   count = local.vm_count
 
-  name                            = "${local.name_prefix}-vm-${count.index + 1}"
+  name                            = local.vm_names[count.index]
   resource_group_name             = var.resource_group_name
   location                        = var.location
   size                            = var.vm_size
@@ -788,9 +814,13 @@ resource "azurerm_redis_cache" "main" {
   non_ssl_port_enabled          = false
   minimum_tls_version           = "1.2"
   public_network_access_enabled = false
-  # Standard / Premium SKUs deliver a Multi-AZ primary/replica pair;
-  # the Basic SKU is single-node and therefore not a valid HA option
-  # — validated in variables.tf.
+  # Standard gives a primary/replica pair, but BOTH nodes sit in one zone:
+  # Azure offers zone redundancy for this service on Premium and above only,
+  # which is why `zones` is set for Premium and null otherwise. An earlier
+  # version of this comment called Standard "Multi-AZ". It is not, and on a
+  # tier whose entire purpose is surviving a zone loss the distinction is the
+  # whole point -- see the enable_managed_redis variable for what that costs
+  # you and why the cheapest correct answer may be to turn the cache off.
   zones = var.redis_sku_name == "Premium" ? ["1", "2"] : null
   tags  = local.common_tags
 
@@ -1059,7 +1089,7 @@ resource "azurerm_managed_disk" "db_data" {
 
 resource "azurerm_linux_virtual_machine" "db_vm" {
   count                           = local.use_vm_db ? 1 : 0
-  name                            = "${local.name_prefix}-db-vm"
+  name                            = local.db_vm_name
   resource_group_name             = var.resource_group_name
   location                        = var.location
   size                            = var.db_vm_size

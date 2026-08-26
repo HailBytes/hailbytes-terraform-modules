@@ -7,6 +7,11 @@ allowed_cidrs = ["REPLACE.WITH.YOUR.IP/32"]
 # REQUIRED: contents of your SSH public key file.
 ssh_public_key = "ssh-ed25519 AAAA...REPLACE user@host"
 
+# Who may reach the PHISHING/landing surface, as opposed to the admin UI.
+# Unset, it inherits allowed_cidrs above — which locks your simulation targets
+# out of the landing pages unless they all sit inside that same range.
+# phish_allowed_cidrs = ["0.0.0.0/0"]
+
 # Optional overrides:
 # resource_group_name = "rg-hailbytes-sat-prod"
 # location            = "northeurope"

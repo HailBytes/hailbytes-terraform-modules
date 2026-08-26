@@ -63,6 +63,7 @@ run() {
 # ---------------------------------------------------------------------------
 az() {
   local scenario="${MOCK_SCENARIO:-happy}"
+  local want_q=0
   case "$1 $2" in
     "provider show")
       local ns=""
@@ -82,6 +83,44 @@ az() {
         echo "AuthorizationFailed" >&2; return 1
       fi
       return 0
+      ;;
+    "account show")
+      echo '{"name":"Mock Subscription","id":"00000000-0000-0000-0000-000000000000"}'
+      ;;
+    # The regional checks. `no_image` and `no_quota` model the two ways a
+    # deployment call goes wrong AFTER everything subscription-scoped is green:
+    # the offer is not enabled for the region, and the region has no room.
+    "vm image")
+      case "$2 $3" in
+        "image terms")
+          case "$4" in
+            show)   [ "$scenario" = "terms_missing" ] && echo "false" || echo "true" ;;
+            accept) return 0 ;;
+          esac
+          ;;
+        "image list")
+          [ "$scenario" = "no_image" ] && return 0
+          local q=""
+          for a in "$@"; do [ "$want_q" = 1 ] && { q="$a"; want_q=0; }; [ "$a" = "--query" ] && want_q=1; done
+          case "$q" in
+            *"=='Active'"*)  echo "1.2362.83" ;;
+            *"!='Active'"*)  printf '1.1652.53\t2026-11-24T00:00:00+00:00\n1.2217.73\t2026-12-24T00:00:00+00:00\n' ;;
+          esac
+          ;;
+      esac
+      ;;
+    "vm list-skus")
+      [ "$scenario" = "no_zones" ] && { printf '1\n3\n'; return 0; }
+      printf '1\n2\n3\n'
+      ;;
+    "vm list-usage")
+      # az -o tsv columns: currentValue, limit, localizedName, name -- the
+      # script reads the last two fields, so keep the shape.
+      if [ "$scenario" = "no_quota" ]; then
+        echo "standardDSv5Family	Standard DSv5 Family vCPUs	10	12"
+      else
+        echo "standardDSv5Family	Standard DSv5 Family vCPUs	0	100"
+      fi
       ;;
     *) echo "MOCK az: unhandled invocation: $*" >&2; return 1 ;;
   esac
@@ -171,6 +210,41 @@ run "rejects an unknown tier"         2 happy       bash "${REPO}/quickstart/pre
 run "single tier needs no SLRs"       0 happy       bash "${REPO}/quickstart/preflight-aws.sh" single
 run "ha tier, all missing -> creates" 0 all_missing bash "${REPO}/quickstart/preflight-aws.sh" ha
 run "ha tier, one cannot be created"  1 fail_create bash "${REPO}/quickstart/preflight-aws.sh" ha
+
+printf '\npreflight-azure.sh, run as a real subprocess against the mock\n'
+run "rejects an unknown tier"            2 happy   bash "${REPO}/quickstart/preflight-azure.sh" bogus
+run "rejects --location with no value"   2 happy   bash "${REPO}/quickstart/preflight-azure.sh" ha --location
+run "rejects an unknown flag"            2 happy   bash "${REPO}/quickstart/preflight-azure.sh" ha --nope
+run "ha tier, everything green"          0 happy   bash "${REPO}/quickstart/preflight-azure.sh" ha --location northeurope
+run "single tier, everything green"      0 happy   bash "${REPO}/quickstart/preflight-azure.sh" single
+run "reports rather than fails: no image"    0 no_image bash "${REPO}/quickstart/preflight-azure.sh" ha
+run "reports rather than fails: no zone 2"   0 no_zones bash "${REPO}/quickstart/preflight-azure.sh" ha
+run "reports rather than fails: short quota" 0 no_quota bash "${REPO}/quickstart/preflight-azure.sh" ha
+run "provider registration failure still exits 1" 1 fail_create bash "${REPO}/quickstart/preflight-azure.sh" ha
+
+# The regional checks earn their place only if they say something specific
+# enough to act on before the call, so assert the text, not just the exit code.
+azure_out() { ( export MOCK_SCENARIO="$1"; bash "${REPO}/quickstart/preflight-azure.sh" ha --location northeurope 2>&1 ); }
+
+out="$(azure_out happy)"
+check "names the Active image version" \
+  "$(grep -c '1\.2362\.83' <<<"$out" | head -1)" "1"
+check "warns about the deprecating versions" \
+  "$(grep -c 'deprecates 2026-12-24' <<<"$out")" "1"
+check "reports quota as sufficient" \
+  "$(grep -c 'Sufficient for the default sizing' <<<"$out")" "1"
+
+out="$(azure_out no_image)"
+check "an unavailable image says the region is the problem" \
+  "$(grep -c 'NO image visible' <<<"$out")" "1"
+
+out="$(azure_out no_zones)"
+check "a missing zone names the zone and the consequence" \
+  "$(grep -c 'zone 2 is not available' <<<"$out")" "1"
+
+out="$(azure_out no_quota)"
+check "short quota says how much is needed and how much there is" \
+  "$(grep -c 'NOT ENOUGH. This deployment needs 16 and can get 2' <<<"$out")" "1"
 
 printf '\npreflight-aws.sh fails cleanly with no credentials\n'
 (
