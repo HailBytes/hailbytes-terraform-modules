@@ -814,9 +814,13 @@ resource "azurerm_redis_cache" "main" {
   non_ssl_port_enabled          = false
   minimum_tls_version           = "1.2"
   public_network_access_enabled = false
-  # Standard / Premium SKUs deliver a Multi-AZ primary/replica pair;
-  # the Basic SKU is single-node and therefore not a valid HA option
-  # — validated in variables.tf.
+  # Standard gives a primary/replica pair, but BOTH nodes sit in one zone:
+  # Azure offers zone redundancy for this service on Premium and above only,
+  # which is why `zones` is set for Premium and null otherwise. An earlier
+  # version of this comment called Standard "Multi-AZ". It is not, and on a
+  # tier whose entire purpose is surviving a zone loss the distinction is the
+  # whole point -- see the enable_managed_redis variable for what that costs
+  # you and why the cheapest correct answer may be to turn the cache off.
   zones = var.redis_sku_name == "Premium" ? ["1", "2"] : null
   tags  = local.common_tags
 

@@ -349,8 +349,30 @@ variable "enable_post_patch_run_command" {
 
 # ----- Shared session store (Azure Cache for Redis) -----
 
+# Whether to provision the cache at all. Three facts decide it, and the third
+# is the one that gets missed:
+#
+#  1. It is not required. Shared session hash/encryption keys make the default
+#     cookie store work across both nodes (hailbytes-sat#907); the session
+#     payload is a handful of scalars and travels in the cookie.
+#  2. On the default Standard SKU it is NOT zone-redundant. Both nodes of the
+#     primary/replica pair sit in one zone -- Azure offers zone redundancy for
+#     this service on Premium and above only (+~$304/mo). So at the default it
+#     is a single-zone dependency inside a zone-redundant topology.
+#  3. When it is unreachable the application does not degrade evenly. SAT picks
+#     its session store once, at boot (middleware.InitSessionStore), so a cache
+#     that dies later stays selected: reads treat "Redis down" as "no session"
+#     and log everyone out, and writes return the error, so nobody can log back
+#     IN until it returns. A zonal outage that takes the cache therefore takes
+#     the admin console -- the failure this tier exists to survive.
+#
+# Turning it off removes a single-zone dependency from the critical path and
+# saves ~$101/mo. Leaving it on is defensible if session payloads may outgrow
+# the 4 KB cookie limit, or with redis_sku_name = "Premium" and the cost
+# accepted. The default is unchanged pending a product decision -- it is not
+# the obvious choice it looks like.
 variable "enable_managed_redis" {
-  description = "Provision an Azure Cache for Redis (Standard or Premium SKU, zone-redundant in Premium). NOT required for HA -- shared session keys make the default cookie store work across nodes (hailbytes-sat#907), so this is a performance optimisation. Defaults true, which means a default apply needs the Microsoft.Cache provider registered; set false to skip both."
+  description = "Provision an Azure Cache for Redis. NOT required for HA -- shared session keys make the default cookie store work across nodes (hailbytes-sat#907), so this is an optimisation, and at the default Standard SKU it is a single-zone one. Read the comment above before leaving it on. Defaults true, which means a default apply needs the Microsoft.Cache provider registered; set false to skip both."
   type        = bool
   default     = true
 }
