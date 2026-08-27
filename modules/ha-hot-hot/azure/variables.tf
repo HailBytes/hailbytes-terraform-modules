@@ -431,8 +431,60 @@ variable "enable_application_gateway" {
   default     = false
 }
 
+variable "public_ip_id" {
+  # Asked for by a customer who runs their own authoritative DNS and wanted the
+  # A record in place before the deployment, rather than reading the address off
+  # a completed apply. Without this the address does not exist until the load
+  # balancer is created, which forces DNS to be a post-deploy step.
+  #
+  # The module-created IP is already allocation_method = "Static", so it is
+  # stable across applies. This is about existing EARLIER, not about being more
+  # stable.
+  #
+  # Bring your own and this module will not create or destroy it. That is the
+  # point: an IP whose lifecycle you own survives a terraform destroy of the
+  # deployment, so the DNS record stays valid across a rebuild.
+  description = "Resource ID of an existing Static, Standard-SKU public IP to use for the load balancer frontend. Leave null and the module creates one. Bring your own to reserve the address and register DNS before the first apply; its lifecycle stays yours, so it survives a destroy."
+  type        = string
+  default     = null
+}
+
+variable "key_vault_reader_principal_ids" {
+  # The apply identity gets Key Vault Secrets Officer (see kv_secret_writer in
+  # main.tf). When the deployment runs as a service principal rather than as a
+  # person, that means NO HUMAN can read or rotate the database password or the
+  # shared session keys without authenticating as the service principal.
+  #
+  # That is a defensible posture for deployment, and a bad one for an incident
+  # at 3am. Grant your operators here at deploy time instead of discovering the
+  # gap when you need the credential.
+  #
+  # Object IDs, not names: users, groups or service principals. A group is the
+  # better choice, since membership changes without a terraform apply.
+  description = "Additional Entra object IDs (users, groups or service principals) to grant Key Vault Secrets User on the deployment's vault. Use when the apply runs as a service principal, so that a human can still read and rotate the database password and session keys."
+  type        = list(string)
+  default     = []
+}
+
 variable "appgw_subnet_id" {
-  description = "Subnet for the Application Gateway. Required when enable_application_gateway = true. Must be /24 or larger, in the same vnet as the VMs."
+  # /24 is Microsoft's RECOMMENDATION, not a requirement. Their words: "Although
+  # a /24 subnet isn't required per Application Gateway v2 SKU deployment, we
+  # highly recommend it. A /24 subnet ensures that Application Gateway v2 has
+  # sufficient space for autoscaling expansion and maintenance upgrades."
+  #
+  # The actual requirement is arithmetic: subnet size, minus 5 addresses Azure
+  # reserves in every subnet, minus the gateway's MAX instance count, minus one
+  # more if it has a private frontend IP. This module sets max_capacity = 10 and
+  # uses a public frontend only, so it needs 15 addresses:
+  #
+  #   /28  16 - 5 = 11 usable, 10 for instances ->  1 spare. Works, no headroom.
+  #   /27  32 - 5 = 27 usable, 10 for instances -> 17 spare. Comfortable.
+  #   /24 256 - 5 = 251 usable                  -> Microsoft's recommendation.
+  #
+  # So /27 is the practical floor for THIS module's capacity, and a customer who
+  # cannot spare a /24 is not blocked. Raise max_capacity and the floor rises
+  # with it. https://learn.microsoft.com/en-us/azure/application-gateway/configuration-infrastructure
+  description = "Dedicated subnet for the Application Gateway, in the same vnet as the VMs. Required when enable_application_gateway = true. /24 is Microsoft's recommendation; /27 is the practical floor at this module's max_capacity of 10. No other resource may share it."
   type        = string
   default     = null
 }

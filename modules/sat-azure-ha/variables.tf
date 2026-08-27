@@ -300,6 +300,18 @@ variable "enable_application_gateway" {
   default     = false
 }
 
+variable "public_ip_id" {
+  description = "Resource ID of an existing Static, Standard-SKU public IP to use for the load balancer frontend. Leave null and the module creates one. Bring your own to reserve the address and register DNS before the first apply; its lifecycle stays yours, so it survives a destroy."
+  type        = string
+  default     = null
+}
+
+variable "key_vault_reader_principal_ids" {
+  description = "Additional Entra object IDs (users, groups or service principals) to grant Key Vault Secrets User on the deployment's vault. Use when the apply runs as a service principal, so that a human can still read and rotate the database password and session keys."
+  type        = list(string)
+  default     = []
+}
+
 variable "appgw_subnet_id" {
   description = "Subnet for the Application Gateway. Required when enable_application_gateway = true. Must be /24 or larger, in the same vnet as the VMs."
   type        = string

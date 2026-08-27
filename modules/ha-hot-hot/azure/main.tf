@@ -93,6 +93,13 @@ locals {
   vm_count = 2
   vm_zones = ["1", "2"]
 
+  # Customer-supplied IP wins. azurerm_public_ip.lb is behind a count, so index
+  # rather than attribute-access it.
+  lb_public_ip_id = var.public_ip_id != null ? var.public_ip_id : azurerm_public_ip.lb[0].id
+  lb_public_ip_address = (
+    var.public_ip_id != null ? data.azurerm_public_ip.supplied[0].ip_address : azurerm_public_ip.lb[0].ip_address
+  )
+
   use_flexible_server = var.db_mode == "flexible_server"
   use_vm_db           = var.db_mode == "vm"
   use_external_db     = var.db_mode == "external"
@@ -115,7 +122,7 @@ locals {
   backup_container_name       = "hailbytes-${var.product}-bundles"
 
   enable_application_gateway = var.enable_application_gateway
-  appgw_endpoint             = local.enable_application_gateway ? azurerm_public_ip.appgw[0].ip_address : azurerm_public_ip.lb.ip_address
+  appgw_endpoint             = local.enable_application_gateway ? azurerm_public_ip.appgw[0].ip_address : local.lb_public_ip_address
 
   # Shared session store: required by HA SAT/ASM. Without a shared
   # Redis, both VMs fall back to in-memory sessions and the LB
@@ -205,6 +212,17 @@ resource "azurerm_role_assignment" "kv_secret_writer" {
   scope                = azurerm_key_vault.main.id
   role_definition_name = "Key Vault Secrets Officer"
   principal_id         = data.azurerm_client_config.current.object_id
+}
+
+# When the apply runs as a service principal, kv_secret_writer above grants the
+# vault to that principal and to nobody else. Named humans or groups get read
+# access here so a credential is reachable during an incident without borrowing
+# the deployment identity. Secrets User, not Officer: read, not rewrite.
+resource "azurerm_role_assignment" "kv_secret_readers" {
+  for_each             = toset(var.key_vault_reader_principal_ids)
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = each.value
 }
 
 # ----- Shared session keys (hailbytes-sat#907) -----
@@ -521,7 +539,16 @@ resource "azurerm_subnet_network_security_group_association" "vm" {
 
 # ----- Load Balancer -----
 
+# Read the address off a customer-supplied IP so load_balancer_public_ip still
+# answers, rather than going empty the moment someone brings their own.
+data "azurerm_public_ip" "supplied" {
+  count               = var.public_ip_id != null ? 1 : 0
+  name                = reverse(split("/", var.public_ip_id))[0]
+  resource_group_name = split("/", var.public_ip_id)[4]
+}
+
 resource "azurerm_public_ip" "lb" {
+  count               = var.public_ip_id == null ? 1 : 0
   name                = "${local.name_prefix}-lb-pip"
   resource_group_name = var.resource_group_name
   location            = var.location
@@ -540,7 +567,7 @@ resource "azurerm_lb" "main" {
 
   frontend_ip_configuration {
     name                 = "frontend"
-    public_ip_address_id = azurerm_public_ip.lb.id
+    public_ip_address_id = local.lb_public_ip_id
   }
 }
 

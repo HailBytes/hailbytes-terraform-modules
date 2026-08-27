@@ -51,6 +51,8 @@ module "this" {
   backup_blob_noncurrent_expiration_days = var.backup_blob_noncurrent_expiration_days
   enable_pre_patch_run_command           = var.enable_pre_patch_run_command
   enable_application_gateway             = var.enable_application_gateway
+  public_ip_id                           = var.public_ip_id
+  key_vault_reader_principal_ids         = var.key_vault_reader_principal_ids
   appgw_subnet_id                        = var.appgw_subnet_id
   appgw_tls_pfx_base64                   = var.appgw_tls_pfx_base64
   appgw_tls_pfx_password                 = var.appgw_tls_pfx_password
