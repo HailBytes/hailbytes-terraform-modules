@@ -44,9 +44,10 @@ set -uo pipefail
 TIER="${1:-ha}"
 ACCEPT_TERMS=0
 LOCATION="${HB_LOCATION:-northeurope}"
+VM_SKU="${HB_VM_SIZE:-Standard_D8s_v5}"
 
-# Parse the flags after the tier. --location takes a value, so a plain
-# `for arg in "$@"` cannot read it.
+# Parse the flags after the tier. --location and --vm-size take values, so a
+# plain `for arg in "$@"` cannot read them.
 shift $(( $# > 0 ? 1 : 0 ))
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -57,6 +58,12 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --location=*) LOCATION="${1#--location=}" ;;
+        --vm-size)
+            [ $# -ge 2 ] || { echo "--vm-size needs a size, e.g. --vm-size Standard_D2s_v5" >&2; exit 2; }
+            VM_SKU="$2"
+            shift
+            ;;
+        --vm-size=*) VM_SKU="${1#--vm-size=}" ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
     shift
@@ -65,7 +72,7 @@ done
 case "$TIER" in
     ha|single) ;;
     *)
-        echo "usage: $0 {ha|single} [--accept-terms]" >&2
+        echo "usage: $0 {ha|single} [--accept-terms] [--location REGION] [--vm-size SIZE]" >&2
         exit 2
         ;;
 esac
@@ -76,12 +83,28 @@ PUBLISHER="lcmcon1687976613543"
 OFFER="gophish-phishing-simulator"
 SKU="standard-v2"
 
-# The module default application-node size, and its vCPU count. Keep in sync
-# with the vm_size defaults in modules/*/azure/variables.tf -- the quota check
-# below is only useful if it asks about the size Terraform will actually ask
-# for.
-VM_SKU="Standard_D8s_v5"
-VM_SKU_VCPUS=8
+# vCPUs per application node, derived from the size actually being deployed.
+#
+# This was pinned to the 8-vCore default, which is wrong for anyone deploying
+# off the default: a 2 x Standard_D2s_v5 pilot needs 4 vCPUs of quota and was
+# told it needed 16, which sends them to request an increase they do not need.
+# The ladder is the one in modules/*/azure/variables.tf vm_size validation.
+case "$VM_SKU" in
+    Standard_B2s|Standard_D2s_v5)  VM_SKU_VCPUS=2  ;;
+    Standard_D4s_v5)               VM_SKU_VCPUS=4  ;;
+    Standard_D8s_v5)               VM_SKU_VCPUS=8  ;;
+    Standard_D16s_v5)              VM_SKU_VCPUS=16 ;;
+    Standard_D32s_v5)              VM_SKU_VCPUS=32 ;;
+    Standard_D48s_v5)              VM_SKU_VCPUS=48 ;;
+    Standard_D64s_v5)              VM_SKU_VCPUS=64 ;;
+    *)
+        echo "unknown --vm-size: ${VM_SKU}" >&2
+        echo "Portable rungs: Standard_B2s, Standard_D2s_v5, Standard_D4s_v5," >&2
+        echo "Standard_D8s_v5, Standard_D16s_v5, Standard_D32s_v5," >&2
+        echo "Standard_D48s_v5, Standard_D64s_v5." >&2
+        exit 2
+        ;;
+esac
 
 # Providers each tier genuinely creates resources under.
 #
@@ -319,9 +342,15 @@ else
 fi
 needed=$(( node_count * VM_SKU_VCPUS ))
 
+# B-series draws its own quota pool, so a B2s pilot reading the DSv5 meter
+# would report a number that has nothing to do with what it is about to create.
+case "$VM_SKU" in
+    Standard_B2s) quota_family="Standard BS Family"; quota_key="standardBSFamily" ;;
+    *)            quota_family="Standard DSv5 Family"; quota_key="standardDSv5Family" ;;
+esac
 echo "The ${TIER} tier builds ${node_count} application VM(s) at ${VM_SKU}"
-echo "(${VM_SKU_VCPUS} vCPUs each) by default, so it needs ${needed} vCPUs of"
-echo "'Standard DSv5 Family' quota here."
+echo "(${VM_SKU_VCPUS} vCPUs each), so it needs ${needed} vCPUs of"
+echo "'${quota_family}' quota here."
 if [ "$TIER" = "ha" ]; then
     echo "The Flexible Server and the Redis cache draw their own quotas, separate"
     echo "from this one."
@@ -329,7 +358,7 @@ fi
 echo
 
 usage_line="$(az vm list-usage --location "$LOCATION" -o tsv 2>/dev/null \
-                | grep -i 'standardDSv5Family' || true)"
+                | grep -i "$quota_key" || true)"
 if [ -z "$usage_line" ]; then
     echo "  Could not read quota for ${LOCATION} (needs subscription read)."
     echo "  Check it by hand:"
@@ -339,7 +368,7 @@ else
     limit="$(printf '%s' "$usage_line" | awk '{print $NF}')"
     if [ -n "$limit" ] && [ "$limit" -eq "$limit" ] 2>/dev/null; then
         available=$(( limit - current ))
-        echo "  Standard DSv5 Family: ${current} used of ${limit} — ${available} available."
+        echo "  ${quota_family}: ${current} used of ${limit} — ${available} available."
         if [ "$available" -lt "$needed" ]; then
             echo
             echo "  NOT ENOUGH. This deployment needs ${needed} and can get ${available}."

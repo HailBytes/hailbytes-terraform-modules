@@ -76,7 +76,7 @@ variable "instance_type" {
       "m6i.12xlarge", # 48 vCPU
       "m6i.16xlarge", # 64 vCPU
     ], var.instance_type)
-    error_message = "instance_type must be a portable HailBytes rung: m6i.large (2 vCPU), m6i.xlarge (4), m6i.2xlarge (8), m6i.4xlarge (16), m6i.8xlarge (32), m6i.12xlarge (48), m6i.16xlarge (64). AWS m6i has NO general-purpose size between 16 and 32 vCPU, so a 24-vCore deployment cannot be delivered as one VM or as a symmetric pair (2 x 12 does not exist either) -- quote 16 or 32. The 2 and 4 vCPU rungs are for phishing-simulation-only instances: anything serving training content or running the recurring automations carries an 8-vCore floor."
+    error_message = "instance_type must be a portable HailBytes rung: m6i.large (2 vCPU), m6i.xlarge (4), m6i.2xlarge (8), m6i.4xlarge (16), m6i.8xlarge (32), m6i.12xlarge (48), m6i.16xlarge (64). AWS m6i has NO general-purpose size between 16 and 32 vCPU, so a 24-vCore deployment cannot be delivered as one VM or as a symmetric pair (2 x 12 does not exist either) -- quote 16 or 32. The 2 and 4 vCPU rungs carry measured training capacity as of 2026-08-24 and are supported for pilots and small rosters; 8 remains the default and the published purchasable rung. Size from measured load rather than from the rung -- see hailbytes-sat/docs/VM_SCALING.md."
   }
 }
 

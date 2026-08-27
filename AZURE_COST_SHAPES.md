@@ -28,20 +28,23 @@ VM Scale Set. The three are not interpolatable: don't quote "2× a single VM"
 for HA.
 
 > **⚠️ These rows are sized at 2 vCPU per app node, which is BELOW the module
-> default as of 2026-08-06.** Every module now defaults to the 8-vCore training
-> floor (`Standard_D8s_v5`), because any instance serving training content or
-> running the recurring automations carries an 8-vCore floor and training ships
-> with the phish server. 2 vCPU is valid only for phishing-simulation-only
-> deployments, and it is not a purchasable rung in any case — the marketplace
-> floor is 8 vCPU. The infrastructure figures below remain verified against the
-> Azure Retail Prices API at the sizing shown; the **meter** column is exact at
-> any size (`metered vCores × 730h × $0.24`). Re-verify the infrastructure
-> column at `Standard_D8s_v5` before quoting an all-in total.
+> default of `Standard_D8s_v5`.** That default is a deliberate starting point,
+> not a minimum: since the payload and pagination work of 2026-08-24, 2 vCPU
+> carries a measured 11,579 students/day and 4 vCPU 37,186
+> (`hailbytes-sat/bench/locust/RESULTS.md`). The earlier claim here — that 2
+> vCPU was valid only for phishing-simulation-only deployments — described the
+> pre-fix measurement and is withdrawn. The **published purchasable** floor of
+> 8 vCPU is unchanged and is a commercial decision. The infrastructure figures
+> below remain verified against the Azure Retail Prices API at the sizing
+> shown; the **meter** column is exact at any size
+> (`metered vCores × 730h × $0.24`). Re-verify the infrastructure column at
+> whatever size you actually quote.
 
 All rows use **`Standard_D2s_v5` (2 vCPU)** as the app-VM size, the
-procurement-grade equivalent of the AWS table's `m6i.large`. It is also the
-module default on Azure, so — unlike the AWS table — the Azure procurement
-sizing and the starter defaults coincide at this tier.
+procurement-grade equivalent of the AWS table's `m6i.large`. The module default
+is `Standard_D8s_v5`, so these rows show the pilot rung rather than the default
+— read the meter column as `metered vCores × 730h × $0.24` and re-derive it for
+the size you are quoting.
 
 | Shape | Module | App instances | Managed services | Infra (verified) | + per-vCPU meter | **All-in** |
 |---|---|---|---|---|---|---|

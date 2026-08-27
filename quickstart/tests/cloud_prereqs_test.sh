@@ -221,6 +221,9 @@ run "reports rather than fails: no image"    0 no_image bash "${REPO}/quickstart
 run "reports rather than fails: no zone 2"   0 no_zones bash "${REPO}/quickstart/preflight-azure.sh" ha
 run "reports rather than fails: short quota" 0 no_quota bash "${REPO}/quickstart/preflight-azure.sh" ha
 run "provider registration failure still exits 1" 1 fail_create bash "${REPO}/quickstart/preflight-azure.sh" ha
+run "rejects --vm-size with no value"     2 happy bash "${REPO}/quickstart/preflight-azure.sh" ha --vm-size
+run "rejects an off-ladder --vm-size"     2 happy bash "${REPO}/quickstart/preflight-azure.sh" ha --vm-size Standard_D24s_v5
+run "accepts the 2-vCPU pilot rung"       0 happy bash "${REPO}/quickstart/preflight-azure.sh" ha --vm-size Standard_D2s_v5
 
 # The regional checks earn their place only if they say something specific
 # enough to act on before the call, so assert the text, not just the exit code.
@@ -245,6 +248,26 @@ check "a missing zone names the zone and the consequence" \
 out="$(azure_out no_quota)"
 check "short quota says how much is needed and how much there is" \
   "$(grep -c 'NOT ENOUGH. This deployment needs 16 and can get 2' <<<"$out")" "1"
+
+# The quota figure has to follow the size being deployed. Pinned at the 8-vCore
+# default, a 2 x Standard_D2s_v5 pilot was told it needed 16 vCPUs instead of 4
+# and sent to request an increase it did not need -- exactly the kind of
+# false alarm this script exists to prevent.
+sized_out() { ( export MOCK_SCENARIO="${1}"; bash "${REPO}/quickstart/preflight-azure.sh" ha --location northeurope --vm-size "${2}" 2>&1 ); }
+
+out="$(sized_out happy Standard_D2s_v5)"
+check "2-vCPU pair asks for 4 vCPUs, not the default 16" \
+  "$(grep -c 'it needs 4 vCPUs' <<<"$out")" "1"
+check "2-vCPU pair names the size in the quota sentence" \
+  "$(grep -c 'application VM(s) at Standard_D2s_v5' <<<"$out")" "1"
+
+out="$(sized_out happy Standard_D16s_v5)"
+check "16-vCPU pair asks for 32 vCPUs" \
+  "$(grep -c 'it needs 32 vCPUs' <<<"$out")" "1"
+
+out="$(sized_out happy Standard_B2s)"
+check "B-series reads the BS quota pool, not DSv5" \
+  "$(grep -c 'Standard BS Family' <<<"$out")" "1"
 
 printf '\npreflight-aws.sh fails cleanly with no credentials\n'
 (
