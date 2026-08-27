@@ -9,7 +9,7 @@ output "load_balancer_id" {
 }
 
 output "vm_nsg_id" {
-  description = "ID of the NSG filtering vm_subnet_id to 443/allowed_cidrs. Empty when vm_subnet_id == lb_subnet_id (the lb NSG already covers that subnet) or when associate_vm_subnet_nsg = false was set while they differ (the NSG still exists but the caller supplied their own association)."
+  description = "ID of the NSG filtering vm_subnet_id to 443/allowed_cidrs. Empty when vm_subnet_is_lb_subnet = true (the lb NSG already covers that subnet). Non-empty but unassociated when associate_vm_subnet_nsg = false (the NSG still exists for the caller to associate themselves)."
   value       = length(azurerm_network_security_group.vm) > 0 ? azurerm_network_security_group.vm[0].id : ""
 }
 

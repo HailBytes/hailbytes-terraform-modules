@@ -82,8 +82,14 @@ variable "key_vault_network_default_action" {
   default     = "Allow"
 }
 
+variable "vm_subnet_is_lb_subnet" {
+  description = "Set true when vm_subnet_id and lb_subnet_id name the SAME subnet — Azure permits one NSG per subnet, so the module then skips its dedicated VM NSG and lets the lb NSG filter the shared subnet. It is an explicit input rather than a comparison of the two IDs because the module branches on it with count/for_each, which must resolve at plan time; a caller that creates its subnets in the same apply passes IDs that are not known until apply, and comparing them would fail the plan. Default false (the subnets differ) matches the network/azure module and the documented common case."
+  type        = bool
+  default     = false
+}
+
 variable "associate_vm_subnet_nsg" {
-  description = "Associate the module-managed NSG (allow-https-* rules built from allowed_cidrs) with vm_subnet_id. Only applies when vm_subnet_id differs from lb_subnet_id (when they're the same subnet, the lb NSG already covers it). Set false if the subnet already has an NSG attached and your landing-zone tooling manages ingress; the NSG ID is still exported as vm_nsg_id for you to reference."
+  description = "Associate the module-managed NSG (allow-https-* rules built from allowed_cidrs) with vm_subnet_id. Only applies when vm_subnet_is_lb_subnet = false (when both point at the same subnet, the lb NSG already covers it). Set false if the subnet already has an NSG attached and your landing-zone tooling manages ingress; the NSG ID is still exported as vm_nsg_id for you to reference."
   type        = bool
   default     = true
 }

@@ -36,6 +36,28 @@ variable "lb_subnet_id" {
   type        = string
 }
 
+variable "vm_subnet_is_lb_subnet" {
+  description = <<-EOT
+    Set true when vm_subnet_id and lb_subnet_id name the SAME subnet. Azure
+    permits exactly one NSG per subnet, so in that topology the module skips its
+    dedicated VM NSG and lets the lb NSG filter the shared subnet.
+
+    This has to be an explicit input rather than a `vm_subnet_id != lb_subnet_id`
+    comparison, because the module branches on it with count/for_each and those
+    must resolve during plan. A caller that creates its subnets in the same apply
+    -- network/azure feeding this module, which is the composition the READMEs
+    document -- passes two values that are still "known after apply", and
+    comparing them fails the whole plan with "Invalid count argument".
+
+    Default false (the subnets differ) matches network/azure, every wrapper
+    module, and the documented common case. Get it wrong and Azure rejects the
+    second association on an already-filtered subnet at apply -- loud, not
+    silent; the module's own check block flags the mismatch first.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "allowed_cidrs" {
   type = list(string)
   validation {
@@ -56,7 +78,7 @@ variable "phish_allowed_cidrs" {
 }
 
 variable "associate_vm_subnet_nsg" {
-  description = "Associate the module-managed NSG (allow-https-* rules built from allowed_cidrs) with vm_subnet_id. Only applies when vm_subnet_id differs from lb_subnet_id (when they're the same subnet, the lb NSG already covers it). Set false if the subnet already has an NSG attached and your landing-zone tooling manages ingress; the NSG ID is still exported as vm_nsg_id for you to reference."
+  description = "Associate the module-managed NSG (allow-https-* rules built from allowed_cidrs) with vm_subnet_id. Only applies when vm_subnet_is_lb_subnet = false (when both point at the same subnet, the lb NSG already covers it). Set false if the subnet already has an NSG attached and your landing-zone tooling manages ingress; the NSG ID is still exported as vm_nsg_id for you to reference."
   type        = bool
   default     = true
 }

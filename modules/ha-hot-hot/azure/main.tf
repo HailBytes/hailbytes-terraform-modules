@@ -44,6 +44,14 @@ locals {
 
   name_prefix = coalesce(var.name_prefix, "hailbytes-${var.product}-${var.environment}")
 
+  # Whether vm_subnet_id is a subnet of its own, and so needs its own NSG.
+  # Driven by an explicit input, never by comparing the two subnet ID strings:
+  # the five resources below branch on this with count/for_each, which Terraform
+  # must resolve during plan, and a caller that builds its subnets in the same
+  # apply hands us two values that are not known until apply. See
+  # var.vm_subnet_is_lb_subnet.
+  separate_vm_subnet = !var.vm_subnet_is_lb_subnet
+
   # VM names. name_prefix governs every other resource, but the VMs themselves
   # are what a customer's host-naming policy actually constrains -- an operator
   # looking at a portal blade or a CMDB entry expects the name their standard
@@ -430,14 +438,27 @@ resource "azurerm_subnet_network_security_group_association" "lb" {
   network_security_group_id = azurerm_network_security_group.lb.id
 }
 
-# A separate NSG for the VM subnet, created only when it differs from
-# lb_subnet_id (a subnet can have exactly one associated NSG — when the
-# two subnet variables point at the same subnet, azurerm_network_security_group.lb
+# The flag and the subnet IDs have to agree, and only apply can confirm it --
+# comparing the IDs is exactly what count cannot do (see
+# var.vm_subnet_is_lb_subnet). A check block is the one construct that tolerates
+# an unknown: Terraform defers it and warns rather than failing, so a caller
+# building subnets in the same apply is still told about a mismatch, and is
+# still able to apply while fixing it.
+check "vm_subnet_is_lb_subnet_matches_ids" {
+  assert {
+    condition     = var.vm_subnet_is_lb_subnet == (var.vm_subnet_id == var.lb_subnet_id)
+    error_message = "vm_subnet_is_lb_subnet is ${var.vm_subnet_is_lb_subnet} but vm_subnet_id and lb_subnet_id ${var.vm_subnet_id == var.lb_subnet_id ? "are the same subnet" : "are different subnets"}. Set vm_subnet_is_lb_subnet = ${var.vm_subnet_id == var.lb_subnet_id ? "true" : "false"}: left as-is, the VM subnet either ends up with no NSG from this module, or Azure rejects a second NSG association on a subnet the lb NSG already filters."
+  }
+}
+
+# A separate NSG for the VM subnet, created only when vm_subnet_id is a subnet
+# of its own (a subnet can have exactly one associated NSG — when the two
+# subnet variables point at the same subnet, azurerm_network_security_group.lb
 # above already filters it). Without this, a vm_subnet_id distinct from
 # lb_subnet_id got zero inbound filtering from this module: SECURITY-DEFAULTS.md
 # promises "deny all inbound" but nothing enforced it for the app VMs.
 resource "azurerm_network_security_group" "vm" {
-  count = var.vm_subnet_id != var.lb_subnet_id ? 1 : 0
+  count = local.separate_vm_subnet ? 1 : 0
 
   name                = "${local.name_prefix}-vm-nsg"
   resource_group_name = var.resource_group_name
@@ -460,7 +481,7 @@ resource "azurerm_network_security_group" "vm" {
 # (azurerm_public_ip.lb is the only ingress), so the sole route to admin_port is
 # through the load balancer's 443 frontend, which allowed_cidrs already bounds.
 resource "azurerm_network_security_rule" "vm_admin_in" {
-  for_each = var.vm_subnet_id != var.lb_subnet_id ? { for i, c in var.allowed_cidrs : tostring(i) => c } : {}
+  for_each = local.separate_vm_subnet ? { for i, c in var.allowed_cidrs : tostring(i) => c } : {}
 
   name                        = "allow-admin-${each.key}"
   priority                    = 100 + tonumber(each.key)
@@ -476,7 +497,7 @@ resource "azurerm_network_security_rule" "vm_admin_in" {
 }
 
 resource "azurerm_network_security_rule" "vm_phish_in" {
-  for_each = var.product == "sat" && var.vm_subnet_id != var.lb_subnet_id ? { for i, c in local.phish_cidrs : tostring(i) => c } : {}
+  for_each = var.product == "sat" && local.separate_vm_subnet ? { for i, c in local.phish_cidrs : tostring(i) => c } : {}
 
   name                        = "allow-phish-${each.key}"
   priority                    = 1000 + tonumber(each.key)
@@ -494,7 +515,7 @@ resource "azurerm_network_security_rule" "vm_phish_in" {
 # Health probes only. Without this the probe is dropped, the pool never goes
 # healthy, and the frontend serves 503 no matter what the application is doing.
 resource "azurerm_network_security_rule" "vm_probe_in" {
-  count = var.vm_subnet_id != var.lb_subnet_id ? 1 : 0
+  count = local.separate_vm_subnet ? 1 : 0
 
   name              = "allow-lb-probe"
   priority          = 2000
@@ -513,7 +534,7 @@ resource "azurerm_network_security_rule" "vm_probe_in" {
 }
 
 resource "azurerm_subnet_network_security_group_association" "vm" {
-  count = var.associate_vm_subnet_nsg && var.vm_subnet_id != var.lb_subnet_id ? 1 : 0
+  count = var.associate_vm_subnet_nsg && local.separate_vm_subnet ? 1 : 0
 
   subnet_id                 = var.vm_subnet_id
   network_security_group_id = azurerm_network_security_group.vm[0].id
