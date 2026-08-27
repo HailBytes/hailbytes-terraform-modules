@@ -73,7 +73,7 @@ run "the_two_vms_occupy_different_zones" {
   # VM spread. The module states zone redundancy explicitly by listing all three
   # of the region's zones rather than relying on the implicit default.
   assert {
-    condition     = length(azurerm_public_ip.lb.zones) == 3
+    condition     = length(azurerm_public_ip.lb[0].zones) == 3
     error_message = "The load-balancer public IP must be zone-redundant across all three of North Europe's zones, not pinned to one."
   }
 }
