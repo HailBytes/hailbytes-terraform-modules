@@ -4,7 +4,17 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Fixed
+
+- **`ha-hot-hot/azure`: composing this module with `network/azure` in one apply no longer fails the plan.** Since [#51](https://github.com/HailBytes/hailbytes-terraform-modules/issues/51), five resources guarding the VM-subnet NSG branched on `var.vm_subnet_id != var.lb_subnet_id` through `count`/`for_each`. Terraform resolves those during **plan**, so any caller that creates its subnets in the same `terraform apply` — passing two IDs that are still *"known after apply"* — got `Error: Invalid count argument` and no plan at all. That is the composition this repo documents: `network/azure` outputs feeding the HA module, as in [`docs/AZURE_PATCHING_AND_MIGRATION.md`](docs/AZURE_PATCHING_AND_MIGRATION.md), [`docs/DEPLOY_FROM_GALLERY.md`](docs/DEPLOY_FROM_GALLERY.md), and the `network/azure` output descriptions. The `ha-hot-hot/azure` README's own example hit it too. It reproduced only against real subnet-creating callers, never in `terraform test`, because every fixture in the suite passes literal subnet ID strings.
+
+  The branch is now the new `vm_subnet_is_lb_subnet` input (default `false`), which is known at plan time — matching how the sibling `unlimited-scale/azure` has always gated the same NSG. A `check` block reports a flag that disagrees with the actual IDs, on the first apply where both are known.
+
 ### Changed — BREAKING
+
+- **`ha-hot-hot/azure` (and `asm-azure-ha` / `sat-azure-ha`): a shared VM/LB subnet must now be declared, not inferred.** If you pass the *same* subnet ID to both `vm_subnet_id` and `lb_subnet_id`, set `vm_subnet_is_lb_subnet = true`. The module previously detected this by comparing the two IDs; that comparison is what broke every same-apply plan (see *Fixed* above), so it could not be kept.
+
+  **Upgrade impact:** callers with two *distinct* subnets — the default, and everything `network/azure` produces — need no change. Callers sharing one subnet who do not set the flag will have Terraform plan a second NSG association on that subnet, which Azure rejects at apply, and the module's `check` block flags first. Nothing is silently unfiltered.
 
 - **Application-node sizing defaults raised to the 8-vCore training floor, and constrained to a portable ladder.** All six tier modules and all twelve product wrappers previously defaulted to 2 vCPU (`t3.large` on AWS, `Standard_D2s_v5` on Azure) as a deliberately-cheap PoC "starter" shape. They now default to `m6i.2xlarge` / `Standard_D8s_v5` (8 vCore, 32 GB).
 

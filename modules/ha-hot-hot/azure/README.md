@@ -136,6 +136,7 @@ module "hailbytes_asm_ha" {
   location               = "eastus"
   vm_subnet_id           = azurerm_subnet.workload.id
   lb_subnet_id           = azurerm_subnet.workload.id
+  vm_subnet_is_lb_subnet = true # both point at one subnet — see below
   db_delegated_subnet_id = azurerm_subnet.db.id
   private_dns_zone_id    = azurerm_private_dns_zone.pg.id
   allowed_cidrs          = ["10.0.0.0/8"]
@@ -143,6 +144,32 @@ module "hailbytes_asm_ha" {
   ssh_public_key         = file("~/.ssh/id_ed25519.pub")
 }
 ```
+
+### `vm_subnet_is_lb_subnet`
+
+Azure allows exactly one NSG per subnet. When `vm_subnet_id` and `lb_subnet_id`
+name the same subnet — as in the example above — the module's LB NSG already
+filters it, so set `vm_subnet_is_lb_subnet = true` and the module skips its
+dedicated VM NSG. Leave it at the default `false` when the two are distinct
+subnets, which is what [`modules/network/azure`](../../network/azure) emits.
+
+It is a flag rather than a `vm_subnet_id != lb_subnet_id` comparison because the
+module branches on it with `count`/`for_each`, and Terraform must resolve those
+during **plan**. If you create the subnets in the same `terraform apply` that
+calls this module, both IDs are still *"known after apply"* at that point, and
+comparing them would fail the whole plan:
+
+```
+Error: Invalid count argument
+The "count" value depends on resource attributes that cannot be determined
+until apply...
+```
+
+Set it wrong and you get a loud failure, not a silent one: a `true` that should
+be `false` leaves the VM subnet unfiltered by this module, and a `false` that
+should be `true` makes Azure reject a second NSG association on an
+already-filtered subnet. The module's `check` block reports the mismatch on the
+first apply where both IDs are known.
 
 ## Deployment
 
