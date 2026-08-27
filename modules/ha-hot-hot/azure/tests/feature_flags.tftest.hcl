@@ -166,7 +166,8 @@ run "no_duplicate_vm_nsg_when_subnets_match" {
   command = plan
 
   variables {
-    lb_subnet_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.Network/virtualNetworks/vnet/subnets/vm"
+    lb_subnet_id           = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.Network/virtualNetworks/vnet/subnets/vm"
+    vm_subnet_is_lb_subnet = true
   }
 
   assert {
@@ -177,6 +178,48 @@ run "no_duplicate_vm_nsg_when_subnets_match" {
   assert {
     condition     = output.vm_nsg_id == ""
     error_message = "vm_nsg_id must be empty when vm_subnet_id == lb_subnet_id."
+  }
+}
+
+# The next two pin WHAT the branch reads. Every fixture in this suite passes
+# literal subnet IDs, so a `vm_subnet_id != lb_subnet_id` predicate plans fine
+# here and blows up only against a real caller that creates its subnets in the
+# same apply ("Invalid count argument", unknown value in count). This suite
+# cannot reproduce an unknown value, so instead these two decouple the flag from
+# the IDs: they hold only if the branch reads var.vm_subnet_is_lb_subnet alone.
+# Restore the ID comparison and both fail.
+#
+# Both configurations are deliberately contradictory, so both trip the module's
+# own check block -- expect_failures asserts that too, which is the only
+# coverage the check itself gets.
+run "vm_nsg_follows_flag_not_ids_when_ids_differ" {
+  command = plan
+
+  variables {
+    vm_subnet_is_lb_subnet = true
+  }
+
+  expect_failures = [check.vm_subnet_is_lb_subnet_matches_ids]
+
+  assert {
+    condition     = length(azurerm_network_security_group.vm) == 0
+    error_message = "vm_subnet_is_lb_subnet = true must suppress the VM NSG even though the fixture's two subnet IDs differ — the branch must not compare the IDs."
+  }
+}
+
+run "vm_nsg_follows_flag_not_ids_when_ids_match" {
+  command = plan
+
+  variables {
+    lb_subnet_id           = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.Network/virtualNetworks/vnet/subnets/vm"
+    vm_subnet_is_lb_subnet = false
+  }
+
+  expect_failures = [check.vm_subnet_is_lb_subnet_matches_ids]
+
+  assert {
+    condition     = length(azurerm_network_security_group.vm) == 1
+    error_message = "vm_subnet_is_lb_subnet = false must create the VM NSG even though the fixture's two subnet IDs match — the branch must not compare the IDs."
   }
 }
 

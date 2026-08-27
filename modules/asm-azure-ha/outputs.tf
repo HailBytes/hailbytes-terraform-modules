@@ -12,7 +12,7 @@ output "load_balancer_id" {
 }
 
 output "vm_nsg_id" {
-  description = "ID of the NSG filtering vm_subnet_id to 443/allowed_cidrs. Empty when vm_subnet_id == lb_subnet_id."
+  description = "ID of the NSG filtering vm_subnet_id to 443/allowed_cidrs. Empty when vm_subnet_is_lb_subnet = true."
   value       = module.this.vm_nsg_id
   sensitive   = false
 }
