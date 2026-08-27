@@ -401,7 +401,7 @@ run "vm_names_override_exactly" {
   # The override is scoped to the VMs. Everything else still follows
   # name_prefix, which is what the customer asked for.
   assert {
-    condition     = azurerm_public_ip.lb.name == "simsphishing-lb-pip"
+    condition     = azurerm_public_ip.lb[0].name == "simsphishing-lb-pip"
     error_message = "vm_names must not leak into the naming of anything but the VMs."
   }
 }
