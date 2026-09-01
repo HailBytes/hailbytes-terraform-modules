@@ -1,0 +1,72 @@
+# Copy to terraform.tfvars and fill in.
+#
+# Phase 1: leave enable_application_gateway = false. The deployment comes up on
+# public_ip_id, so DNS you registered in advance resolves immediately. The
+# console serves the image's first-boot self-signed certificate, so browsers
+# warn -- it is HTTPS, just not your certificate yet.
+#
+# Phase 2: read the backend certificate off a running node, set the appgw_*
+# values, flip the flag, apply again. It cannot be done in one pass: the backend
+# certificate does not exist until the VMs have booted.
+
+resource_group_name = "rg-hailbytes-sat-prod"
+location            = "northeurope"
+name_prefix         = "hailbytes-sat"
+
+# IPv4 only. The load balancer frontend is v4, so an IPv6 entry would pass CIDR
+# validation and create an NSG rule that can never carry traffic.
+allowed_cidrs = ["203.0.113.0/24"]
+
+# Set this for a live simulation. Left null it inherits allowed_cidrs, which
+# locks every target out of the landing pages -- the campaign sends and then
+# records no interactions.
+phish_allowed_cidrs = ["0.0.0.0/0"]
+
+ssh_public_key = "ssh-ed25519 AAAA... you@example.com"
+
+# Optional: match a host-naming standard. Element 0 -> zone 1, element 1 ->
+# zone 2. Renaming later REPLACES the VM, which on a two-node pair is a full
+# outage.
+# vm_names = ["myservice-web-01", "myservice-web-02"]
+
+vm_size = "Standard_D8s_v5"
+
+# Pin for a reproducible deployment.
+# marketplace_image_version = "1.2368.84"
+
+# Reserve these yourself first, so DNS can be registered before the apply:
+#   az network public-ip create -g <rg> -n <name> --sku Standard \
+#     --allocation-method Static --zone 1 2 3
+# Must be Standard SKU and Static: a Standard load balancer rejects a Basic IP,
+# and SKU cannot be changed in place. Prefer zone-redundant -- a single-zone
+# frontend means a zone outage takes the console down even though a VM survives.
+#
+# public_ip_id       fronts the LOAD BALANCER   (the address DNS uses in phase 1)
+# appgw_public_ip_id fronts the APPLICATION GW  (the address DNS uses in phase 2)
+public_ip_id = "/subscriptions/.../publicIPAddresses/my-lb-ip"
+# appgw_public_ip_id = "/subscriptions/.../publicIPAddresses/my-appgw-ip"
+
+# ----- Phase 2 only -----
+
+# enable_application_gateway = true
+#
+# Azure REFUSES a password-less PFX. If yours has no password, add one:
+#   openssl pkcs12 -in in.pfx -nodes -passin pass: -out tmp.pem
+#   openssl pkcs12 -export -in tmp.pem -out out.pfx -passout pass:<password>
+#   base64 -w0 out.pfx
+# appgw_tls_pfx_base64   = "MIIK..."
+# appgw_tls_pfx_password = "<password>"
+#
+# Read off a running node:
+#   az vm run-command invoke -g <rg> -n <vm> --command-id RunShellScript \
+#     --scripts 'cat /opt/hailbytes-sat/hailbytes-sat-admin.crt' \
+#     --query 'value[0].message' -o tsv
+# appgw_backend_root_cert_pem = <<-PEM
+#   -----BEGIN CERTIFICATE-----
+#   ...
+#   -----END CERTIFICATE-----
+# PEM
+#
+# Must sit inside the network module's vnet (10.30.0.0/16) and not overlap its
+# lb (10.30.0.0/24), workload (10.30.10.0/24) or db (10.30.20.0/24) subnets.
+# appgw_subnet_prefix = "10.30.11.0/24"

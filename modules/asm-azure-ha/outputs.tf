@@ -40,6 +40,11 @@ output "key_vault_uri" {
   sensitive   = false
 }
 
+output "key_vault_id" {
+  description = "Key Vault resource ID. Use as the --scope when granting an operator Key Vault Secrets User after the deployment, without a re-apply."
+  value       = module.this.key_vault_id
+}
+
 # ----- Patching and migration safety -----
 
 output "db_mode" {

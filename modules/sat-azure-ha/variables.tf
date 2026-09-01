@@ -318,6 +318,12 @@ variable "key_vault_reader_principal_ids" {
   default     = []
 }
 
+variable "appgw_public_ip_id" {
+  description = "Resource ID of an existing Static, Standard-SKU public IP for the Application Gateway frontend. Leave null and the module creates one. Ignored unless enable_application_gateway = true. public_ip_id fronts the load balancer; when the gateway is enabled it is the front door, so this is the one DNS points at."
+  type        = string
+  default     = null
+}
+
 variable "appgw_subnet_id" {
   description = "Subnet for the Application Gateway. Required when enable_application_gateway = true. Must be /24 or larger, in the same vnet as the VMs."
   type        = string

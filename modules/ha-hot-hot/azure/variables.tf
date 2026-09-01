@@ -471,6 +471,21 @@ variable "public_ip_id" {
   default     = null
 }
 
+variable "appgw_public_ip_id" {
+  # var.public_ip_id fronts the LOAD BALANCER. When the App Gateway is enabled
+  # the gateway is the front door and the LB becomes an internal hop, so a
+  # customer who brought their own IP found the console answering on a
+  # module-created address instead -- and DNS they had registered in advance
+  # pointed at the wrong place. This is the gateway's equivalent.
+  #
+  # Same contract as public_ip_id: Static, Standard SKU, lifecycle stays the
+  # caller's, so the address survives a terraform destroy and the DNS record
+  # stays valid across a rebuild.
+  description = "Resource ID of an existing Static, Standard-SKU public IP for the Application Gateway frontend. Leave null and the module creates one. Ignored unless enable_application_gateway = true. Bring your own to register DNS before the first apply; its lifecycle stays yours."
+  type        = string
+  default     = null
+}
+
 variable "key_vault_reader_principal_ids" {
   # The apply identity gets Key Vault Secrets Officer (see kv_secret_writer in
   # main.tf). When the deployment runs as a service principal rather than as a
