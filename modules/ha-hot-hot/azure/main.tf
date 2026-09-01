@@ -130,7 +130,18 @@ locals {
   backup_container_name       = "hailbytes-${var.product}-bundles"
 
   enable_application_gateway = var.enable_application_gateway
-  appgw_endpoint             = local.enable_application_gateway ? azurerm_public_ip.appgw[0].ip_address : local.lb_public_ip_address
+  # Customer-supplied gateway IP wins, same as the LB frontend above. Both are
+  # behind counts, so index rather than attribute-access them.
+  appgw_public_ip_id = (
+    local.enable_application_gateway
+    ? (var.appgw_public_ip_id != null ? var.appgw_public_ip_id : azurerm_public_ip.appgw[0].id)
+    : null
+  )
+  appgw_endpoint = local.enable_application_gateway ? (
+    var.appgw_public_ip_id != null
+    ? data.azurerm_public_ip.appgw_supplied[0].ip_address
+    : azurerm_public_ip.appgw[0].ip_address
+  ) : local.lb_public_ip_address
 
   # Shared session store: required by HA SAT/ASM. Without a shared
   # Redis, both VMs fall back to in-memory sessions and the LB
@@ -1485,8 +1496,16 @@ resource "azurerm_virtual_machine_run_command" "post_patch_verify" {
 #   * optionally attaches a customer-supplied WAF policy
 # The Standard LB stays in the topology as a pure L4 backend pool member.
 
+# Read the address off a customer-supplied gateway IP so load_balancer_public_ip
+# still answers when someone brings their own.
+data "azurerm_public_ip" "appgw_supplied" {
+  count               = local.enable_application_gateway && var.appgw_public_ip_id != null ? 1 : 0
+  name                = reverse(split("/", var.appgw_public_ip_id))[0]
+  resource_group_name = split("/", var.appgw_public_ip_id)[4]
+}
+
 resource "azurerm_public_ip" "appgw" {
-  count               = local.enable_application_gateway ? 1 : 0
+  count               = local.enable_application_gateway && var.appgw_public_ip_id == null ? 1 : 0
   name                = "${local.name_prefix}-appgw-pip"
   resource_group_name = var.resource_group_name
   location            = var.location
@@ -1524,7 +1543,7 @@ resource "azurerm_application_gateway" "main" {
 
   frontend_ip_configuration {
     name                 = "frontend"
-    public_ip_address_id = azurerm_public_ip.appgw[0].id
+    public_ip_address_id = local.appgw_public_ip_id
   }
 
   frontend_port {

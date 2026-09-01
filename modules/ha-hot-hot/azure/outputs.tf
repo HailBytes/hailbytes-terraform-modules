@@ -48,6 +48,17 @@ output "key_vault_uri" {
   value       = azurerm_key_vault.main.vault_uri
 }
 
+output "key_vault_id" {
+  # The apply identity gets Secrets Officer, but when the apply runs as a
+  # service principal no human does. Granting one afterwards needs the vault's
+  # resource ID as the role-assignment scope, and the URI cannot be used for
+  # that -- so emit the ID rather than making callers reconstruct it:
+  #   az role assignment create --role "Key Vault Secrets User" \
+  #     --assignee <upn-or-object-id> --scope <this>
+  description = "Key Vault resource ID. Use as the --scope when granting an operator Key Vault Secrets User after the deployment, without a re-apply."
+  value       = azurerm_key_vault.main.id
+}
+
 # ----- Patching and migration safety -----
 
 output "backup_storage_account_name" {

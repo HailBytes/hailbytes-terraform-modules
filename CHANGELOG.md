@@ -4,6 +4,19 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- **`quickstart/azure-ha-byoip`: a first-class path for bring-your-own IP and TLS on your own domain.** [`quickstart/azure-ha`](quickstart/azure-ha) passes neither `public_ip_id` nor any `appgw_*` input, and the `network/azure` module it composes with creates no Application Gateway subnet — so the three things customers running their own authoritative DNS actually ask for (register the A record *before* the first apply, terminate TLS with their own certificate on their own hostname, and name the VMs to a host-naming standard) were reachable only by hand-writing a root module. This quickstart does all three, and documents the two-phase apply that TLS forces.
+
+- **`ha-hot-hot/azure` (and `asm-azure-ha` / `sat-azure-ha`): `appgw_public_ip_id`, to bring your own Application Gateway frontend address.** `public_ip_id` fronts the **load balancer**. When `enable_application_gateway = true` the gateway becomes the front door and the load balancer becomes an internal hop, so a customer who had reserved an address and pre-registered DNS against it found the console answering on a module-created address instead — with no input available to change that. Same contract as `public_ip_id`: Static, Standard SKU, lifecycle stays the caller's, so the address survives a `terraform destroy` and the DNS record stays valid across a rebuild.
+
+- **`ha-hot-hot/azure` (and both HA wrappers): a `key_vault_id` output.** The apply identity receives *Key Vault Secrets Officer*, so when the apply runs as a service principal no human can read or rotate the database password or the shared session keys. Granting an operator afterwards needs the vault's **resource ID** as the role-assignment scope, and the existing `key_vault_uri` output cannot be used for that — callers were left reconstructing the ID by hand. With this, break-glass access is a one-liner against `terraform output` and needs no re-apply:
+
+  ```
+  az role assignment create --role "Key Vault Secrets User" \
+    --assignee <upn-or-object-id> --scope "$(terraform output -raw key_vault_id)"
+  ```
+
 ### Fixed
 
 - **`ha-hot-hot/azure`: composing this module with `network/azure` in one apply no longer fails the plan.** Since [#51](https://github.com/HailBytes/hailbytes-terraform-modules/issues/51), five resources guarding the VM-subnet NSG branched on `var.vm_subnet_id != var.lb_subnet_id` through `count`/`for_each`. Terraform resolves those during **plan**, so any caller that creates its subnets in the same `terraform apply` — passing two IDs that are still *"known after apply"* — got `Error: Invalid count argument` and no plan at all. That is the composition this repo documents: `network/azure` outputs feeding the HA module, as in [`docs/AZURE_PATCHING_AND_MIGRATION.md`](docs/AZURE_PATCHING_AND_MIGRATION.md), [`docs/DEPLOY_FROM_GALLERY.md`](docs/DEPLOY_FROM_GALLERY.md), and the `network/azure` output descriptions. The `ha-hot-hot/azure` README's own example hit it too. It reproduced only against real subnet-creating callers, never in `terraform test`, because every fixture in the suite passes literal subnet ID strings.
