@@ -89,8 +89,10 @@ module "network" {
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
 
-  # The workload module associates its own NSGs; Azure allows one NSG
-  # per subnet, so the network module must not attach its baseline set.
+  # The workload module associates its own NSG, and Azure allows one NSG per
+  # subnet, so the network module must not attach its baseline set. The flag
+  # also stops those NSGs being created at all, which matters here because the
+  # workload module's load-balancer NSG carries the same name.
   associate_subnet_nsgs = false
 }
 
