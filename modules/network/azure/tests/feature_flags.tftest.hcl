@@ -104,15 +104,41 @@ run "nat_gateway_disabled_creates_nothing" {
   }
 }
 
-# Regression: SECURITY-DEFAULTS.md claimed Azure flow logs were on by default.
-# They did not exist. Implemented as VNet flow logs, not NSG flow logs, because
-# NSG flow logs are being retired.
-run "flow_logs_enabled_by_default" {
+# Flow logs are OFF by default, deliberately. On true this module creates a
+# Storage Account with both shared keys and public network access disabled, and
+# the azurerm provider reads that account's queue service properties over the
+# storage data plane -- so an apply from outside the vnet fails with 403
+# KeyBasedAuthenticationNotPermitted. Defaulting true meant every caller
+# composing this module hit an apply that could not succeed.
+#
+# This run pins the default OFF so it cannot be flipped back without also
+# fixing that. The opt-in shape is pinned separately below.
+run "flow_logs_off_by_default" {
   command = plan
 
   assert {
+    condition     = length(azurerm_network_watcher_flow_log.vnet) == 0
+    error_message = "enable_flow_logs must default to false: on true the flow-log Storage Account cannot be read by an apply running outside the vnet (403 KeyBasedAuthenticationNotPermitted), so the default made every composition of this module fail."
+  }
+
+  assert {
+    condition     = length(azurerm_storage_account.flow_logs) == 0
+    error_message = "No flow-log Storage Account should exist by default."
+  }
+}
+
+# The feature itself must still be correctly shaped for anyone who opts in once
+# the data-plane problem is resolved.
+run "flow_logs_shape_when_opted_in" {
+  command = plan
+
+  variables {
+    enable_flow_logs = true
+  }
+
+  assert {
     condition     = length(azurerm_network_watcher_flow_log.vnet) == 1
-    error_message = "enable_flow_logs defaults to true and must create exactly one VNet flow log."
+    error_message = "enable_flow_logs = true must create exactly one VNet flow log."
   }
 
   assert {

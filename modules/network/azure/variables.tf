@@ -66,9 +66,24 @@ variable "nat_gateway_idle_timeout_minutes" {
 }
 
 variable "enable_flow_logs" {
+  # Default flipped to false. On true this module creates a Storage Account with
+  # BOTH shared_access_key_enabled = false and public_network_access_enabled =
+  # false, and this repo has no storage private endpoint and no
+  # Microsoft.Storage service endpoint anywhere. The azurerm provider still
+  # reads that account's QUEUE service properties over the storage data plane,
+  # so an apply run from outside the vnet -- Cloud Shell, a laptop, CI -- fails:
+  #
+  #   403 KeyBasedAuthenticationNotPermitted
+  #
+  # Fixing the auth does not help: storage_use_azuread = true moves the call to
+  # Entra, which the closed network then refuses instead. So on true this was
+  # not a feature with a caveat, it was an apply that could not succeed -- and
+  # defaulting true meant every caller composing this module hit it. It fails on
+  # refresh as well as create, so once the account exists a plain plan cannot
+  # complete either.
   description = "Enable VNet flow logs to a module-created Storage Account. Closes the gap between SECURITY-DEFAULTS.md's claim that Azure flow logs are on by default and the fact that no Azure module produced one. Implemented as VNet flow logs rather than NSG flow logs, because NSG flow logs are being retired. Requires a Network Watcher in the region — Azure auto-creates one, see network_watcher_name."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "network_watcher_name" {

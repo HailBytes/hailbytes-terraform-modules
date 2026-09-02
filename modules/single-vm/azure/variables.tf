@@ -148,9 +148,20 @@ variable "marketplace_image_version" {
 # ----- Patching and migration safety -----
 
 variable "create_backup_storage_account" {
+  # Default flipped to false, same root cause as network/azure's
+  # enable_flow_logs: this account is created with shared_access_key_enabled =
+  # false and public_network_access_enabled = false, and the azurerm provider
+  # reads its queue service properties over the storage DATA PLANE. An apply run
+  # from outside the vnet therefore fails with 403
+  # KeyBasedAuthenticationNotPermitted, on refresh as well as create.
+  #
+  # account_kind is now BlobStorage, which should remove that call entirely --
+  # the provider only manages queue properties for kinds that support queues.
+  # That is the intended fix, but it has NOT yet been confirmed against a real
+  # apply, so this default stays false until it has been.
   description = "Provision an Azure Storage Account + container (blob versioning + immutable WORM policy in unlocked mode + lifecycle to Cool at 30d and Archive at 90d) for pre-patch /api/instance/export bundles. The VM's system-assigned managed identity gets Storage Blob Data Contributor on the container only."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "backup_storage_account_name" {
