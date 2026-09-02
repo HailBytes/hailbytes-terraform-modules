@@ -308,7 +308,7 @@ variable "key_vault_reader_principal_ids" {
 }
 
 variable "lb_frontend_public" {
-  description = "Whether the load balancer frontend gets a public IP. Default true. Set false (only valid with enable_application_gateway = true) to make it internal, so the App Gateway is the single public route to the admin port and nothing can bypass a WAF policy attached to it. Requires egress independent of the load balancer -- a NAT Gateway, as network/azure provisions by default."
+  description = "Whether the load balancer frontend gets a public IP. Default true. Set false (only valid with enable_application_gateway = true) to make it internal, so the App Gateway is the single public route to the admin port and nothing can bypass a WAF policy attached to it. Requires egress independent of the load balancer -- a NAT Gateway, as network/azure provisions by default. Usable on ASM because the admin port is the only rule on that frontend; the SAT wrapper refuses it, since SAT's phishing server shares the frontend and the gateway has no port-80 listener."
   type        = bool
   default     = true
 }
