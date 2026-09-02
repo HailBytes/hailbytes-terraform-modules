@@ -463,3 +463,41 @@ run "db_vm_name_overrides_the_self_managed_postgres_vm" {
     error_message = "db_vm_name must name the self-managed Postgres VM verbatim."
   }
 }
+
+# ----- Backup storage replication vs account_kind -----
+#
+# The backup account is account_kind = "BlobStorage", which offers LRS, GRS and
+# RAGRS only. ZRS was the default, so a caller who enabled backup storage got
+# "`account_replication_type` of `ZRS` isn't supported for Blob Storage
+# accounts" -- and got it partway through the apply, after the load balancer,
+# Key Vault and Redis were already built. The validation moves that to plan
+# time; these runs pin both halves.
+
+run "backup_replication_rejects_zone_redundant_tiers" {
+  command = plan
+
+  variables {
+    backup_storage_replication = "ZRS"
+  }
+
+  expect_failures = [var.backup_storage_replication]
+}
+
+run "backup_replication_defaults_to_a_kind_compatible_tier" {
+  command = plan
+
+  variables {
+    create_backup_storage_account = true
+    backup_storage_account_name   = "hbsatbackuptest"
+  }
+
+  assert {
+    condition     = azurerm_storage_account.backup[0].account_replication_type == "GRS"
+    error_message = "The default replication must be one BlobStorage actually supports; GRS is the geo-redundant option and the strongest this account_kind can take."
+  }
+
+  assert {
+    condition     = azurerm_storage_account.backup[0].account_kind == "BlobStorage"
+    error_message = "account_kind must stay BlobStorage -- StorageV2 reintroduces the queue-service data-plane call this account cannot serve."
+  }
+}

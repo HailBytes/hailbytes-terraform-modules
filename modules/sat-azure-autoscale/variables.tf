@@ -182,9 +182,14 @@ variable "backup_storage_account_name" {
 }
 
 variable "backup_storage_replication" {
-  description = "Replication type for the backup storage account. ZRS is the procurement-grade default; GRS adds cross-region replica."
+  description = "Replication type for the backup storage account. GRS (geo-redundant, cross-region) is the default and the strongest option this account can take: account_kind is BlobStorage, which supports LRS, GRS and RAGRS only -- the zone-redundant tiers (ZRS, GZRS, RAGZRS) are a StorageV2/BlockBlobStorage feature and Azure rejects them here at apply time. For backup bundles cross-region beats zone-local anyway: GRS survives the loss of the whole region, ZRS only the loss of a zone."
   type        = string
-  default     = "ZRS"
+  default     = "GRS"
+
+  validation {
+    condition     = contains(["LRS", "GRS", "RAGRS"], var.backup_storage_replication)
+    error_message = "backup_storage_replication must be LRS, GRS or RAGRS. The backup account is account_kind = \"BlobStorage\" (blob-only, chosen so the azurerm provider makes no queue-service call over a data plane this account closes), and that kind does not offer the zone-redundant tiers -- Azure fails the apply with \"`account_replication_type` of `ZRS` isn't supported for Blob Storage accounts\" partway through, after other resources are already built."
+  }
 }
 
 variable "backup_immutability_days" {
