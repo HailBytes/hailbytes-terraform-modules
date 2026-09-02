@@ -1492,9 +1492,30 @@ resource "azurerm_virtual_machine_run_command" "post_patch_verify" {
 # L4 only). Customers who want WAF parity with the AWS ALB story flip
 # var.enable_application_gateway = true; the module then:
 #   * provisions an App Gateway in the same vnet (var.appgw_subnet_id)
-#   * fronts the LB / VMs via the App Gateway backend pool
+#   * points its backend pool at the VM private IPs (see backend_address_pool
+#     below) and terminates TLS with the caller's certificate
 #   * optionally attaches a customer-supplied WAF policy
-# The Standard LB stays in the topology as a pure L4 backend pool member.
+#
+# The gateway does NOT sit in front of the load balancer -- the two are PARALLEL
+# public entry points to the same VMs, not a chain:
+#
+#   gateway public IP -> TLS terminated with your certificate -> VM:admin_port
+#   lb public IP      -> L4 pass-through                      -> VM:admin_port
+#
+# Two consequences that are easy to miss:
+#
+#   1. DNS must point at the GATEWAY address, not the load balancer's. Only the
+#      gateway holds the caller's certificate; traffic arriving on the lb
+#      frontend still gets the image's first-boot self-signed certificate, so a
+#      hostname left pointing there sees no benefit from enabling the gateway
+#      at all. var.appgw_public_ip_id exists so that address can be reserved
+#      and registered in DNS ahead of the apply.
+#
+#   2. The lb frontend REMAINS PUBLIC and still reaches admin_port, bypassing
+#      the gateway and any WAF policy attached to it. var.allowed_cidrs bounds
+#      both paths, so this is not an open surface -- but an operator who
+#      enables a WAF should know a second, un-WAF-ed route to the same port
+#      exists, and close the lb frontend separately if that matters to them.
 
 # Read the address off a customer-supplied gateway IP so load_balancer_public_ip
 # still answers when someone brings their own.
