@@ -17,6 +17,15 @@ variable "location" {
 }
 
 variable "vm_subnet_id" {
+  # NOTE FOR BRING-YOUR-OWN NETWORKS: this subnet is named in the Key Vault's
+  # network ACL below, and Azure requires every subnet in a Key Vault ACL to
+  # carry the Microsoft.KeyVault service endpoint -- regardless of
+  # key_vault_network_default_action. Without it the vault fails to create with
+  # 400 SubnetsHaveNoServiceEndpointsConfigured, and only at apply time, because
+  # the validation is server-side and invisible to terraform plan.
+  # modules/network/azure sets the endpoint for you; a hand-built subnet must:
+  #   az network vnet subnet update -g <rg> --vnet-name <vnet> -n <subnet> \
+  #     --service-endpoints Microsoft.KeyVault
   description = "Subnet for VMs. Must be in a vnet that also contains delegated subnet for Flexible Server Postgres."
   type        = string
 }
@@ -322,9 +331,20 @@ variable "db_vm_data_disk_size_gb" {
 }
 
 variable "create_backup_storage_account" {
+  # Default flipped to false, same root cause as network/azure's
+  # enable_flow_logs: this account is created with shared_access_key_enabled =
+  # false and public_network_access_enabled = false, and the azurerm provider
+  # reads its queue service properties over the storage DATA PLANE. An apply run
+  # from outside the vnet therefore fails with 403
+  # KeyBasedAuthenticationNotPermitted, on refresh as well as create.
+  #
+  # account_kind is now BlobStorage, which should remove that call entirely --
+  # the provider only manages queue properties for kinds that support queues.
+  # That is the intended fix, but it has NOT yet been confirmed against a real
+  # apply, so this default stays false until it has been.
   description = "Provision a Storage Account + immutable container for pre-patch /api/instance/export bundles."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "backup_storage_account_name" {
@@ -469,6 +489,30 @@ variable "public_ip_id" {
   description = "Resource ID of an existing Static, Standard-SKU public IP to use for the load balancer frontend. Leave null and the module creates one. Bring your own to reserve the address and register DNS before the first apply; its lifecycle stays yours, so it survives a destroy."
   type        = string
   default     = null
+}
+
+variable "lb_frontend_public" {
+  # The App Gateway does NOT sit in front of this load balancer: its backend
+  # pool points at the VM private IPs, so the two are PARALLEL public entry
+  # points to the same admin_port. An operator who enables the gateway to attach
+  # a WAF therefore still has a second, un-WAF-ed public route to that port.
+  # var.allowed_cidrs bounds both, so it was never an open internet surface --
+  # but there was no way to close it without also giving up the gateway.
+  #
+  # false makes the load-balancer frontend internal (a private address in
+  # lb_subnet_id), leaving the gateway as the only public route.
+  #
+  # WATCH OUT FOR EGRESS. This module defines no outbound rule, so backend VMs
+  # get implicit outbound SNAT from the load balancer's PUBLIC frontend. Make it
+  # internal and that path is gone. network/azure attaches a NAT Gateway to the
+  # workload subnet by default (enable_nat_gateway = true) and a NAT Gateway
+  # takes precedence over LB SNAT anyway, so the default composition is
+  # unaffected. But if you bring your own network with no NAT Gateway and no
+  # other egress, the nodes lose outbound internet -- which for SAT means
+  # campaign email stops leaving. Confirm your egress path before setting this.
+  description = "Whether the load balancer frontend gets a public IP. Default true. Set false (only valid with enable_application_gateway = true) to make it internal, so the App Gateway is the single public route to the admin port and no traffic can bypass a WAF policy attached to it. Requires egress independent of the load balancer -- a NAT Gateway, as network/azure provisions by default."
+  type        = bool
+  default     = true
 }
 
 variable "appgw_public_ip_id" {

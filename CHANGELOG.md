@@ -6,6 +6,16 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **`ha-hot-hot/azure` (and `asm-azure-ha` / `sat-azure-ha`): `lb_frontend_public`, to stop traffic bypassing the App Gateway.** The gateway does not sit *in front of* the load balancer — its backend pool points at `azurerm_network_interface.vm[*].private_ip_address`, so the two are **parallel** public entry points to the same `admin_port`. An operator who enabled the gateway specifically to attach a `waf_policy_id` therefore still had a second, un-WAF-ed public route to that port, and no way to close it short of giving up the gateway.
+
+  `lb_frontend_public = false` (valid only with `enable_application_gateway = true`) gives the load-balancer frontend a private address in `lb_subnet_id`, leaving the gateway as the single public route. Two contradictions are refused at plan time rather than silently resolved: without the gateway, an internal frontend would leave nothing publicly reachable at all; and with `public_ip_id`, one of the two inputs would have to be ignored (the gateway's address is `appgw_public_ip_id`).
+
+  **What this does not close.** `var.allowed_cidrs` already bounded both paths, so this was never an open internet surface — it is defence in depth, and it matters most where a WAF policy is attached. It also does not change the *default*: `true` preserves today's behaviour exactly, so no existing deployment moves.
+
+  **Check your egress before setting it.** This module defines no outbound rule, so backend VMs take implicit outbound SNAT from the load balancer's public frontend. Making it internal removes that path. `network/azure` attaches a NAT Gateway to the workload subnet by default and a NAT Gateway takes precedence over LB SNAT regardless, so the documented composition is unaffected — but a hand-built network with no NAT Gateway and no other egress would lose outbound internet, which for SAT means campaign email stops leaving.
+
+  The same gap exists in `unlimited-scale/azure`, where the scale set is a member of both backend pools. It is **not** closed there yet — that public IP has no `count` to branch and the pool membership needs the same treatment — so it is recorded in a comment above the resource instead of half-fixed.
+
 - **`quickstart/azure-ha-byoip`: a first-class path for bring-your-own IP and TLS on your own domain.** [`quickstart/azure-ha`](quickstart/azure-ha) passes neither `public_ip_id` nor any `appgw_*` input, and the `network/azure` module it composes with creates no Application Gateway subnet — so the three things customers running their own authoritative DNS actually ask for (register the A record *before* the first apply, terminate TLS with their own certificate on their own hostname, and name the VMs to a host-naming standard) were reachable only by hand-writing a root module. This quickstart does all three, and documents the two-phase apply that TLS forces.
 
 - **`ha-hot-hot/azure` (and `asm-azure-ha` / `sat-azure-ha`): `appgw_public_ip_id`, to bring your own Application Gateway frontend address.** `public_ip_id` fronts the **load balancer**. When `enable_application_gateway = true` the gateway becomes the front door and the load balancer becomes an internal hop, so a customer who had reserved an address and pre-registered DNS against it found the console answering on a module-created address instead — with no input available to change that. Same contract as `public_ip_id`: Static, Standard SKU, lifecycle stays the caller's, so the address survives a `terraform destroy` and the DNS record stays valid across a rebuild.
@@ -77,11 +87,34 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
   With this and the entry above, **every tier now serves SAT's phishing surface on both clouds.**
 
+- **`network/azure`: the workload subnet now carries the `Microsoft.KeyVault` service endpoint, without which the Key Vault cannot be created at all.** The workload tier modules put `vm_subnet_id` in their Key Vault's `network_acls.virtual_network_subnet_ids`, and Azure validates that **every** subnet named in a Key Vault ACL has that service endpoint — regardless of `key_vault_network_default_action`, so the default `"Allow"` did not avoid it. `azurerm_subnet.workload` declared no `service_endpoints`, so the composition this repo documents (`network/azure` feeding `ha-hot-hot/azure`, which is what both Azure HA quickstarts do) failed with `400 VirtualNetworkNotValid / SubnetsHaveNoServiceEndpointsConfigured`.
+
+  **`terraform plan` could not catch this.** The check is server-side, so the plan succeeds and the apply fails partway through — with the resource group, VNet, Postgres server and Redis cache already created, which then have to be imported or deleted before a retry because they exist in Azure and not in state.
+
+  Found on a customer's first real apply, not in CI. A caller bringing its own network still has to add the endpoint itself; that is now documented on `vm_subnet_id` in the tier module, where someone wiring a hand-built subnet would look. A `terraform test` run pins it — asserting the declared attribute, which is checkable under `mock_provider`, unlike Azure's response.
+
 - **`ha-hot-hot/azure`: composing this module with `network/azure` in one apply no longer fails the plan.** Since [#51](https://github.com/HailBytes/hailbytes-terraform-modules/issues/51), five resources guarding the VM-subnet NSG branched on `var.vm_subnet_id != var.lb_subnet_id` through `count`/`for_each`. Terraform resolves those during **plan**, so any caller that creates its subnets in the same `terraform apply` — passing two IDs that are still *"known after apply"* — got `Error: Invalid count argument` and no plan at all. That is the composition this repo documents: `network/azure` outputs feeding the HA module, as in [`docs/AZURE_PATCHING_AND_MIGRATION.md`](docs/AZURE_PATCHING_AND_MIGRATION.md), [`docs/DEPLOY_FROM_GALLERY.md`](docs/DEPLOY_FROM_GALLERY.md), and the `network/azure` output descriptions. The `ha-hot-hot/azure` README's own example hit it too. It reproduced only against real subnet-creating callers, never in `terraform test`, because every fixture in the suite passes literal subnet ID strings.
 
   The branch is now the new `vm_subnet_is_lb_subnet` input (default `false`), which is known at plan time — matching how the sibling `unlimited-scale/azure` has always gated the same NSG. A `check` block reports a flag that disagrees with the actual IDs, on the first apply where both are known.
 
 ### Changed — BREAKING
+
+- **Azure Storage-backed features now default OFF, because on their previous defaults the apply could not succeed.** `enable_flow_logs` on `network/azure` and `create_backup_storage_account` on all three Azure tier modules defaulted to `true`. Both create a Storage Account with `shared_access_key_enabled = false` **and** `public_network_access_enabled = false`, and this repo provisions no storage private endpoint and no `Microsoft.Storage` service endpoint. The `azurerm` provider nevertheless reads those accounts' **queue service properties over the storage data plane**, so an apply run from outside the VNet — Cloud Shell, a laptop, CI — failed with:
+
+  ```
+  403 KeyBasedAuthenticationNotPermitted
+  "Key based authentication is not permitted on this storage account."
+  ```
+
+  Fixing the authentication does not help: `storage_use_azuread = true` moves the call to Entra, which the closed network then refuses instead. So these were not features with a caveat — with `enable_flow_logs` defaulting on, *every* caller composing `network/azure` hit an apply that could not complete. It fails on refresh as well as create, so once such an account exists a plain `terraform plan` cannot complete either.
+
+  **Upgrade impact.** If you relied on either default and somehow have these accounts — an older provider version, or shared keys enabled out of band — the next `apply` will **destroy them**, including any backup bundles. Set the variable explicitly to `true` before upgrading to keep them. In practice a default-`true` apply could not succeed on a current provider, so most callers have nothing to lose here; check rather than assume.
+
+- **The Azure backup Storage Account is now `account_kind = "BlobStorage"`, which REPLACES an existing account.** The provider only manages queue service properties for account kinds that support queues, so a blob-only kind removes the data-plane call that 403s. These bundles are blobs; nothing uses queues, files or tables. Applies to `ha-hot-hot/azure`, `single-vm/azure` and `unlimited-scale/azure`.
+
+  **Upgrade impact.** `account_kind` is replacement-forcing: upgrading with `create_backup_storage_account = true` destroys and recreates the account and **loses any bundles in it**. Copy anything you need out first. Note also that this fix is **reasoned, not yet confirmed against a real apply** — which is why the default stays `false` rather than being turned back on alongside it.
+
+  The flow-log account is deliberately **not** changed the same way: it is written by Azure Network Watcher rather than by us, and Network Watcher has its own requirements on the account type that need verifying before the kind is touched. With the default off, nobody is exposed to it meanwhile.
 
 - **`ha-hot-hot/azure` (and `asm-azure-ha` / `sat-azure-ha`): a shared VM/LB subnet must now be declared, not inferred.** If you pass the *same* subnet ID to both `vm_subnet_id` and `lb_subnet_id`, set `vm_subnet_is_lb_subnet = true`. The module previously detected this by comparing the two IDs; that comparison is what broke every same-apply plan (see *Fixed* above), so it could not be kept.
 

@@ -101,11 +101,19 @@ locals {
   vm_count = 2
   vm_zones = ["1", "2"]
 
-  # Customer-supplied IP wins. azurerm_public_ip.lb is behind a count, so index
-  # rather than attribute-access it.
-  lb_public_ip_id = var.public_ip_id != null ? var.public_ip_id : azurerm_public_ip.lb[0].id
+  # An internal load-balancer frontend only makes sense behind the App Gateway,
+  # since otherwise nothing is publicly reachable at all. Both inputs are plain
+  # variables, so this resolves during plan and is safe to branch count on.
+  lb_frontend_public = var.lb_frontend_public || !local.enable_application_gateway
+  create_lb_pip      = local.lb_frontend_public && var.public_ip_id == null
+
+  # one() rather than [0] so these stay null when no public IP exists, instead
+  # of failing on an empty-list index in a branch that was not taken.
+  lb_public_ip_id = var.public_ip_id != null ? var.public_ip_id : one(azurerm_public_ip.lb[*].id)
   lb_public_ip_address = (
-    var.public_ip_id != null ? data.azurerm_public_ip.supplied[0].ip_address : azurerm_public_ip.lb[0].ip_address
+    var.public_ip_id != null
+    ? one(data.azurerm_public_ip.supplied[*].ip_address)
+    : one(azurerm_public_ip.lb[*].ip_address)
   )
 
   use_flexible_server = var.db_mode == "flexible_server"
@@ -580,7 +588,7 @@ data "azurerm_public_ip" "supplied" {
 }
 
 resource "azurerm_public_ip" "lb" {
-  count               = var.public_ip_id == null ? 1 : 0
+  count               = local.create_lb_pip ? 1 : 0
   name                = "${local.name_prefix}-lb-pip"
   resource_group_name = var.resource_group_name
   location            = var.location
@@ -597,9 +605,37 @@ resource "azurerm_lb" "main" {
   sku                 = "Standard"
   tags                = local.common_tags
 
+  # Public frontend by default. With lb_frontend_public = false the frontend
+  # takes a private address in lb_subnet_id instead, which removes the second
+  # public route to admin_port that otherwise bypasses the App Gateway and any
+  # WAF policy attached to it.
   frontend_ip_configuration {
-    name                 = "frontend"
-    public_ip_address_id = local.lb_public_ip_id
+    name                          = "frontend"
+    public_ip_address_id          = local.lb_frontend_public ? local.lb_public_ip_id : null
+    subnet_id                     = local.lb_frontend_public ? null : var.lb_subnet_id
+    private_ip_address_allocation = local.lb_frontend_public ? null : "Dynamic"
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.lb_frontend_public || local.enable_application_gateway
+      error_message = <<-EOM
+        lb_frontend_public = false requires enable_application_gateway = true.
+        The App Gateway does not sit in front of this load balancer -- the two
+        are parallel entry points -- so with both the gateway disabled and the
+        frontend internal, nothing would be publicly reachable at all.
+      EOM
+    }
+    precondition {
+      condition     = var.lb_frontend_public || var.public_ip_id == null
+      error_message = <<-EOM
+        lb_frontend_public = false cannot be combined with public_ip_id.
+        public_ip_id supplies an address for the LOAD BALANCER frontend, and an
+        internal frontend has no public address to attach it to. If the intent
+        was to reserve the address DNS points at, that is appgw_public_ip_id --
+        the gateway is the front door once it is enabled.
+      EOM
+    }
   }
 }
 
@@ -1281,11 +1317,20 @@ resource "azurerm_storage_account" "backup" {
   location                        = var.location
   account_tier                    = "Standard"
   account_replication_type        = var.backup_storage_replication
-  account_kind                    = "StorageV2"
-  access_tier                     = "Cool"
-  min_tls_version                 = "TLS1_2"
-  shared_access_key_enabled       = false
-  tags                            = local.common_tags
+  # BlobStorage, not StorageV2. Reading queue service properties goes over the
+  # storage DATA PLANE, which this account refuses -- it has both shared keys
+  # and public network access disabled, and there is no private endpoint or
+  # service endpoint to reach it by. The provider only manages queue properties
+  # for kinds that support queues, so a blob-only kind removes the call. These
+  # bundles are blobs; nothing here uses queues, files or tables.
+  #
+  # REPLACEMENT: changing account_kind on an existing account destroys and
+  # recreates it, taking any bundles with it. See CHANGELOG before upgrading.
+  account_kind              = "BlobStorage"
+  access_tier               = "Cool"
+  min_tls_version           = "TLS1_2"
+  shared_access_key_enabled = false
+  tags                      = local.common_tags
 
   blob_properties {
     versioning_enabled = true
@@ -1492,9 +1537,30 @@ resource "azurerm_virtual_machine_run_command" "post_patch_verify" {
 # L4 only). Customers who want WAF parity with the AWS ALB story flip
 # var.enable_application_gateway = true; the module then:
 #   * provisions an App Gateway in the same vnet (var.appgw_subnet_id)
-#   * fronts the LB / VMs via the App Gateway backend pool
+#   * points its backend pool at the VM private IPs (see backend_address_pool
+#     below) and terminates TLS with the caller's certificate
 #   * optionally attaches a customer-supplied WAF policy
-# The Standard LB stays in the topology as a pure L4 backend pool member.
+#
+# The gateway does NOT sit in front of the load balancer -- the two are PARALLEL
+# public entry points to the same VMs, not a chain:
+#
+#   gateway public IP -> TLS terminated with your certificate -> VM:admin_port
+#   lb public IP      -> L4 pass-through                      -> VM:admin_port
+#
+# Two consequences that are easy to miss:
+#
+#   1. DNS must point at the GATEWAY address, not the load balancer's. Only the
+#      gateway holds the caller's certificate; traffic arriving on the lb
+#      frontend still gets the image's first-boot self-signed certificate, so a
+#      hostname left pointing there sees no benefit from enabling the gateway
+#      at all. var.appgw_public_ip_id exists so that address can be reserved
+#      and registered in DNS ahead of the apply.
+#
+#   2. The lb frontend REMAINS PUBLIC and still reaches admin_port, bypassing
+#      the gateway and any WAF policy attached to it. var.allowed_cidrs bounds
+#      both paths, so this is not an open surface -- but an operator who
+#      enables a WAF should know a second, un-WAF-ed route to the same port
+#      exists, and close the lb frontend separately if that matters to them.
 
 # Read the address off a customer-supplied gateway IP so load_balancer_public_ip
 # still answers when someone brings their own.

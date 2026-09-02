@@ -218,6 +218,18 @@ resource "azurerm_subnet_network_security_group_association" "vmss" {
 
 # ----- LB -----
 
+# KNOWN GAP, deliberately not closed here yet. As in ha-hot-hot/azure, the App
+# Gateway does not sit in front of this load balancer: the scale set is a member
+# of BOTH backend pools (see network_interface below), so the gateway and the
+# load balancer are parallel public entry points to the same port. An operator
+# who enables the gateway to attach a WAF therefore still has a second,
+# un-WAF-ed public route to it. var.allowed_cidrs bounds both paths, so this is
+# not an open internet surface.
+#
+# ha-hot-hot/azure closes it with var.lb_frontend_public. The equivalent here is
+# a larger change -- this public IP has no count to branch, and the scale set's
+# pool membership would need the same treatment -- so it is recorded rather than
+# half-done. Do not copy this comment away without closing the gap.
 resource "azurerm_public_ip" "lb" {
   name                = "${local.name_prefix}-lb-pip"
   resource_group_name = var.resource_group_name
@@ -638,11 +650,20 @@ resource "azurerm_storage_account" "backup" {
   location                        = var.location
   account_tier                    = "Standard"
   account_replication_type        = var.backup_storage_replication
-  account_kind                    = "StorageV2"
-  access_tier                     = "Cool"
-  min_tls_version                 = "TLS1_2"
-  shared_access_key_enabled       = false
-  tags                            = local.common_tags
+  # BlobStorage, not StorageV2. Reading queue service properties goes over the
+  # storage DATA PLANE, which this account refuses -- it has both shared keys
+  # and public network access disabled, and there is no private endpoint or
+  # service endpoint to reach it by. The provider only manages queue properties
+  # for kinds that support queues, so a blob-only kind removes the call. These
+  # bundles are blobs; nothing here uses queues, files or tables.
+  #
+  # REPLACEMENT: changing account_kind on an existing account destroys and
+  # recreates it, taking any bundles with it. See CHANGELOG before upgrading.
+  account_kind              = "BlobStorage"
+  access_tier               = "Cool"
+  min_tls_version           = "TLS1_2"
+  shared_access_key_enabled = false
+  tags                      = local.common_tags
 
   blob_properties {
     versioning_enabled = true

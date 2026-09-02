@@ -50,7 +50,7 @@ terraform apply
 terraform output dns_target                    # a DIFFERENT address -- move DNS
 ```
 
-## Three things that bite
+## Four things that bite
 
 **The gateway has its own address.** `public_ip_id` fronts the load balancer;
 once the gateway is enabled it is the front door and the load balancer becomes an
@@ -72,6 +72,22 @@ TLS**; 80 is the **phishing server**. The tier module defaults to `Http`/`80`,
 which suits other topologies — point the gateway there and it returns a healthy
 `200` serving landing pages where you expect the console. This quickstart
 defaults to `Https`/`3333` for that reason. ASM binds admin on 443.
+
+**A `curl` from Cloud Shell is dropped, by design.** Azure Standard Load
+Balancer is a pass-through L4 device and does **not** SNAT inbound
+load-balanced traffic, so the VM's NSG evaluates the **original client IP** —
+not the load balancer's. Cloud Shell egresses from an Azure address that is
+almost certainly not in your `allowed_cidrs`, so testing the console from there
+returns nothing and looks exactly like a failed deployment.
+
+Test from a browser inside an allow-listed range. To check the stack itself
+from anywhere, go in through the control plane instead — the VMs have no public
+IP and the NSG opens no SSH, so `run-command` is the route in:
+
+```bash
+az vm run-command invoke -g <rg> -n <vm> --command-id RunShellScript \
+  --scripts 'curl -sk -o /dev/null -w "%{http_code}" https://localhost:3333/'
+```
 
 ## Key Vault access
 
