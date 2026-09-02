@@ -31,6 +31,30 @@ skip-check:
   - CKV_AWS_79  # (A) IMDSv2 enforcement — pre-existing skip; every aws_instance sets http_tokens = "required" in metadata_options.
 
   # ---------- (B) By-design behaviour ----------
+  #
+  # The four rules below all concern ONE surface: the SAT phishing/landing
+  # listener on port 80, added for the autoscale and AWS HA tiers. It is
+  # plaintext HTTP by product design -- simulation targets click `http://`
+  # links on the customer's own phishing domain, for which these modules hold
+  # no certificate, and the phish server binds :80 with `use_tls` false
+  # (hailbytes-sat/config.json). The admin console stays HTTPS-only with TLS
+  # 1.2+ enforced via var.alb_min_tls_version on every tier; none of these
+  # waivers touches it. The resources themselves carry the same rationale
+  # inline, minus the skip directive.
+  #
+  # These live here rather than as inline `checkov:skip=` comments for a
+  # mechanical reason worth recording: a config-level skip-check filters the
+  # check out before it runs, so it never reaches the SARIF that
+  # .github/workflows/checkov.yml uploads to code scanning. An inline skip
+  # RUNS the check, marks it skipped, and emits it into the SARIF as a result
+  # carrying a `suppressions` array -- which surfaced 31 code-scanning alerts
+  # and a github-advanced-security review on #95 even though the gate itself
+  # passed with zero failures. Prefer this file for any waiver that would
+  # otherwise land on a changed line.
+  - CKV_AWS_2    # (B) ALB protocol is HTTPS -- the SAT phishing listener is plaintext by design; redirecting it to HTTPS is precisely what must not happen, since a 301 to a target who clicked a phishing link breaks the simulation.
+  - CKV_AWS_103  # (B) ALB uses TLS 1.2 -- same listener. An ssl_policy on a plaintext HTTP listener is not a valid AWS configuration at all; TLS 1.2 stays enforced on the admin listener.
+  - CKV_AWS_378  # (B) Load balancer doesn't use HTTP protocol -- the phishing target group forwards plaintext HTTP to phish_port, which is the port the product binds.
+  - CKV2_AWS_20  # (B)+(C) ALB redirects HTTP to HTTPS -- by design on SAT, where :80 carries the landing pages instead of a redirect; and a false positive on ASM, which does keep its redirect, because checkov cannot resolve the `count` that makes the two :80 listeners mutually exclusive.
   - CKV_AWS_31   # (B) ElastiCache auth_token — deprecated for Redis 7+ in favour of ACLs; we have transit_encryption_enabled + at_rest_encryption_enabled + private subnets. AWS docs themselves recommend ACL over auth_token for engine versions ≥ 7.
   - CKV_AWS_144  # (D) S3 cross-region replication — customer-driven DR posture; 2x storage cost; not a sane module default. Customers who need it add it post-apply.
   - CKV2_AWS_62  # (D) S3 event notifications — depends on a customer SIEM / SQS / Lambda consumer for backup events; outside module scope.
