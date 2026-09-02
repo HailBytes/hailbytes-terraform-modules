@@ -230,6 +230,14 @@ resource "azurerm_subnet_network_security_group_association" "vmss" {
 # a larger change -- this public IP has no count to branch, and the scale set's
 # pool membership would need the same treatment -- so it is recorded rather than
 # half-done. Do not copy this comment away without closing the gap.
+#
+# AND WHOEVER CLOSES IT: for SAT the equivalent input has to be refused, not
+# implemented. azurerm_lb_rule.phish shares this same frontend on port 80, and
+# the gateway fronts the admin console only -- by design, per ARCHITECTURE.md: a
+# WAF in front of a simulated credential-harvest page blocks the interactions
+# the product records. So an internal frontend takes the phishing landing pages
+# off the internet along with the admin bypass. ha-hot-hot/azure refuses
+# product = "sat" for exactly that reason.
 resource "azurerm_public_ip" "lb" {
   name                = "${local.name_prefix}-lb-pip"
   resource_group_name = var.resource_group_name

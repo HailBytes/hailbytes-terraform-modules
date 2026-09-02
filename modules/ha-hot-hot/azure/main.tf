@@ -636,6 +636,32 @@ resource "azurerm_lb" "main" {
         the gateway is the front door once it is enabled.
       EOM
     }
+    precondition {
+      condition     = var.lb_frontend_public || var.product != "sat"
+      error_message = <<-EOM
+        lb_frontend_public = false is not supported for product = "sat".
+        Both load-balancer rules share the single frontend_ip_configuration
+        above: 443 -> admin_port, and -- for SAT only -- 80 -> phish_port. An
+        internal frontend takes BOTH of them internal, and the App Gateway
+        replaces only the first: it declares one frontend_port (443) and one
+        listener, routing to the admin backend, with no port-80 path to the
+        phishing server. So this would remove the phishing landing pages from
+        the internet, which for SAT is the product's core function rather than a
+        secondary route.
+
+        On ASM the input does what it says, because azurerm_lb_rule.phish has
+        count = 0 there and the admin port is the only thing on the frontend.
+
+        Carrying the phishing surface on the gateway instead is not an option:
+        the gateway fronts the admin console only, by design -- a WAF in front
+        of a simulated credential-harvest page blocks the interactions the
+        product records. See ARCHITECTURE.md.
+
+        To bound public access to a SAT admin console, use allowed_cidrs, which
+        applies to the gateway and the load balancer alike. The phishing surface
+        has its own allow-list in phish_allowed_cidrs.
+      EOM
+    }
   }
 }
 

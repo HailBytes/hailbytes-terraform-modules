@@ -7,11 +7,22 @@
 # policy therefore still had a second, un-WAF-ed public route to that port, with
 # no way to close it short of giving up the gateway.
 #
-# var.lb_frontend_public = false makes that frontend internal. These runs pin
-# the three things that matter: the default stays public, false actually removes
-# the public IP and moves the frontend into lb_subnet_id, and the two
-# combinations that cannot work are refused at plan time rather than producing
-# an unreachable deployment.
+# var.lb_frontend_public = false makes that frontend internal, leaving the
+# gateway as the only public route.
+#
+# That works on ASM and NOT on SAT, which is why the runs below switch product.
+# SAT's phishing server shares this one frontend (80 -> phish_port), and the
+# gateway declares a single listener on 443 to the admin backend -- there is no
+# port-80 path to the phishing server. So on SAT an internal frontend does not
+# just close the admin bypass, it takes the phishing landing pages off the
+# internet, which is the product's core function. On ASM
+# azurerm_lb_rule.phish has count = 0 and the admin port is the only thing on
+# the frontend, so the gateway really does replace it.
+#
+# These runs pin: the default stays public for SAT, the gateway alone does not
+# change it, false does what it says on ASM, and the three combinations that
+# cannot work are refused at plan time rather than producing a deployment that
+# is unreachable or has lost its phishing surface.
 
 mock_provider "azurerm" {
   mock_resource "azurerm_log_analytics_workspace" {
@@ -82,11 +93,12 @@ run "gateway_alone_leaves_the_lb_frontend_public" {
   }
 }
 
-# The point of the input.
+# The point of the input, on the product that can use it.
 run "internal_frontend_removes_the_public_route" {
   command = plan
 
   variables {
+    product                    = "asm"
     enable_application_gateway = true
     appgw_tls_pfx_base64       = "TU9DSw=="
     appgw_tls_pfx_password     = "mock"
@@ -113,10 +125,15 @@ run "internal_frontend_removes_the_public_route" {
 
 # Without the gateway an internal frontend leaves nothing publicly reachable.
 # Refuse it at plan time rather than shipping a deployment nobody can log in to.
+#
+# product = "asm" so that the SAT precondition below is not what fails here --
+# expect_failures only asserts that azurerm_lb.main failed, not which of its
+# preconditions did, so under SAT this run would pass for the wrong reason.
 run "internal_frontend_without_the_gateway_is_refused" {
   command = plan
 
   variables {
+    product            = "asm"
     lb_frontend_public = false
     # enable_application_gateway deliberately left at its default of false
   }
@@ -131,11 +148,32 @@ run "internal_frontend_with_byo_public_ip_is_refused" {
   command = plan
 
   variables {
+    product                    = "asm"
     enable_application_gateway = true
     appgw_tls_pfx_base64       = "TU9DSw=="
     appgw_tls_pfx_password     = "mock"
     lb_frontend_public         = false
     public_ip_id               = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.Network/publicIPAddresses/byo"
+  }
+
+  expect_failures = [azurerm_lb.main]
+}
+
+# SAT's phishing landing pages ride the same frontend, on port 80, and the
+# gateway has no port-80 listener. Closing the admin bypass this way would take
+# the phishing surface off the internet with it, so refuse the combination -- a
+# WAF on the admin console is not worth the product's core function.
+run "internal_frontend_is_refused_for_sat" {
+  command = plan
+
+  variables {
+    # product = "sat" from the file-level block, i.e. the default this module is
+    # most often used with. Everything else here is a configuration that is
+    # accepted on ASM by the run above, so the ONLY reason this fails is SAT.
+    enable_application_gateway = true
+    appgw_tls_pfx_base64       = "TU9DSw=="
+    appgw_tls_pfx_password     = "mock"
+    lb_frontend_public         = false
   }
 
   expect_failures = [azurerm_lb.main]

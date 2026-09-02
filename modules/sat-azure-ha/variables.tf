@@ -319,7 +319,11 @@ variable "key_vault_reader_principal_ids" {
 }
 
 variable "lb_frontend_public" {
-  description = "Whether the load balancer frontend gets a public IP. Default true. Set false (only valid with enable_application_gateway = true) to make it internal, so the App Gateway is the single public route to the admin port and nothing can bypass a WAF policy attached to it. Requires egress independent of the load balancer -- a NAT Gateway, as network/azure provisions by default."
+  # Kept so that a caller who sets it gets the explanation rather than an
+  # "unsupported argument" error, and so the two HA wrappers keep the same
+  # surface. SAT cannot use it: the phishing server shares the load-balancer
+  # frontend and the App Gateway has no port-80 listener to take over.
+  description = "Whether the load balancer frontend gets a public IP. Must stay true for SAT -- the phishing server shares this frontend (80 -> 80) and the App Gateway has only a 443 listener to the admin port, so an internal frontend would take the phishing landing pages off the internet. Setting false is refused at plan time. To bound public access to the admin console, use allowed_cidrs."
   type        = bool
   default     = true
 }
