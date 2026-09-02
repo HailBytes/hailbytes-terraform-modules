@@ -26,8 +26,19 @@ variable "private_subnet_ids" {
 }
 
 variable "allowed_cidrs" {
-  description = "CIDR blocks permitted to reach the ALB on port 443."
+  description = "CIDR blocks permitted to reach the ALB's admin listener on port 443 (and port 80 on ASM, when enable_http_redirect is true). On SAT, port 80 is the phishing/landing frontend and is governed by phish_allowed_cidrs instead."
   type        = list(string)
+}
+
+variable "phish_allowed_cidrs" {
+  description = "CIDRs permitted to reach the phishing/landing surface on the ALB's port 80 (SAT only; ASM has no such surface). Leave null to inherit allowed_cidrs, which is the historical behaviour and keeps existing deployments planning clean. Set it whenever the simulation targets are not inside the admin allow-list -- with one shared list, locking the console to an office range also locks every target out of the landing pages, and the campaign sends and then records no interactions. \"0.0.0.0/0\" is the usual value for a live simulation."
+  type        = list(string)
+  default     = null
+
+  validation {
+    condition     = alltrue([for c in coalesce(var.phish_allowed_cidrs, []) : can(cidrhost(c, 0))])
+    error_message = "All phish_allowed_cidrs entries must be valid CIDR blocks (e.g. \"0.0.0.0/0\")."
+  }
 }
 
 variable "acm_certificate_arn" {
@@ -146,7 +157,7 @@ variable "marketplace_product_code" {
 }
 
 variable "enable_http_redirect" {
-  description = "Add an HTTP:80 listener on the ALB that 301-redirects to HTTPS. Convenient when customers hit the bare hostname."
+  description = "Add an HTTP:80 listener on the ALB that 301-redirects to HTTPS. Convenient when operators hit the bare hostname. ASM only, and ignored on SAT: there, port 80 is the phishing/landing frontend, and redirecting a target who clicked a phishing link to the admin console would break the simulation."
   type        = bool
   default     = true
 }
@@ -338,6 +349,12 @@ variable "tags" {
 
 variable "admin_port" {
   description = "Port the HailBytes admin server listens on. The load balancer's 443 frontend forwards here, the health probe targets it, and the post-patch verifier probes it over localhost. Leave null to derive it from `product`: 3333 for SAT, 443 for ASM."
+  type        = number
+  default     = null
+}
+
+variable "phish_port" {
+  description = "Port the phishing/tracking server listens on inside each VM. SAT only -- it is the landing-page and interaction-tracking surface, which is the product. The ALB fronts it on port 80 and forwards to this port; ignored when `product` is \"asm\", which has no phishing surface. Leave null for the image default of 80."
   type        = number
   default     = null
 }

@@ -62,7 +62,8 @@ Auto Scaling Group / VM Scale Set of marketplace VMs, managed Postgres with read
 
 ```mermaid
 flowchart TB
-    User([Tenants / Operators]) -->|HTTPS 443| LB["ALB / Azure LB<br/>Forwards to SAT 3333 / ASM 443"]
+    User([Tenants / Operators]) -->|"HTTPS 443<br/>allowed_cidrs"| LB["ALB / Azure LB<br/>Admin: 443 → SAT 3333 / ASM 443<br/>Phishing (SAT): 80 → 80"]
+    Target([Simulation targets<br/>SAT only]) -->|"HTTP 80<br/>phish_allowed_cidrs"| LB
     LB --> ASG[ASG / VMSS<br/>min=3, max=20<br/>scaling on CPU + req/s]
     ASG --> VMn[(Marketplace VMs<br/>across 3 AZs)]
     VMn -->|writes| DBP[(Postgres primary<br/>Multi-AZ)]
@@ -71,6 +72,18 @@ flowchart TB
     VMn --> CW[CloudWatch / Azure Monitor]
     CW -.alarms.-> SNS[SNS / Action Group]
 ```
+
+**Two surfaces on SAT, two allow-lists.** The admin console (443, governed by
+`allowed_cidrs`) is for your operators; the phishing landing pages and the
+click/open tracking behind them (80, governed by `phish_allowed_cidrs`) are for
+your simulation targets, who are by definition outside the operator range. On
+AWS the `:80` listener forwards to a dedicated phishing target group with a
+permissive `200-499` health-check matcher, because a fresh phish server answers
+404 on `/`; `enable_http_redirect` is therefore ASM-only. On Azure the Standard
+Load Balancer carries `:80` with a `Tcp` probe, and the optional Application
+Gateway fronts the admin console only — a WAF in front of a simulated
+credential-harvest page blocks the interactions the product records. ASM has no
+phishing surface and none of these resources are created for it.
 
 **State:** Postgres primary Multi-AZ + 2× read replicas. Read traffic routed via separate connection string.
 **Failure mode:** AZ outage — ASG launches replacements in healthy AZs, DB primary fails over, read replica promoted if needed.

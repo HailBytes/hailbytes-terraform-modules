@@ -9,7 +9,8 @@ Two HailBytes Marketplace EC2 instances in **active/active** behind an Applicati
 
 ```mermaid
 flowchart TB
-    User([Operators]) -->|HTTPS 443| ALB[Application Load Balancer<br/>TLS1.2+ via ACM cert<br/>health: /health]
+    User([Operators]) -->|"HTTPS 443<br/>allowed_cidrs"| ALB["Application Load Balancer<br/>TLS1.2+ via ACM cert<br/>443 → admin_port, health: /api/health (SAT) / /api/ready (ASM)<br/>80 → phish_port (SAT), health: / with 200-499"]
+    Target([Simulation targets<br/>SAT only]) -->|"HTTP 80<br/>phish_allowed_cidrs"| ALB
     ALB --> VM1[(EC2 #1<br/>AZ-a<br/>Marketplace AMI)]
     ALB --> VM2[(EC2 #2<br/>AZ-b<br/>Marketplace AMI)]
     VM1 --> SM[(Secrets Manager<br/>DB creds)]
@@ -21,6 +22,45 @@ flowchart TB
     DB -.synchronous replication.-> DBS[(Standby in second AZ)]
     RDS -.automatic failover.-> RDSS[(Replica in second AZ)]
 ```
+
+## Network exposure: two surfaces, two allow-lists
+
+SAT deployments front **two** things, and they have opposite audiences:
+
+| Surface | Frontend port | Backend | Governed by | Who reaches it |
+|---|---|---|---|---|
+| Admin console | 443 (HTTPS) | `admin_port` (SAT 3333 / ASM 443) | `allowed_cidrs` | Your operators — an office or VPN range |
+| Phishing / landing pages | 80 (HTTP) | `phish_port` (80) | `phish_allowed_cidrs` | Your simulation targets — wherever they are |
+
+`phish_allowed_cidrs` defaults to `null`, which inherits `allowed_cidrs` and
+keeps an existing deployment planning clean.
+
+**Inheriting is the wrong answer for most real simulations.** A console locked
+to `203.0.113.0/24` also locks every target outside that range out of the
+landing pages. The campaign still sends; the targets get a connection timeout;
+and the deployment records no opens and no clicks — which looks like a broken
+product rather than a firewall rule. Set the list explicitly:
+
+```hcl
+allowed_cidrs       = ["203.0.113.0/24"]  # operators only
+phish_allowed_cidrs = ["0.0.0.0/0"]       # targets, i.e. the internet
+```
+
+`enable_http_redirect` (default `true`) is **ASM-only and inert on SAT**. On SAT
+`:80` is the landing surface, and a 301 to HTTPS sent to a target who clicked a
+phishing link breaks the simulation. Operators reach the console on 443
+directly.
+
+The phishing target group health-checks `/` with a permissive `200-499` matcher
+rather than a path with `matcher = "200"`. Landing pages are campaign-specific,
+and a fresh phish server answers **404** on `/` (no campaign RID), **302** for a
+configured redirect, and **200** on a live campaign URL — all three mean it is
+up and routing. Only 5xx drains a target. It also carries no `stickiness`: a
+landing-page request carries its own recipient ID and is stateless, so pinning a
+target buys nothing and skews load across the pair.
+
+ASM has no phishing surface, so none of these resources are created for it and
+`phish_allowed_cidrs` is inert on `asm-aws-ha`.
 
 ## Cost estimate (us-east-1, on-demand)
 
