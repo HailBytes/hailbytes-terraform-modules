@@ -28,6 +28,21 @@ resource "azurerm_subnet" "workload" {
   resource_group_name  = var.resource_group_name
   virtual_network_name = azurerm_virtual_network.main.name
   address_prefixes     = [var.workload_subnet_prefix]
+
+  # Required, not optional. The workload modules put this subnet in their Key
+  # Vault's network ACL (virtual_network_subnet_ids), and Azure validates that
+  # every subnet named in a Key Vault ACL carries the Microsoft.KeyVault service
+  # endpoint -- whatever the ACL's default_action is. Without it the vault fails
+  # to CREATE, and only at apply time:
+  #
+  #   400 VirtualNetworkNotValid / SubnetsHaveNoServiceEndpointsConfigured
+  #   "Subnets <name> ... do not have ServiceEndpoints for Microsoft.KeyVault
+  #    resources configured."
+  #
+  # terraform plan cannot see this: the check is server-side, so a plan against
+  # a subnet with no endpoint succeeds and the apply then fails partway through
+  # with resources already created.
+  service_endpoints = ["Microsoft.KeyVault"]
 }
 
 # Each subnet gets a baseline NSG. These carry no custom allow rules — Azure's

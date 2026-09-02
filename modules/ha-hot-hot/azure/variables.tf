@@ -17,6 +17,15 @@ variable "location" {
 }
 
 variable "vm_subnet_id" {
+  # NOTE FOR BRING-YOUR-OWN NETWORKS: this subnet is named in the Key Vault's
+  # network ACL below, and Azure requires every subnet in a Key Vault ACL to
+  # carry the Microsoft.KeyVault service endpoint -- regardless of
+  # key_vault_network_default_action. Without it the vault fails to create with
+  # 400 SubnetsHaveNoServiceEndpointsConfigured, and only at apply time, because
+  # the validation is server-side and invisible to terraform plan.
+  # modules/network/azure sets the endpoint for you; a hand-built subnet must:
+  #   az network vnet subnet update -g <rg> --vnet-name <vnet> -n <subnet> \
+  #     --service-endpoints Microsoft.KeyVault
   description = "Subnet for VMs. Must be in a vnet that also contains delegated subnet for Flexible Server Postgres."
   type        = string
 }
