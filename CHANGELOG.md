@@ -29,6 +29,23 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+- **The backup Storage Account could not be created at all: `ZRS` replication is not available for the `BlobStorage` account kind.** `account_kind = "BlobStorage"` was chosen deliberately — it is blob-only, so the azurerm provider makes no queue-service call over a data plane this account closes (shared keys off, public network access off, no private endpoint). But that kind offers **LRS, GRS and RAGRS only**; the zone-redundant tiers are a `StorageV2` / `BlockBlobStorage` feature. With `backup_storage_replication` defaulting to `"ZRS"`, every apply that created the account failed:
+
+  ```
+  Error: `account_replication_type` of `ZRS` isn't supported for Blob Storage accounts
+  ```
+
+  It failed *partway through*, after the load balancer, Key Vault and Redis were already built — on the Azure HA tier that is over half an hour into the apply.
+
+  The default is now **`GRS`**, and a validation block rejects the zone-redundant values at **plan** time with a message naming the `account_kind` constraint, rather than letting Azure reject them mid-apply. For backup bundles the change is an improvement on its own terms: GRS replicates cross-region and survives the loss of the whole region, where ZRS only survives the loss of a zone.
+
+  Fixed on all three Azure tier modules (`single-vm/azure`, `ha-hot-hot/azure`, `unlimited-scale/azure`) and all six Azure wrappers — the wrappers each carried their own `"ZRS"` default, which would have overridden a core-only fix.
+
+  Found by the live `ha-terraform-smoke` run in `hailbytes-sat`, which is the only thing in CI that applies these modules against real Azure.
+
+  **Upgrade impact:** `account_replication_type` is changeable in place on an existing Storage Account, so a deployment that somehow has a ZRS backup account updates without replacement. Deployments with `create_backup_storage_account = false` (the core default) are unaffected. Anyone who pinned `backup_storage_replication = "ZRS"` explicitly now gets a plan-time validation error instead of a mid-apply failure — that is the fix working, and the value to move to is `GRS`.
+
+
 - **`unlimited-scale` served no phishing landing pages on either cloud, so SAT's product surface was missing from the tier sold to MSSPs and large enterprises.** SAT *is* phishing simulation: the landing pages and the click/open tracking behind them are the deliverable. `modules/ha-hot-hot/azure/main.tf` already states the principle — an HA pair that only fronts the admin port is not serving the product — and the autoscale tier had exactly that shape. `local.phish_port` was computed in both `unlimited-scale/aws` and `unlimited-scale/azure` and **never referenced**: no target group, no port-80 forwarding rule, no security-group or NSG rule. A SAT autoscale deployment sent its campaign, and every target that clicked reached nothing. No open and no click was recorded, so the failure was silent on the operator's side.
 
   This was a deliberate deferral, not an oversight — the previous release wired `admin_port` and left the phishing frontend for a follow-up, on the grounds that adding one is a feature rather than a port correction. This is that follow-up.

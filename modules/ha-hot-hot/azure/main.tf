@@ -1352,6 +1352,13 @@ resource "azurerm_storage_account" "backup" {
   #
   # REPLACEMENT: changing account_kind on an existing account destroys and
   # recreates it, taking any bundles with it. See CHANGELOG before upgrading.
+  #
+  # This kind also constrains account_replication_type: BlobStorage offers LRS,
+  # GRS and RAGRS only. The zone-redundant tiers belong to StorageV2 and
+  # BlockBlobStorage, so ZRS here fails the apply with "`account_replication_type`
+  # of `ZRS` isn't supported for Blob Storage accounts" -- and it fails partway
+  # through, after the rest of the deployment is already built.
+  # var.backup_storage_replication validates the value at plan time instead.
   account_kind              = "BlobStorage"
   access_tier               = "Cool"
   min_tls_version           = "TLS1_2"
