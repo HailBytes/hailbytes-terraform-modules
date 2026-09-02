@@ -9,7 +9,8 @@ Elastic deployment of HailBytes Marketplace VMs: Auto Scaling Group across 3 AZs
 
 ```mermaid
 flowchart TB
-    User([Tenants / Operators]) -->|HTTPS 443| ALB[Application Load Balancer<br/>access logs to S3]
+    User([Tenants / Operators]) -->|"HTTPS 443<br/>allowed_cidrs"| ALB["Application Load Balancer<br/>access logs to S3<br/>443 → admin_port<br/>80 → phish_port (SAT)"]
+    Target([Simulation targets<br/>SAT only]) -->|"HTTP 80<br/>phish_allowed_cidrs"| ALB
     ALB --> ASG[Auto Scaling Group<br/>min=3, max=20<br/>3 AZs<br/>TT on CPU + req/target]
     ASG --> VMn[(Marketplace AMI instances)]
     VMn -->|writes| DBP[(RDS PostgreSQL<br/>Multi-AZ primary)]
@@ -22,6 +23,45 @@ flowchart TB
     CW -.alarms.-> SNS[SNS topic\nemail subscription]
     VPC[VPC Flow Logs] --> CW
 ```
+
+## Network exposure: two surfaces, two allow-lists
+
+SAT deployments front **two** things, and they have opposite audiences:
+
+| Surface | Frontend port | Backend | Governed by | Who reaches it |
+|---|---|---|---|---|
+| Admin console | 443 (HTTPS) | `admin_port` (SAT 3333 / ASM 443) | `allowed_cidrs` | Your operators — an office or VPN range |
+| Phishing / landing pages | 80 (HTTP) | `phish_port` (80) | `phish_allowed_cidrs` | Your simulation targets — wherever they are |
+
+`phish_allowed_cidrs` defaults to `null`, which inherits `allowed_cidrs` and
+keeps an existing deployment planning clean.
+
+**Inheriting is the wrong answer for most real simulations.** A console locked
+to `203.0.113.0/24` also locks every target outside that range out of the
+landing pages. The campaign still sends; the targets get a connection timeout;
+and the deployment records no opens and no clicks — which looks like a broken
+product rather than a firewall rule. Set the list explicitly:
+
+```hcl
+allowed_cidrs       = ["203.0.113.0/24"]  # operators only
+phish_allowed_cidrs = ["0.0.0.0/0"]       # targets, i.e. the internet
+```
+
+`enable_http_redirect` (default `true`) is **ASM-only and inert on SAT**. On SAT
+`:80` is the landing surface, and a 301 to HTTPS sent to a target who clicked a
+phishing link breaks the simulation. Operators reach the console on 443
+directly.
+
+The phishing target group health-checks `/` with a permissive `200-499` matcher
+rather than a path with `matcher = "200"`. Landing pages are campaign-specific,
+and a fresh phish server answers **404** on `/` (no campaign RID), **302** for a
+configured redirect, and **200** on a live campaign URL — all three mean it is
+up and routing. Only 5xx drains a target. This matters more here than on the
+other tiers: the ASG uses `health_check_type = "ELB"`, so an unhealthy phishing
+target gets the whole instance terminated and replaced.
+
+ASM has no phishing surface, so none of these resources are created for it and
+`phish_allowed_cidrs` is inert on `asm-aws-autoscale`.
 
 ## Cost estimate (us-east-1, on-demand, default sizing)
 

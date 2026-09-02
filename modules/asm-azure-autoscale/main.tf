@@ -69,8 +69,9 @@ module "this" {
   postgres_geo_redundant_backup_enabled = var.postgres_geo_redundant_backup_enabled
 
   # Application ports -- null means "derive from product" in the tier module.
-  admin_port = var.admin_port
-  phish_port = var.phish_port
+  admin_port          = var.admin_port
+  phish_port          = var.phish_port
+  phish_allowed_cidrs = var.phish_allowed_cidrs
 
   tags = var.tags
 }

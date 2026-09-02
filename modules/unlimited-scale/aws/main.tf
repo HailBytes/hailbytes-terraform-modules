@@ -16,16 +16,33 @@ locals {
   # health-checked a port no instance binds: an empty target group and an ALB
   # returning 503 to everything.
   #
-  # The ALB's own listener stays on 443 -- that is the public port and is not
+  # The ALB's admin listener stays on 443 -- that is the public port and is not
   # what was broken.
   #
-  # NOTE: unlike ha-hot-hot, this tier has no phishing frontend at all (the
-  # port-80 listener is an HTTPS redirect, not the SAT landing surface).
-  # phish_port is declared for surface parity but not wired; SAT landing pages
-  # are not reachable through this tier. Tracked separately -- adding a
-  # frontend is a feature, not a port correction.
+  # SAT also serves the phishing/landing surface, in plaintext, on phish_port
+  # (hailbytes-sat/config.json: `phish_server.listen_url` 0.0.0.0:80,
+  # `use_tls` false). That surface IS the product -- landing pages and the
+  # click/open tracking behind them -- so the ALB fronts it on :80 for SAT,
+  # mirroring the port-80 frontend rule in ha-hot-hot/azure. ASM has no
+  # phishing surface and gets none of these resources.
   admin_port = coalesce(var.admin_port, var.product == "sat" ? 3333 : 443)
   phish_port = coalesce(var.phish_port, 80)
+
+  # Who may reach the phishing/landing surface, as opposed to the admin
+  # console. See the phish_allowed_cidrs variable: one shared list means an
+  # operator who locks the console to an office range also locks every
+  # simulation target out of the landing pages, and the campaign then sends and
+  # records nothing. Null inherits allowed_cidrs, so an existing deployment
+  # plans clean.
+  phish_cidrs = var.phish_allowed_cidrs != null ? var.phish_allowed_cidrs : var.allowed_cidrs
+
+  # SAT's :80 is the landing surface, so it cannot also be the HTTP->HTTPS
+  # redirect: an HTTP 301 sent to a target who clicked a phishing link breaks
+  # the simulation. var.enable_http_redirect therefore applies to ASM only.
+  # Gating it here rather than erroring keeps the default (true) usable on
+  # both products -- a validation error would fail plan for every SAT caller
+  # until they edited their tfvars.
+  enable_http_redirect = var.product == "asm" && var.enable_http_redirect
 
   name_prefix = coalesce(var.name_prefix, "hailbytes-${var.product}-${var.environment}")
 
@@ -133,7 +150,7 @@ resource "aws_vpc_security_group_ingress_rule" "alb_https" {
 }
 
 resource "aws_vpc_security_group_ingress_rule" "alb_http_redirect" {
-  for_each = var.enable_http_redirect ? toset(var.allowed_cidrs) : toset([])
+  for_each = local.enable_http_redirect ? toset(var.allowed_cidrs) : toset([])
 
   security_group_id = aws_security_group.alb.id
   cidr_ipv4         = each.value
@@ -143,6 +160,21 @@ resource "aws_vpc_security_group_ingress_rule" "alb_http_redirect" {
   description       = "HTTP (redirected to HTTPS) from ${each.value}"
 }
 
+# The phishing/landing frontend. A rule of its own, rather than a widened
+# alb_https, so an operator can see and revoke the phishing surface
+# independently of the admin surface -- mirroring
+# aws_vpc_security_group_ingress_rule.phish in single-vm/aws.
+resource "aws_vpc_security_group_ingress_rule" "alb_phish" {
+  for_each = var.product == "sat" ? toset(local.phish_cidrs) : toset([])
+
+  security_group_id = aws_security_group.alb.id
+  cidr_ipv4         = each.value
+  from_port         = 80
+  to_port           = 80
+  ip_protocol       = "tcp"
+  description       = "Phishing/landing surface (80) from ${each.value}"
+}
+
 resource "aws_vpc_security_group_egress_rule" "alb_to_vm" {
   security_group_id            = aws_security_group.alb.id
   referenced_security_group_id = aws_security_group.vm.id
@@ -150,6 +182,17 @@ resource "aws_vpc_security_group_egress_rule" "alb_to_vm" {
   to_port                      = local.admin_port
   ip_protocol                  = "tcp"
   description                  = "ALB to ASG instances ${local.admin_port}"
+}
+
+resource "aws_vpc_security_group_egress_rule" "alb_to_vm_phish" {
+  count = var.product == "sat" ? 1 : 0
+
+  security_group_id            = aws_security_group.alb.id
+  referenced_security_group_id = aws_security_group.vm.id
+  from_port                    = local.phish_port
+  to_port                      = local.phish_port
+  ip_protocol                  = "tcp"
+  description                  = "ALB to ASG instances ${local.phish_port} (phishing/landing)"
 }
 
 resource "aws_security_group" "vm" {
@@ -166,6 +209,17 @@ resource "aws_vpc_security_group_ingress_rule" "vm_from_alb" {
   to_port                      = local.admin_port
   ip_protocol                  = "tcp"
   description                  = "HTTPS from ALB on ${local.admin_port}"
+}
+
+resource "aws_vpc_security_group_ingress_rule" "vm_from_alb_phish" {
+  count = var.product == "sat" ? 1 : 0
+
+  security_group_id            = aws_security_group.vm.id
+  referenced_security_group_id = aws_security_group.alb.id
+  from_port                    = local.phish_port
+  to_port                      = local.phish_port
+  ip_protocol                  = "tcp"
+  description                  = "Phishing/landing (plaintext) from ALB on ${local.phish_port}"
 }
 
 resource "aws_vpc_security_group_egress_rule" "vm_egress" {
@@ -482,6 +536,14 @@ resource "aws_s3_bucket_policy" "alb_logs" {
 }
 
 resource "aws_lb" "main" {
+  # checkov:skip=CKV2_AWS_20: Category (B)+(C). By design on SAT, where :80
+  # carries the landing pages rather than an HTTP->HTTPS redirect -- a 301 sent
+  # to a target who clicked a phishing link breaks the simulation. And a false
+  # positive on ASM, which does keep the redirect (aws_lb_listener.http_redirect,
+  # var.enable_http_redirect, default true): checkov cannot resolve the `count`
+  # that makes the two listeners mutually exclusive, so it sees the SAT forward
+  # listener attached to this ALB either way. Waived per-resource rather than in
+  # .checkov.yaml, so the waiver cannot silently spread to a future module.
   name = "${local.name_prefix}-alb"
   # The HailBytes SAT / ASM console is customer-facing by design; the ALB sits
   # in public subnets behind a security group that only allows ingress from
@@ -539,8 +601,10 @@ resource "aws_lb_listener" "https" {
   }
 }
 
+# ASM only. On SAT, :80 carries the landing pages instead -- see
+# local.enable_http_redirect and aws_lb_listener.phish below.
 resource "aws_lb_listener" "http_redirect" {
-  count = var.enable_http_redirect ? 1 : 0
+  count = local.enable_http_redirect ? 1 : 0
 
   load_balancer_arn = aws_lb.main.arn
   port              = 80
@@ -553,6 +617,81 @@ resource "aws_lb_listener" "http_redirect" {
       protocol    = "HTTPS"
       status_code = "HTTP_301"
     }
+  }
+}
+
+# ----- SAT phishing/landing frontend -----
+#
+# The surface the product exists to deliver: landing pages plus the click and
+# open tracking behind them. An autoscale fleet that only fronts the admin port
+# is not serving the product (the same argument as ha-hot-hot/azure).
+#
+# Plaintext HTTP, deliberately. The phish server binds :80 with `use_tls` false
+# and the links in a campaign are `http://` URLs on the customer's own phishing
+# domain, for which this module holds no certificate.
+#
+# The health check is the load-bearing decision here. ha-hot-hot/azure uses a
+# Tcp probe because no path on the phish server is guaranteed to answer 200 on
+# a fresh deployment; an ALB is `load_balancer_type = "application"` and cannot
+# do TCP checks, so the equivalent is a permissive matcher on "/" rather than a
+# guessed path with matcher = "200":
+#
+#   - "/" falls through hailbytes-sat/controllers/phish.go's catch-all
+#     `/{path:.*}` to PhishHandler, which calls http.NotFound for a request
+#     carrying no campaign RID -- so 404 is the correct, healthy response on a
+#     fresh deployment.
+#   - A landing page with a configured RedirectURL answers 302.
+#   - A live campaign URL answers 200.
+#
+# All three mean the phish server is up and routing; only 5xx or a refused
+# connection mean it is broken. Narrowing this reproduces the empty-pool /
+# permanent-503 failure that hardcoding 443 on the admin target group caused,
+# and it would bite harder here: the ASG runs health_check_type = "ELB", so an
+# unhealthy phish target gets the whole instance terminated and replaced.
+#
+# (/robots.txt does answer 200 unconditionally, but it is a recent route in the
+# product and this module deploys whichever marketplace image version the
+# caller pinned. Tying the check to it would drain the pool on an older image.)
+resource "aws_lb_target_group" "phish" {
+  # checkov:skip=CKV_AWS_378: The SAT phishing/landing surface is plaintext HTTP by product design: targets click http:// links on the customer's own phishing domain, for which this module holds no certificate, and the phish server binds :80 with use_tls false. The admin console (aws_lb_listener.https) stays HTTPS-only. Nothing here weakens the admin surface.
+  count = var.product == "sat" ? 1 : 0
+
+  name        = "${local.name_prefix}-phish"
+  port        = local.phish_port
+  protocol    = "HTTP"
+  vpc_id      = var.vpc_id
+  target_type = "instance"
+
+  health_check {
+    protocol            = "HTTP"
+    path                = "/"
+    port                = tostring(local.phish_port)
+    matcher             = "200-499"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    timeout             = 5
+    interval            = 15
+  }
+
+  deregistration_delay = 60
+  tags                 = local.common_tags
+}
+
+# Plain HTTP is the point on this listener -- see the checkov:skip rationale
+# inside the block. Mirrors Checkov CKV_AWS_2.
+#trivy:ignore:AVD-AWS-0054
+resource "aws_lb_listener" "phish" {
+  # checkov:skip=CKV_AWS_2: The SAT phishing/landing surface is plaintext HTTP by product design: targets click http:// links on the customer's own phishing domain, for which this module holds no certificate, and the phish server binds :80 with use_tls false. Terminating TLS here would need the customer's phishing-domain cert, which is not a module input, and redirecting to HTTPS is exactly what must not happen on this listener. The admin console (aws_lb_listener.https) stays HTTPS-only; ASM keeps its :80 redirect.
+  # checkov:skip=CKV_AWS_103: Same listener, same reason -- an ssl_policy on a plaintext HTTP listener is not a valid AWS configuration. TLS 1.2 stays enforced on the admin listener via ssl_policy = var.alb_min_tls_version.
+  count = var.product == "sat" ? 1 : 0
+
+  load_balancer_arn = aws_lb.main.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.phish[0].arn
   }
 }
 
@@ -614,12 +753,15 @@ resource "aws_launch_template" "main" {
 }
 
 resource "aws_autoscaling_group" "main" {
-  name                      = "${local.name_prefix}-asg"
-  min_size                  = var.asg_min_size
-  max_size                  = var.asg_max_size
-  desired_capacity          = var.asg_desired_capacity
-  vpc_zone_identifier       = var.private_subnet_ids
-  target_group_arns         = [aws_lb_target_group.main.arn]
+  name                = "${local.name_prefix}-asg"
+  min_size            = var.asg_min_size
+  max_size            = var.asg_max_size
+  desired_capacity    = var.asg_desired_capacity
+  vpc_zone_identifier = var.private_subnet_ids
+  target_group_arns = concat(
+    [aws_lb_target_group.main.arn],
+    aws_lb_target_group.phish[*].arn,
+  )
   health_check_type         = "ELB"
   health_check_grace_period = 300
 
