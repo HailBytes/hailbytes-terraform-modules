@@ -16,7 +16,18 @@ These modules ship with security-conservative defaults. You should have to expli
 
 ## Network
 
-- **Security groups / NSGs** default to **deny all** inbound. Required ports are opened only to the CIDRs you pass in `allowed_cidrs`: the public frontend (443, plus 80 for the SAT phishing/landing surface), the application port behind it (SAT 3333, ASM 443 — see `admin_port` / `phish_port`), and 5432 between VMs and the database. On the `single-vm` tier there is no load balancer, so the application port *is* the public frontend. Wide-open `0.0.0.0/0` requires `allow_internet_ingress = true` and emits a deprecation warning.
+- **Security groups / NSGs** default to **deny all** inbound. Required ports are opened only to the CIDRs you pass in `allowed_cidrs`: the public frontend (443), the application port behind it (SAT 3333, ASM 443 — see `admin_port`), and 5432 between VMs and the database. On the `single-vm` tier there is no load balancer, so the application port *is* the public frontend. Wide-open `0.0.0.0/0` requires `allow_internet_ingress = true` and emits a deprecation warning.
+- **The SAT phishing/landing surface (port 80, `phish_port`) is a separate rule governed by its own `phish_allowed_cidrs`**, so it can be revoked independently of the admin console. It defaults to `null`, inheriting `allowed_cidrs`. Which tiers open it, per product:
+
+  | Tier | SAT phishing frontend | Governed by |
+  |---|---|---|
+  | `single-vm/aws`, `single-vm/azure` | 80 direct to the VM (no load balancer in the path) | `phish_allowed_cidrs` |
+  | `ha-hot-hot/azure` | LB rule 80 → `phish_port`, `Tcp` probe | `phish_allowed_cidrs` |
+  | `ha-hot-hot/aws` | **None.** No ALB rule and no security-group rule; `phish_port` is not even declared. SAT landing pages are unreachable on this tier — a known open gap. | n/a |
+  | `unlimited-scale/aws` | ALB `:80` listener → phishing target group (`200-499` matcher); `enable_http_redirect` is ASM-only | `phish_allowed_cidrs` |
+  | `unlimited-scale/azure` | LB rule 80 → `phish_port`, `Tcp` probe. The Application Gateway fronts the admin console only | `phish_allowed_cidrs` |
+
+  ASM has no phishing surface, so `phish_allowed_cidrs` is inert on every `asm-*` wrapper; it is exposed only because wrappers forward the full core surface. `allow_internet_ingress` deliberately does **not** gate it where both exist: that flag guards the admin surface, and applying it here would strip the `0.0.0.0/0` a live simulation needs.
 - **SSH** is **not** exposed by default. For break-glass access, `enable_management_access = true` wires up **AWS SSM Session Manager** (IAM-gated, via `AmazonSSMManagedInstanceCore`) on AWS, and the **`AADSSHLoginForLinux`** extension on Azure — Entra-authenticated, RBAC-gated SSH through `az ssh vm` with no public IP. Azure Bastion is *not* provisioned by the modules; the extension is the lighter-weight equivalent, and operators still need the `Virtual Machine Administrator Login` or `Virtual Machine User Login` role granted to them.
 - **IMDSv2** is required on every EC2 launch (`http_tokens = "required"`).
 - **Public IPs** are off by default. The LB has a public DNS name; the VMs sit in private subnets.

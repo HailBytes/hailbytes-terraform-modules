@@ -9,7 +9,8 @@ Elastic deployment of HailBytes Marketplace VMs on Azure: VM Scale Set across 3 
 
 ```mermaid
 flowchart TB
-    User([Tenants / Operators]) -->|HTTPS 443| LB[Standard Load Balancer]
+    User([Tenants / Operators]) -->|"HTTPS 443<br/>allowed_cidrs"| LB["Standard Load Balancer<br/>443 → admin_port<br/>80 → phish_port (SAT)"]
+    Target([Simulation targets<br/>SAT only]) -->|"HTTP 80<br/>phish_allowed_cidrs"| LB
     LB --> VMSS[VM Scale Set<br/>min=3 max=20<br/>3 zones, zone-balanced<br/>autoscale on CPU]
     VMSS --> VMs[(Marketplace image instances)]
     VMs --> KV[(Key Vault<br/>DB password)]
@@ -21,6 +22,45 @@ flowchart TB
     DBP -.metrics.-> Mon
     Mon -.alerts.-> AG[Action Group<br/>email]
 ```
+
+## Network exposure: two surfaces, two allow-lists
+
+SAT deployments front **two** things, and they have opposite audiences:
+
+| Surface | Frontend port | Backend | Governed by | Who reaches it |
+|---|---|---|---|---|
+| Admin console | 443 (TCP passthrough) | `admin_port` (SAT 3333 / ASM 443) | `allowed_cidrs` | Your operators — an office or VPN range |
+| Phishing / landing pages | 80 (TCP passthrough) | `phish_port` (80) | `phish_allowed_cidrs` | Your simulation targets — wherever they are |
+
+`phish_allowed_cidrs` defaults to `null`, which inherits `allowed_cidrs` and
+keeps an existing deployment planning clean.
+
+**Inheriting is the wrong answer for most real simulations.** A console locked
+to `203.0.113.0/24` also locks every target outside that range out of the
+landing pages. The campaign still sends; the targets get a connection timeout;
+and the deployment records no opens and no clicks — which looks like a broken
+product rather than a firewall rule. Set the list explicitly:
+
+```hcl
+allowed_cidrs       = ["203.0.113.0/24"]  # operators only
+phish_allowed_cidrs = ["0.0.0.0/0"]       # targets, i.e. the internet
+```
+
+The phishing rule uses a `Tcp` probe, not `Http` with a path: landing pages are
+campaign-specific and no path on the phish server is guaranteed to answer 200 on
+a fresh deployment, so a path-based probe would drain healthy instances. The
+VMSS keeps `health_probe_id` on the admin probe, so a phishing-surface blip drops
+an instance out of the `:80` rotation without reimaging it.
+
+**The Application Gateway fronts the admin console only.** When
+`enable_application_gateway = true`, the phishing surface stays on the Standard
+Load Balancer's `:80` frontend — a WAF ruleset in front of a simulated
+credential-harvest page blocks the very interactions the product exists to
+record, and the gateway is opt-in and off by default. Point your phishing domain
+at `load_balancer_public_ip`, not at the gateway address.
+
+ASM has no phishing surface, so none of these resources are created for it and
+`phish_allowed_cidrs` is inert on `asm-azure-autoscale`.
 
 ## TLS termination
 

@@ -16,6 +16,27 @@ module "hailbytes_sat" {
 }
 ```
 
+## Phishing frontend and the two allow-lists
+
+SAT fronts two surfaces with opposite audiences: the admin console on **443**
+(governed by `allowed_cidrs`, for your operators) and the phishing landing pages
+plus their click/open tracking on **80** (governed by `phish_allowed_cidrs`, for
+your simulation targets). `phish_allowed_cidrs` defaults to `null`, which
+inherits `allowed_cidrs` — and for a real simulation that is almost always
+wrong, because a console locked to an office range locks every target out of the
+landing pages while the campaign still sends:
+
+```hcl
+allowed_cidrs       = ["203.0.113.0/24"]  # operators only
+phish_allowed_cidrs = ["0.0.0.0/0"]       # targets, i.e. the internet
+```
+
+`enable_http_redirect` is inert here: on SAT `:80` carries the landing pages,
+so reach the console on 443 directly.
+
+See [`modules/unlimited-scale/aws/README.md`](../unlimited-scale/aws/README.md#network-exposure-two-surfaces-two-allow-lists) for the health-check
+reasoning and the full ports table.
+
 ## Marketplace subscription
 
 Before applying, subscribe to the **HailBytes SAT (Security Awareness Training / phishing simulation)** listing on AWS Marketplace. See the [top-level README](../../README.md#marketplace-subscriptions) for the subscription links.

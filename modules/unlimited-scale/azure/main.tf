@@ -15,13 +15,22 @@ locals {
   # probed and forwarded to a port no instance binds -- an empty backend pool
   # and a frontend that answers nothing.
   #
-  # NOTE: unlike ha-hot-hot, this tier has no phishing frontend at all (no
-  # port-80 LB rule, no NSG/SG rule). phish_port is therefore declared for
-  # surface parity but not yet wired; SAT landing pages are not reachable
-  # through this tier. Tracked separately -- adding a frontend is a feature,
-  # not a port correction.
+  # SAT also serves the phishing/landing surface, in plaintext, on phish_port
+  # (hailbytes-sat/config.json: `phish_server.listen_url` 0.0.0.0:80,
+  # `use_tls` false). That surface IS the product -- landing pages and the
+  # click/open tracking behind them -- so the Standard LB fronts it on :80 for
+  # SAT, exactly as ha-hot-hot/azure does. ASM has no phishing surface and gets
+  # none of these resources.
   admin_port = coalesce(var.admin_port, var.product == "sat" ? 3333 : 443)
   phish_port = coalesce(var.phish_port, 80)
+
+  # Who may reach the phishing/landing surface, as opposed to the admin
+  # console. See the phish_allowed_cidrs variable: one shared list means an
+  # operator who locks the console to an office range also locks every
+  # simulation target out of the landing pages, and the campaign then sends and
+  # records nothing. Null inherits allowed_cidrs, so an existing deployment
+  # plans clean.
+  phish_cidrs = var.phish_allowed_cidrs != null ? var.phish_allowed_cidrs : var.allowed_cidrs
 
   name_prefix = coalesce(var.name_prefix, "hailbytes-${var.product}-${var.environment}")
 
@@ -177,6 +186,30 @@ resource "azurerm_network_security_rule" "vmss_https_in" {
   network_security_group_name = azurerm_network_security_group.vmss.name
 }
 
+# The phishing frontend. Separate from the admin rule so an operator can see,
+# and revoke, the phishing surface independently of the admin surface.
+#
+# Source is the client CIDR, not the AzureLoadBalancer tag: the Standard LB is
+# an L4 pass-through that does not SNAT inbound load-balancing rules, so the
+# VMSS instance sees the original client IP. (The health probe is already
+# permitted by the NSG's default AllowAzureLoadBalancerInBound rule, which is
+# also what carries the existing 443 probe.)
+resource "azurerm_network_security_rule" "vmss_phish_in" {
+  for_each = var.product == "sat" ? { for i, c in local.phish_cidrs : tostring(i) => c } : {}
+
+  name                        = "allow-phish-${each.key}"
+  priority                    = 1000 + tonumber(each.key)
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = tostring(local.phish_port)
+  source_address_prefix       = each.value
+  destination_address_prefix  = "*"
+  resource_group_name         = var.resource_group_name
+  network_security_group_name = azurerm_network_security_group.vmss.name
+}
+
 resource "azurerm_subnet_network_security_group_association" "vmss" {
   count                     = var.associate_vm_subnet_nsg ? 1 : 0
   subnet_id                 = var.vm_subnet_id
@@ -232,6 +265,43 @@ resource "azurerm_lb_rule" "https" {
   frontend_ip_configuration_name = "frontend"
   backend_address_pool_ids       = [azurerm_lb_backend_address_pool.main.id]
   probe_id                       = azurerm_lb_probe.https.id
+  tcp_reset_enabled              = true
+}
+
+# The phishing and tracking surface. On SAT this carries the landing pages and
+# the click/open tracking that the product exists to deliver, so a scale set
+# that only fronts the admin port is not serving the product.
+#
+# A Tcp probe rather than Http with a path: landing pages are campaign-specific
+# and there is no path on the phish server guaranteed to return 200 on a fresh
+# deployment, so a path-based probe would drain healthy instances.
+#
+# The VMSS keeps health_probe_id on the admin probe. Azure accepts exactly one,
+# and it is what automatic_instance_repair reimages on -- scoping instance
+# replacement to the admin surface is deliberate, so a phishing-surface blip
+# takes an instance out of the :80 rotation without reimaging it.
+resource "azurerm_lb_probe" "phish" {
+  count = var.product == "sat" ? 1 : 0
+
+  loadbalancer_id     = azurerm_lb.main.id
+  name                = "phish"
+  protocol            = "Tcp"
+  port                = local.phish_port
+  interval_in_seconds = 15
+  number_of_probes    = 2
+}
+
+resource "azurerm_lb_rule" "phish" {
+  count = var.product == "sat" ? 1 : 0
+
+  loadbalancer_id                = azurerm_lb.main.id
+  name                           = "phish"
+  protocol                       = "Tcp"
+  frontend_port                  = 80
+  backend_port                   = local.phish_port
+  frontend_ip_configuration_name = "frontend"
+  backend_address_pool_ids       = [azurerm_lb_backend_address_pool.main.id]
+  probe_id                       = azurerm_lb_probe.phish[0].id
   tcp_reset_enabled              = true
 }
 

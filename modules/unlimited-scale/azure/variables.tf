@@ -14,10 +14,22 @@ variable "vm_subnet_id" { type = string }
 variable "db_delegated_subnet_id" { type = string }
 variable "private_dns_zone_id" { type = string }
 variable "allowed_cidrs" {
-  type = list(string)
+  description = "CIDR blocks permitted to reach the load balancer's admin frontend on port 443. On SAT, port 80 is the phishing/landing frontend and is governed by phish_allowed_cidrs instead."
+  type        = list(string)
   validation {
     condition     = alltrue([for c in var.allowed_cidrs : can(cidrhost(c, 0))])
     error_message = "All allowed_cidrs entries must be valid CIDR blocks (e.g. \"10.0.0.0/8\")."
+  }
+}
+
+variable "phish_allowed_cidrs" {
+  description = "CIDRs permitted to reach the phishing/landing surface on the load balancer's port 80 (SAT only; ASM has no such surface). Leave null to inherit allowed_cidrs, which is the historical behaviour and keeps existing deployments planning clean. Set it whenever the simulation targets are not inside the admin allow-list -- with one shared list, locking the console to an office range also locks every target out of the landing pages, and the campaign sends and then records no interactions. \"0.0.0.0/0\" is the usual value for a live simulation."
+  type        = list(string)
+  default     = null
+
+  validation {
+    condition     = alltrue([for c in coalesce(var.phish_allowed_cidrs, []) : can(cidrhost(c, 0))])
+    error_message = "All phish_allowed_cidrs entries must be valid CIDR blocks (e.g. \"0.0.0.0/0\")."
   }
 }
 variable "admin_username" { type = string }
@@ -256,7 +268,7 @@ variable "rolling_upgrade_max_unhealthy_percent" {
 }
 
 variable "enable_application_gateway" {
-  description = "Front the LB topology with an Azure Application Gateway. Required for WAF parity with the AWS ALB+WAF story."
+  description = "Front the LB topology with an Azure Application Gateway. Required for WAF parity with the AWS ALB+WAF story. The gateway fronts the admin console only: on SAT the phishing/landing surface stays on the Standard LB's port-80 frontend, because a WAF ruleset in front of a simulated credential-harvest page blocks the very interactions the product exists to record."
   type        = bool
   default     = false
 }
@@ -388,7 +400,7 @@ variable "admin_port" {
 }
 
 variable "phish_port" {
-  description = "Port the phishing/tracking server listens on inside each instance (SAT only). Declared for parity with the other tiers, but this tier exposes no phishing frontend, so it is not currently wired to any load-balancer rule."
+  description = "Port the phishing/tracking server listens on inside each instance. SAT only -- it is the landing-page and interaction-tracking surface, which is the product. The Standard LB fronts it on port 80 and forwards to this port; ignored when `product` is \"asm\", which has no phishing surface. Leave null for the image default of 80."
   type        = number
   default     = null
 }
