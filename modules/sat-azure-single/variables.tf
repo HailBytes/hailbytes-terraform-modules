@@ -135,9 +135,20 @@ variable "marketplace_image_version" {
 # ----- Patching and migration safety -----
 
 variable "create_backup_storage_account" {
+  # false, matching the core module. The account is created with shared keys and
+  # public network access both off and no private endpoint, and the azurerm
+  # provider reads its queue service properties over the storage DATA PLANE --
+  # so an apply from outside the vnet fails 403 KeyBasedAuthenticationNotPermitted
+  # on refresh as well as create. See the core module's comment for the full
+  # reasoning and for what has to be confirmed before this can go back to true.
+  #
+  # This wrapper kept `true` after the core was flipped to `false`, and because
+  # wrappers forward their own value the core's safe default was overridden for
+  # every caller of the product modules -- which are the public API. Keep the
+  # two in step; the wrapper-forwarding CI gate now fails on a drifted default.
   description = "Provision an Azure Storage Account + container (blob versioning + immutable WORM policy in unlocked mode + lifecycle to Cool at 30d and Archive at 90d) for pre-patch /api/instance/export bundles. The VM's system-assigned managed identity gets Storage Blob Data Contributor on the container only."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "backup_storage_account_name" {

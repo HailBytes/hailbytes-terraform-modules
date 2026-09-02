@@ -685,10 +685,18 @@ jobs:
           fi
           echo "All wrapper modules re-export their core output surface cleanly."
 
-      # Non-blocking: warn (don't fail) when a forwarded variable's
-      # description/type/default has drifted from the core module, so the
-      # public-API docs stay faithful to the implementation.
-      - name: Warn on wrapper/core variable metadata drift
+      # Blocking on `type` and `default`, advisory on `description`.
+      #
+      # A wrapper forwards its own value, so a drifted default silently
+      # overrides the core's and a drifted type accepts values the core
+      # rejects -- both change behaviour for every caller of the public API,
+      # which is what the product-prefixed modules are. b111065 is the worked
+      # example: it flipped create_backup_storage_account to false on all
+      # three Azure cores and left true on all six Azure wrappers, so the fix
+      # reached nobody. This check printed six warnings saying exactly that
+      # and the build stayed green. `description` drift is docs, so it stays
+      # a warning.
+      - name: Wrapper/core variable metadata drift
         run: python3 .github/scripts/wrapper_drift_check.py
 
   # ---------------------------------------------------------------------
