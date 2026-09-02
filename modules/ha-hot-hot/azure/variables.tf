@@ -354,9 +354,14 @@ variable "backup_storage_account_name" {
 }
 
 variable "backup_storage_replication" {
-  description = "Replication type for the backup storage account. ZRS is the procurement-grade default."
+  description = "Replication type for the backup storage account. GRS (geo-redundant, cross-region) is the default and the strongest option this account can take: account_kind is BlobStorage, which supports LRS, GRS and RAGRS only -- the zone-redundant tiers (ZRS, GZRS, RAGZRS) are a StorageV2/BlockBlobStorage feature and Azure rejects them here at apply time. For backup bundles cross-region beats zone-local anyway: GRS survives the loss of the whole region, ZRS only the loss of a zone."
   type        = string
-  default     = "ZRS"
+  default     = "GRS"
+
+  validation {
+    condition     = contains(["LRS", "GRS", "RAGRS"], var.backup_storage_replication)
+    error_message = "backup_storage_replication must be LRS, GRS or RAGRS. The backup account is account_kind = \"BlobStorage\" (blob-only, chosen so the azurerm provider makes no queue-service call over a data plane this account closes), and that kind does not offer the zone-redundant tiers -- Azure fails the apply with \"`account_replication_type` of `ZRS` isn't supported for Blob Storage accounts\" partway through, after other resources are already built."
+  }
 }
 
 variable "backup_immutability_days" {
@@ -502,15 +507,21 @@ variable "lb_frontend_public" {
   # false makes the load-balancer frontend internal (a private address in
   # lb_subnet_id), leaving the gateway as the only public route.
   #
+  # ASM ONLY. SAT's phishing server shares this one frontend (80 -> phish_port),
+  # and the gateway has a single listener on 443 routing to the admin backend --
+  # no port-80 path at all. So on SAT an internal frontend does not just close
+  # the admin bypass, it takes the phishing landing pages off the internet.
+  # azurerm_lb.main refuses the combination at plan time rather than shipping a
+  # deployment whose core function is unreachable.
+  #
   # WATCH OUT FOR EGRESS. This module defines no outbound rule, so backend VMs
   # get implicit outbound SNAT from the load balancer's PUBLIC frontend. Make it
   # internal and that path is gone. network/azure attaches a NAT Gateway to the
   # workload subnet by default (enable_nat_gateway = true) and a NAT Gateway
   # takes precedence over LB SNAT anyway, so the default composition is
   # unaffected. But if you bring your own network with no NAT Gateway and no
-  # other egress, the nodes lose outbound internet -- which for SAT means
-  # campaign email stops leaving. Confirm your egress path before setting this.
-  description = "Whether the load balancer frontend gets a public IP. Default true. Set false (only valid with enable_application_gateway = true) to make it internal, so the App Gateway is the single public route to the admin port and no traffic can bypass a WAF policy attached to it. Requires egress independent of the load balancer -- a NAT Gateway, as network/azure provisions by default."
+  # other egress, the nodes lose outbound internet.
+  description = "Whether the load balancer frontend gets a public IP. Default true. ASM only: on SAT the phishing server shares this frontend and the App Gateway has no port-80 listener to replace it, so the combination is refused at plan time. Set false (ASM, and only with enable_application_gateway = true) to make the frontend internal, so the App Gateway is the single public route to the admin port and no traffic can bypass a WAF policy attached to it. Requires egress independent of the load balancer -- a NAT Gateway, as network/azure provisions by default."
   type        = bool
   default     = true
 }

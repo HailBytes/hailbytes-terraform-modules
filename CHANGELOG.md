@@ -29,6 +29,22 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+- **The backup Storage Account could not be created at all: `ZRS` replication is not available for the `BlobStorage` account kind.** `account_kind = "BlobStorage"` was chosen deliberately — it is blob-only, so the azurerm provider makes no queue-service call over a data plane this account closes (shared keys off, public network access off, no private endpoint). But that kind offers **LRS, GRS and RAGRS only**; the zone-redundant tiers are a `StorageV2` / `BlockBlobStorage` feature. With `backup_storage_replication` defaulting to `"ZRS"`, every apply that created the account failed:
+
+  ```
+  Error: `account_replication_type` of `ZRS` isn't supported for Blob Storage accounts
+  ```
+
+  It failed *partway through*, after the load balancer, Key Vault and Redis were already built — on the Azure HA tier that is over half an hour into the apply.
+
+  The default is now **`GRS`**, and a validation block rejects the zone-redundant values at **plan** time with a message naming the `account_kind` constraint, rather than letting Azure reject them mid-apply. For backup bundles the change is an improvement on its own terms: GRS replicates cross-region and survives the loss of the whole region, where ZRS only survives the loss of a zone.
+
+  Fixed on all three Azure tier modules (`single-vm/azure`, `ha-hot-hot/azure`, `unlimited-scale/azure`) and all six Azure wrappers — the wrappers each carried their own `"ZRS"` default, which would have overridden a core-only fix.
+
+  Found by the live `ha-terraform-smoke` run in `hailbytes-sat`, which is the only thing in CI that applies these modules against real Azure.
+
+  **Upgrade impact:** `account_replication_type` is changeable in place on an existing Storage Account, so a deployment that somehow has a ZRS backup account updates without replacement. Deployments with `create_backup_storage_account = false` (the core default) are unaffected. Anyone who pinned `backup_storage_replication = "ZRS"` explicitly now gets a plan-time validation error instead of a mid-apply failure — that is the fix working, and the value to move to is `GRS`.
+
 - **`b111065`'s storage-safety fix reached nobody: it flipped the default on the three Azure core modules and left the old value on all six Azure wrappers.** That change set `create_backup_storage_account = false` to stop an apply from outside the vnet failing `403 KeyBasedAuthenticationNotPermitted`. The cores got `false`. `sat-azure-ha`, `asm-azure-ha`, `sat-azure-single`, `asm-azure-single`, `sat-azure-autoscale` and `asm-azure-autoscale` kept `true` — and because a wrapper forwards its own value into the core, `true` won for **every caller of the product modules, which are the public API**. The fix was inert where it mattered.
 
   All six wrappers are now `false`, in step with their cores.
@@ -95,6 +111,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
   Regression coverage in `modules/ha-hot-hot/aws/tests/feature_flags.tftest.hcl` asserts the SAT wiring, the health-check matcher and protocol, that every VM is attached to the phishing group on `phish_port`, the allow-list inheritance default, that opening the phishing surface does not widen the admin one, and that an ASM plan creates none of it even when `phish_allowed_cidrs` is set.
 
   With this and the entry above, **every tier now serves SAT's phishing surface on both clouds.**
+
+- **`ha-hot-hot/azure`: `lb_frontend_public = false` is now refused for SAT, because it took the phishing landing pages off the internet along with the admin bypass.** `azurerm_lb.main` declares a *single* `frontend_ip_configuration`, and two rules share it: `azurerm_lb_rule.https` (443 → `admin_port`) and, for SAT only, `azurerm_lb_rule.phish` (80 → `phish_port`). An internal frontend takes **both** internal, and the App Gateway replaces only the first — it declares one `frontend_port` (443) and one `http_listener` routing to the admin backend, with no port-80 path to the phishing server at all. So on SAT the input did not merely close the un-WAF-ed route to the admin console; it removed the product's core function from the internet, and the existing preconditions (gateway enabled, `public_ip_id` not also set) did not catch it.
+
+  A precondition on `azurerm_lb.main` now refuses `product = "sat"` with `lb_frontend_public = false` at plan time. **ASM is unaffected and keeps the input**: `azurerm_lb_rule.phish` has `count = 0` there, so the admin port is the only thing on that frontend and the gateway genuinely does replace it. No default changed, so no existing deployment moves — `true` remains the default for both products.
+
+  Carrying the phishing surface on the gateway instead is not an alternative: the gateway fronts the admin console only, by design — a WAF in front of a simulated credential-harvest page blocks the interactions the product records ([ARCHITECTURE.md](ARCHITECTURE.md)). To bound public access to a SAT admin console, use `allowed_cidrs`; the phishing surface has its own allow-list in `phish_allowed_cidrs`.
 
 - **`network/azure`: the workload subnet now carries the `Microsoft.KeyVault` service endpoint, without which the Key Vault cannot be created at all.** The workload tier modules put `vm_subnet_id` in their Key Vault's `network_acls.virtual_network_subnet_ids`, and Azure validates that **every** subnet named in a Key Vault ACL has that service endpoint — regardless of `key_vault_network_default_action`, so the default `"Allow"` did not avoid it. `azurerm_subnet.workload` declared no `service_endpoints`, so the composition this repo documents (`network/azure` feeding `ha-hot-hot/azure`, which is what both Azure HA quickstarts do) failed with `400 VirtualNetworkNotValid / SubnetsHaveNoServiceEndpointsConfigured`.
 
