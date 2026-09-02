@@ -111,7 +111,23 @@ def parse_vars(path):
     return out
 
 
+# `default` and `type` change BEHAVIOUR: a wrapper forwards its own value, so a
+# drifted default silently overrides the core's, and a drifted type accepts
+# values the core rejects. Those fail the build. `description` is documentation
+# -- worth reporting, not worth blocking a release over -- so it stays a warning.
+#
+# This distinction is not theoretical. b111065 flipped
+# create_backup_storage_account to false on all three Azure core modules to stop
+# a 403 KeyBasedAuthenticationNotPermitted, and left `true` on all six Azure
+# wrappers. Because wrappers forward their own value, the fix was inert for
+# every caller of the product modules -- which are the public API. This check
+# printed six warnings saying exactly that, and the build stayed green.
+BLOCKING_FIELDS = ("type", "default")
+ADVISORY_FIELDS = ("description",)
+
+
 def main():
+    errors = 0
     warnings = 0
     for wrapper, core in WRAPPERS.items():
         wv = parse_vars(f"modules/{wrapper}/variables.tf")
@@ -120,16 +136,31 @@ def main():
             if name in HIDDEN or name not in wv:
                 continue  # missing vars are caught by the forwarding name check
             w = wv[name]
-            for field in ("description", "type", "default"):
-                if c[field] is not None and w[field] != c[field]:
+            for field in BLOCKING_FIELDS + ADVISORY_FIELDS:
+                if c[field] is None or w[field] == c[field]:
+                    continue
+                level = "error" if field in BLOCKING_FIELDS else "warning"
+                if field in BLOCKING_FIELDS:
+                    errors += 1
+                else:
                     warnings += 1
-                    print(
-                        f"::warning file=modules/{wrapper}/variables.tf::"
-                        f"variable '{name}' {field} differs from core "
-                        f"modules/{core}: core={c[field]!r} wrapper={w[field]!r}"
-                    )
-    print(f"wrapper metadata drift check: {warnings} warning(s).")
-    return 0  # non-blocking
+                print(
+                    f"::{level} file=modules/{wrapper}/variables.tf::"
+                    f"variable '{name}' {field} differs from core "
+                    f"modules/{core}: core={c[field]!r} wrapper={w[field]!r}"
+                )
+    print(
+        f"wrapper metadata drift check: {errors} error(s) "
+        f"on {'/'.join(BLOCKING_FIELDS)}, {warnings} warning(s) on "
+        f"{'/'.join(ADVISORY_FIELDS)}."
+    )
+    if errors:
+        print(
+            "::error::A wrapper's type or default differs from its core module. "
+            "Wrappers forward their own value, so this silently overrides the "
+            "core for every caller of the public API. Bring the two into step."
+        )
+    return 1 if errors else 0
 
 
 if __name__ == "__main__":
