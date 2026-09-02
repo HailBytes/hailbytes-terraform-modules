@@ -350,3 +350,71 @@ run "phish_allow_list_is_independent_when_set" {
     error_message = "Opening the phishing surface must NOT widen the admin surface -- that is the whole point of splitting the lists."
   }
 }
+
+# ----- The ALB-to-instance hop, on the admin target group -----
+#
+# An attachment's `port` overrides the target group's, so admin_port has to be
+# named in both places. It was a literal 443 here while the target group and its
+# health check used admin_port: on SAT the probe passed on 3333, the target
+# reported healthy, and real traffic went to a closed port 443. A green target
+# group serving nothing reads as an application fault, which is what made it
+# expensive. ASM was unaffected only because its admin_port derives to 443.
+
+run "admin_attachments_target_admin_port_on_sat" {
+  command = plan
+
+  variables {
+    product = "sat"
+  }
+
+  assert {
+    condition = alltrue([
+      for a in aws_lb_target_group_attachment.vm : a.port == 3333
+    ])
+    error_message = "SAT admin attachments must send traffic to 3333 (config.json admin_server.listen_url); a literal 443 here silently overrides the target group's admin_port and nothing binds 443 on a SAT instance."
+  }
+
+  # The health check and the attachment must agree, or a healthy target still
+  # serves nothing -- that disagreement was the whole bug.
+  assert {
+    condition = alltrue([
+      for a in aws_lb_target_group_attachment.vm :
+      tostring(a.port) == one([for h in aws_lb_target_group.main.health_check : h.port])
+    ])
+    error_message = "The admin attachment port and the admin health-check port must be the same port, or the probe validates a port that real traffic never reaches."
+  }
+
+  assert {
+    condition     = length(aws_lb_target_group_attachment.vm) == length(aws_instance.vm)
+    error_message = "Every VM must be attached to the admin target group."
+  }
+}
+
+run "admin_attachments_target_admin_port_on_asm" {
+  command = plan
+
+  assert {
+    condition = alltrue([
+      for a in aws_lb_target_group_attachment.vm : a.port == 443
+    ])
+    error_message = "ASM admin attachments must send traffic to 443 -- its proxy container publishes 443, so admin_port derives to 443 and the plan must be unchanged for ASM."
+  }
+}
+
+run "admin_attachments_follow_an_explicit_admin_port_override" {
+  command = plan
+
+  # The derivation is not the only path in: a caller can pin admin_port, and the
+  # attachment has to follow it rather than the product default.
+  variables {
+    product    = "sat"
+    admin_port = 8443
+  }
+
+  assert {
+    condition = alltrue([
+      for a in aws_lb_target_group_attachment.vm : a.port == 8443
+    ])
+    error_message = "An explicit admin_port must reach the attachments too, not just the target group."
+  }
+}

@@ -912,7 +912,9 @@ resource "aws_lb_target_group" "main" {
   # the AWS half.
   #
   # PUBLIC ports are unchanged -- the listener and the ALB's own ingress stay on
-  # 443/80. Only the ALB-to-instance hop moves.
+  # 443/80. Only the ALB-to-instance hop moves. That hop is set in two places:
+  # here, and on aws_lb_target_group_attachment.vm below, whose `port` overrides
+  # this one. Both have to name admin_port or the correction is cosmetic.
   port        = local.admin_port
   protocol    = "HTTPS"
   vpc_id      = var.vpc_id
@@ -939,12 +941,30 @@ resource "aws_lb_target_group" "main" {
   tags = local.common_tags
 }
 
+# port = local.admin_port, not a literal 443, and this is not cosmetic.
+#
+# An attachment's `port` OVERRIDES the target group's own `port` -- it is "the
+# port on which targets receive traffic". So while aws_lb_target_group.main
+# above was corrected to admin_port and its health check probes admin_port, the
+# literal 443 here kept sending REAL traffic to instance port 443. On SAT
+# nothing binds 443 (config.json admin_server.listen_url = 0.0.0.0:3333), so
+# the probe on 3333 succeeded, the target reported healthy, the pool looked
+# green -- and every request through the 443 listener failed against a closed
+# port. That is worse than the empty pool the admin_port fix cured, because a
+# green target group reads as an application fault rather than a network one.
+#
+# ASM was unaffected only by coincidence: its admin_port derives to 443, so the
+# literal happened to agree.
+#
+# This tier was the only one carrying the literal. unlimited-scale/aws
+# registers instances through the ASG's target_group_arns, which inherits the
+# target group's port, and single-vm/aws has no load balancer at all.
 resource "aws_lb_target_group_attachment" "vm" {
   count = length(aws_instance.vm)
 
   target_group_arn = aws_lb_target_group.main.arn
   target_id        = aws_instance.vm[count.index].id
-  port             = 443
+  port             = local.admin_port
 }
 
 resource "aws_lb_listener" "https" {
