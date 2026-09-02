@@ -38,7 +38,7 @@ variable "lb_subnet_prefix" {
 }
 
 variable "associate_subnet_nsgs" {
-  description = "Associate the module-created baseline NSGs with the lb/workload/db subnets. Set to false when composing this module with a workload tier module that associates its own NSG to the same subnet (Azure allows only one NSG per subnet)."
+  description = "Create the baseline lb/workload/db NSGs and associate them with their subnets. Set to false when composing this module with a workload tier module, which brings its own NSGs: Azure allows one NSG per subnet, and the tier modules derive NSG names from the same name_prefix -- ha-hot-hot/azure's load-balancer NSG is \"<name_prefix>-lb-nsg\", the same name this module uses -- so leaving it true makes that composition fail on both an association conflict and a name conflict. The flag gates creation as well as association because an unassociated NSG filters nothing, and these carry no rules; it is the whole baseline, on or off."
   type        = bool
   default     = true
 }

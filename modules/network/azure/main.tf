@@ -52,6 +52,7 @@ resource "azurerm_subnet" "workload" {
 # modules (single-vm/ha-hot-hot/unlimited-scale) layer their own allow-https
 # rules on the subnets they consume.
 resource "azurerm_network_security_group" "lb" {
+  count               = var.associate_subnet_nsgs ? 1 : 0
   name                = "${var.name_prefix}-lb-nsg"
   resource_group_name = var.resource_group_name
   location            = var.location
@@ -59,6 +60,7 @@ resource "azurerm_network_security_group" "lb" {
 }
 
 resource "azurerm_network_security_group" "workload" {
+  count               = var.associate_subnet_nsgs ? 1 : 0
   name                = "${var.name_prefix}-workload-nsg"
   resource_group_name = var.resource_group_name
   location            = var.location
@@ -66,6 +68,7 @@ resource "azurerm_network_security_group" "workload" {
 }
 
 resource "azurerm_network_security_group" "db" {
+  count               = var.associate_subnet_nsgs ? 1 : 0
   name                = "${var.name_prefix}-db-nsg"
   resource_group_name = var.resource_group_name
   location            = var.location
@@ -77,22 +80,38 @@ resource "azurerm_network_security_group" "db" {
 # can set associate_subnet_nsgs = false to avoid a double-association conflict —
 # Azure permits only one NSG per subnet. Default true keeps greenfield/standalone
 # deployments secure and satisfies the subnet-must-have-an-NSG control.
+#
+# The flag gates CREATION of the three NSGs above as well, not just these
+# associations, and it has to: the tier modules name their own NSGs from the
+# same name_prefix, and ha-hot-hot/azure's load-balancer NSG is
+# "${var.name_prefix}-lb-nsg" — byte-for-byte the one this module makes. So
+# with creation ungated, a caller who set associate_subnet_nsgs = false to
+# resolve the association conflict still hit
+#
+#   Error: a resource with the ID ".../networkSecurityGroups/<prefix>-lb-nsg"
+#   already exists - to be managed via Terraform this resource needs to be
+#   imported into the State
+#
+# and the documented composition — this module feeding a tier module, which is
+# what both Azure HA quickstarts and the SAT HA smoke do — could not be applied
+# at all. Nothing is lost by not creating them: these NSGs carry no rules, and
+# an unassociated NSG filters nothing.
 resource "azurerm_subnet_network_security_group_association" "lb" {
   count                     = var.associate_subnet_nsgs ? 1 : 0
   subnet_id                 = azurerm_subnet.lb.id
-  network_security_group_id = azurerm_network_security_group.lb.id
+  network_security_group_id = azurerm_network_security_group.lb[0].id
 }
 
 resource "azurerm_subnet_network_security_group_association" "workload" {
   count                     = var.associate_subnet_nsgs ? 1 : 0
   subnet_id                 = azurerm_subnet.workload.id
-  network_security_group_id = azurerm_network_security_group.workload.id
+  network_security_group_id = azurerm_network_security_group.workload[0].id
 }
 
 resource "azurerm_subnet_network_security_group_association" "db" {
   count                     = var.associate_subnet_nsgs ? 1 : 0
   subnet_id                 = azurerm_subnet.db.id
-  network_security_group_id = azurerm_network_security_group.db.id
+  network_security_group_id = azurerm_network_security_group.db[0].id
 }
 
 # The Postgres Flexible Server subnet must be delegated to the Microsoft.DBforPostgreSQL/flexibleServers
