@@ -29,6 +29,17 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+- **`network/azure`: `associate_subnet_nsgs = false` still created the NSGs, so the documented composition with a workload tier module could not be applied.** The flag exists for exactly one purpose — Azure permits one NSG per subnet, so a caller putting this module in front of `single-vm/azure`, `ha-hot-hot/azure` or `unlimited-scale/azure` sets it to `false` and lets the tier module own the subnet's NSG. It gated only the three `azurerm_subnet_network_security_group_association` resources, and left the three `azurerm_network_security_group` resources unconditional. `ha-hot-hot/azure` names its load-balancer NSG `"${var.name_prefix}-lb-nsg"`, which is byte-for-byte the name this module uses, so a caller who had followed the documentation exactly then hit
+
+  ```
+  Error: A resource with the ID ".../networkSecurityGroups/<prefix>-lb-nsg" already exists -
+  to be managed via Terraform this resource needs to be imported into the State.
+  ```
+
+  All three Azure quickstarts pass `associate_subnet_nsgs = false`, so all three were affected; it surfaced in the SAT HA smoke run. The flag now gates creation as well as association: it is the whole baseline, on or off. Nothing is lost by not creating them — these NSGs carry no rules and an unassociated NSG filters nothing — and the default stays `true`, so standalone deployments still get the baseline set and the subnet-must-have-an-NSG control is still satisfied out of the box.
+
+  **Blast radius.** For anyone already running with the default `true`, nothing moves. For anyone running with `false`, the next apply *destroys* three empty, unassociated NSGs — no traffic passes through them, so there is no data-path effect, but it is a destroy in the plan and should be read before it is applied.
+
 - **`unlimited-scale` served no phishing landing pages on either cloud, so SAT's product surface was missing from the tier sold to MSSPs and large enterprises.** SAT *is* phishing simulation: the landing pages and the click/open tracking behind them are the deliverable. `modules/ha-hot-hot/azure/main.tf` already states the principle — an HA pair that only fronts the admin port is not serving the product — and the autoscale tier had exactly that shape. `local.phish_port` was computed in both `unlimited-scale/aws` and `unlimited-scale/azure` and **never referenced**: no target group, no port-80 forwarding rule, no security-group or NSG rule. A SAT autoscale deployment sent its campaign, and every target that clicked reached nothing. No open and no click was recorded, so the failure was silent on the operator's side.
 
   This was a deliberate deferral, not an oversight — the previous release wired `admin_port` and left the phishing frontend for a follow-up, on the grounds that adding one is a feature rather than a port correction. This is that follow-up.

@@ -57,11 +57,6 @@ run "nsg_association_disabled_creates_no_associations" {
     condition     = length(azurerm_subnet_network_security_group_association.db) == 0
     error_message = "associate_subnet_nsgs = false must create zero db NSG associations."
   }
-
-  assert {
-    condition     = azurerm_network_security_group.lb.name == "hailbytes-test-lb-nsg"
-    error_message = "associate_subnet_nsgs = false must still create the NSG resources themselves (only the association is skipped)."
-  }
 }
 
 # Regression: no Azure module provisioned an outbound path, so workload VMs
@@ -223,5 +218,58 @@ run "delegated_db_subnet_is_large_enough_for_ha" {
   assert {
     condition     = tonumber(split("/", var.db_subnet_prefix)[1]) <= 28
     error_message = "The delegated Postgres subnet must be /28 or larger; a server with HA uses four addresses of the eleven a /28 leaves usable."
+  }
+}
+
+# ----- Baseline NSGs are the whole thing, on or off -----
+#
+# associate_subnet_nsgs = false is the documented way to compose this module
+# with a workload tier module. It used to gate only the associations, so the
+# three NSGs were still created -- and ha-hot-hot/azure names its
+# load-balancer NSG "<name_prefix>-lb-nsg", byte-for-byte the one created
+# here. The composition therefore failed on a name conflict even after the
+# caller had followed the documentation:
+#
+#   Error: a resource with the ID ".../networkSecurityGroups/<prefix>-lb-nsg"
+#   already exists - to be managed via Terraform this resource needs to be
+#   imported into the State
+
+run "baseline_nsgs_exist_and_are_associated_by_default" {
+  command = plan
+
+  assert {
+    condition = (length(azurerm_network_security_group.lb) == 1 &&
+      length(azurerm_network_security_group.workload) == 1 &&
+    length(azurerm_network_security_group.db) == 1)
+    error_message = "A standalone deployment must still get all three baseline NSGs -- that is what satisfies the subnet-must-have-an-NSG control."
+  }
+
+  assert {
+    condition = (length(azurerm_subnet_network_security_group_association.lb) == 1 &&
+      length(azurerm_subnet_network_security_group_association.workload) == 1 &&
+    length(azurerm_subnet_network_security_group_association.db) == 1)
+    error_message = "Default true must associate all three, or the subnets go unfiltered."
+  }
+}
+
+run "opting_out_creates_no_nsg_to_collide_with" {
+  command = plan
+
+  variables {
+    associate_subnet_nsgs = false
+  }
+
+  assert {
+    condition = (length(azurerm_network_security_group.lb) == 0 &&
+      length(azurerm_network_security_group.workload) == 0 &&
+    length(azurerm_network_security_group.db) == 0)
+    error_message = "Opting out must create no NSGs at all: an unassociated one filters nothing, and its name still collides with the tier module's."
+  }
+
+  assert {
+    condition = (length(azurerm_subnet_network_security_group_association.lb) == 0 &&
+      length(azurerm_subnet_network_security_group_association.workload) == 0 &&
+    length(azurerm_subnet_network_security_group_association.db) == 0)
+    error_message = "Opting out must leave the subnets free for the tier module to associate its own NSG."
   }
 }
