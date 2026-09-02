@@ -542,8 +542,8 @@ resource "aws_lb" "main" {
   # positive on ASM, which does keep the redirect (aws_lb_listener.http_redirect,
   # var.enable_http_redirect, default true): checkov cannot resolve the `count`
   # that makes the two listeners mutually exclusive, so it sees the SAT forward
-  # listener attached to this ALB either way. Waived here rather than in
-  # .checkov.yaml so ha-hot-hot/aws and single-vm keep enforcing the check.
+  # listener attached to this ALB either way. Waived per-resource rather than in
+  # .checkov.yaml, so the waiver cannot silently spread to a future module.
   name = "${local.name_prefix}-alb"
   # The HailBytes SAT / ASM console is customer-facing by design; the ALB sits
   # in public subnets behind a security group that only allows ingress from

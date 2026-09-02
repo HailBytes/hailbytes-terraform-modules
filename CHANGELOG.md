@@ -46,7 +46,26 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
   Regression coverage in `modules/unlimited-scale/aws/tests/feature_flags.tftest.hcl` and `modules/unlimited-scale/azure/tests/feature_flags.tftest.hcl` asserts the SAT wiring, the health-check matcher and probe protocol, the allow-list inheritance default, that opening the phishing surface does not widen the admin one, and that an ASM plan creates none of it even when `phish_allowed_cidrs` is set.
 
-  Not addressed here: `ha-hot-hot/aws` has the identical gap and does not even declare `phish_port`, so SAT on the AWS HA tier still serves no landing pages. It is reported as a sibling gap rather than fixed silently in this change.
+  `ha-hot-hot/aws` had the identical gap and is fixed alongside it — see the next entry.
+
+- **`ha-hot-hot/aws` served no phishing landing pages either, and did not even declare `phish_port`.** The same defect as the autoscale tier above, one step worse: on `unlimited-scale` the variable existed and was merely unwired, so an operator could at least see the intent. Here there was no `phish_port` at all — no target group, no port-80 forwarding rule, no security-group rule, and no input to set. SAT on the AWS HA tier sent its campaign and every target that clicked reached nothing. This is the tier most production SAT customers are running today, which is why it is fixed in the same release rather than deferred again.
+
+  The wiring mirrors the autoscale fix exactly, and the reasoning behind each choice is identical, so it is not restated here: for `product = "sat"` the ALB's `:80` listener forwards to a phishing target group on `phish_port` with a `200-499` health-check matcher on `/`, both VMs are attached to it on `phish_port`, the ALB's egress and the VMs' ingress open `phish_port`, and `enable_http_redirect` (default `true`) becomes ASM-only and inert on SAT. New `phish_port` and `phish_allowed_cidrs` on the tier module and on both `sat-aws-ha` / `asm-aws-ha` wrappers, the latter defaulting to `null` so it inherits `allowed_cidrs`.
+
+  One deliberate difference from the admin target group: the phishing group carries **no `stickiness` block**. A landing-page request carries its own recipient ID and is stateless, so pinning a target buys nothing and skews load across a two-node pair.
+
+  **Upgrade impact.**
+
+  | Product | What changes |
+  |---|---|
+  | SAT | **Creates** a phishing target group, a `:80` forward listener, and one target-group attachment per VM; **destroys** the `:80` redirect listener and its `alb_http_redirect` ingress rules, **replacing** them with `alb_phish` rules on the same port. **Creates** one ALB egress and one VM ingress rule on `phish_port`. **No instance is replaced or restarted.** |
+  | ASM | **No-op.** |
+
+  Public frontend ports are unchanged: 443 stays the admin console, and `:80` was already bound — on SAT it now answers with landing pages instead of a redirect. With `phish_allowed_cidrs` left `null`, the set of CIDRs permitted on `:80` is identical after the upgrade; only the resource addresses carrying them move. Existing SAT deployments that relied on the `:80` redirect should reach the console on 443 directly.
+
+  Regression coverage in `modules/ha-hot-hot/aws/tests/feature_flags.tftest.hcl` asserts the SAT wiring, the health-check matcher and protocol, that every VM is attached to the phishing group on `phish_port`, the allow-list inheritance default, that opening the phishing surface does not widen the admin one, and that an ASM plan creates none of it even when `phish_allowed_cidrs` is set.
+
+  With this and the entry above, **every tier now serves SAT's phishing surface on both clouds.**
 
 - **`ha-hot-hot/azure`: composing this module with `network/azure` in one apply no longer fails the plan.** Since [#51](https://github.com/HailBytes/hailbytes-terraform-modules/issues/51), five resources guarding the VM-subnet NSG branched on `var.vm_subnet_id != var.lb_subnet_id` through `count`/`for_each`. Terraform resolves those during **plan**, so any caller that creates its subnets in the same `terraform apply` — passing two IDs that are still *"known after apply"* — got `Error: Invalid count argument` and no plan at all. That is the composition this repo documents: `network/azure` outputs feeding the HA module, as in [`docs/AZURE_PATCHING_AND_MIGRATION.md`](docs/AZURE_PATCHING_AND_MIGRATION.md), [`docs/DEPLOY_FROM_GALLERY.md`](docs/DEPLOY_FROM_GALLERY.md), and the `network/azure` output descriptions. The `ha-hot-hot/azure` README's own example hit it too. It reproduced only against real subnet-creating callers, never in `terraform test`, because every fixture in the suite passes literal subnet ID strings.
 
@@ -102,7 +121,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
   New `phish_allowed_cidrs` on all three tier modules and their six wrappers governs the phishing surface alone. It defaults to `null`, which inherits `allowed_cidrs` and reproduces the previous behaviour exactly, so **no existing deployment changes on the next apply**. `allow_internet_ingress` deliberately does not gate it: that flag guards the admin surface, and applying it here would silently strip the `0.0.0.0/0` a live simulation needs, re-coupling the two lists this variable exists to separate. Inert on ASM, which has no phishing surface. Regression tests in `modules/ha-hot-hot/azure/tests/feature_flags.tftest.hcl` assert the inheritance default, the independence of the two lists, and that opening the phishing surface does not widen the admin one.
 
-  Not addressed here: `ha-hot-hot/aws` exposes no phishing surface at all — no ALB rule, no security-group rule — so SAT on the AWS HA tier serves no landing pages. That is a separate gap from this one and is not fixed by this change. It remains open; the equivalent gap on `unlimited-scale` was closed in Unreleased.
+  Not addressed here: `ha-hot-hot/aws` exposes no phishing surface at all — no ALB rule, no security-group rule — so SAT on the AWS HA tier serves no landing pages. That is a separate gap from this one and is not fixed by this change. Both it and the equivalent gap on `unlimited-scale` were closed in Unreleased.
 
 
 - **Every tier but `ha-hot-hot` routed traffic to a port SAT does not listen on, and `ha-hot-hot` routed ASM's to a port ASM does not listen on.** The two products bind different ports — SAT serves its admin UI on **3333** (`config.json` `listen_url`, which the image's bootstrap banner prints verbatim as `https://<ip>:3333`) plus **80** for the phishing/landing surface, while ASM runs Django on `:8000` behind a proxy container that publishes **443**. Only `ha-hot-hot` had been corrected (#85, #87), and only for SAT.

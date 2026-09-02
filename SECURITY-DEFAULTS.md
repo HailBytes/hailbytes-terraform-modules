@@ -23,7 +23,7 @@ These modules ship with security-conservative defaults. You should have to expli
   |---|---|---|
   | `single-vm/aws`, `single-vm/azure` | 80 direct to the VM (no load balancer in the path) | `phish_allowed_cidrs` |
   | `ha-hot-hot/azure` | LB rule 80 → `phish_port`, `Tcp` probe | `phish_allowed_cidrs` |
-  | `ha-hot-hot/aws` | **None.** No ALB rule and no security-group rule; `phish_port` is not even declared. SAT landing pages are unreachable on this tier — a known open gap. | n/a |
+  | `ha-hot-hot/aws` | ALB `:80` listener → phishing target group (`200-499` matcher); `enable_http_redirect` is ASM-only | `phish_allowed_cidrs` |
   | `unlimited-scale/aws` | ALB `:80` listener → phishing target group (`200-499` matcher); `enable_http_redirect` is ASM-only | `phish_allowed_cidrs` |
   | `unlimited-scale/azure` | LB rule 80 → `phish_port`, `Tcp` probe. The Application Gateway fronts the admin console only | `phish_allowed_cidrs` |
 
