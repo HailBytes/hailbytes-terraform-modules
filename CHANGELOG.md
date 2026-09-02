@@ -41,6 +41,23 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Changed — BREAKING
 
+- **Azure Storage-backed features now default OFF, because on their previous defaults the apply could not succeed.** `enable_flow_logs` on `network/azure` and `create_backup_storage_account` on all three Azure tier modules defaulted to `true`. Both create a Storage Account with `shared_access_key_enabled = false` **and** `public_network_access_enabled = false`, and this repo provisions no storage private endpoint and no `Microsoft.Storage` service endpoint. The `azurerm` provider nevertheless reads those accounts' **queue service properties over the storage data plane**, so an apply run from outside the VNet — Cloud Shell, a laptop, CI — failed with:
+
+  ```
+  403 KeyBasedAuthenticationNotPermitted
+  "Key based authentication is not permitted on this storage account."
+  ```
+
+  Fixing the authentication does not help: `storage_use_azuread = true` moves the call to Entra, which the closed network then refuses instead. So these were not features with a caveat — with `enable_flow_logs` defaulting on, *every* caller composing `network/azure` hit an apply that could not complete. It fails on refresh as well as create, so once such an account exists a plain `terraform plan` cannot complete either.
+
+  **Upgrade impact.** If you relied on either default and somehow have these accounts — an older provider version, or shared keys enabled out of band — the next `apply` will **destroy them**, including any backup bundles. Set the variable explicitly to `true` before upgrading to keep them. In practice a default-`true` apply could not succeed on a current provider, so most callers have nothing to lose here; check rather than assume.
+
+- **The Azure backup Storage Account is now `account_kind = "BlobStorage"`, which REPLACES an existing account.** The provider only manages queue service properties for account kinds that support queues, so a blob-only kind removes the data-plane call that 403s. These bundles are blobs; nothing uses queues, files or tables. Applies to `ha-hot-hot/azure`, `single-vm/azure` and `unlimited-scale/azure`.
+
+  **Upgrade impact.** `account_kind` is replacement-forcing: upgrading with `create_backup_storage_account = true` destroys and recreates the account and **loses any bundles in it**. Copy anything you need out first. Note also that this fix is **reasoned, not yet confirmed against a real apply** — which is why the default stays `false` rather than being turned back on alongside it.
+
+  The flow-log account is deliberately **not** changed the same way: it is written by Azure Network Watcher rather than by us, and Network Watcher has its own requirements on the account type that need verifying before the kind is touched. With the default off, nobody is exposed to it meanwhile.
+
 - **`ha-hot-hot/azure` (and `asm-azure-ha` / `sat-azure-ha`): a shared VM/LB subnet must now be declared, not inferred.** If you pass the *same* subnet ID to both `vm_subnet_id` and `lb_subnet_id`, set `vm_subnet_is_lb_subnet = true`. The module previously detected this by comparing the two IDs; that comparison is what broke every same-apply plan (see *Fixed* above), so it could not be kept.
 
   **Upgrade impact:** callers with two *distinct* subnets — the default, and everything `network/azure` produces — need no change. Callers sharing one subnet who do not set the flag will have Terraform plan a second NSG association on that subnet, which Azure rejects at apply, and the module's `check` block flags first. Nothing is silently unfiltered.
