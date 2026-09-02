@@ -101,11 +101,19 @@ locals {
   vm_count = 2
   vm_zones = ["1", "2"]
 
-  # Customer-supplied IP wins. azurerm_public_ip.lb is behind a count, so index
-  # rather than attribute-access it.
-  lb_public_ip_id = var.public_ip_id != null ? var.public_ip_id : azurerm_public_ip.lb[0].id
+  # An internal load-balancer frontend only makes sense behind the App Gateway,
+  # since otherwise nothing is publicly reachable at all. Both inputs are plain
+  # variables, so this resolves during plan and is safe to branch count on.
+  lb_frontend_public = var.lb_frontend_public || !local.enable_application_gateway
+  create_lb_pip      = local.lb_frontend_public && var.public_ip_id == null
+
+  # one() rather than [0] so these stay null when no public IP exists, instead
+  # of failing on an empty-list index in a branch that was not taken.
+  lb_public_ip_id = var.public_ip_id != null ? var.public_ip_id : one(azurerm_public_ip.lb[*].id)
   lb_public_ip_address = (
-    var.public_ip_id != null ? data.azurerm_public_ip.supplied[0].ip_address : azurerm_public_ip.lb[0].ip_address
+    var.public_ip_id != null
+    ? one(data.azurerm_public_ip.supplied[*].ip_address)
+    : one(azurerm_public_ip.lb[*].ip_address)
   )
 
   use_flexible_server = var.db_mode == "flexible_server"
@@ -580,7 +588,7 @@ data "azurerm_public_ip" "supplied" {
 }
 
 resource "azurerm_public_ip" "lb" {
-  count               = var.public_ip_id == null ? 1 : 0
+  count               = local.create_lb_pip ? 1 : 0
   name                = "${local.name_prefix}-lb-pip"
   resource_group_name = var.resource_group_name
   location            = var.location
@@ -597,9 +605,37 @@ resource "azurerm_lb" "main" {
   sku                 = "Standard"
   tags                = local.common_tags
 
+  # Public frontend by default. With lb_frontend_public = false the frontend
+  # takes a private address in lb_subnet_id instead, which removes the second
+  # public route to admin_port that otherwise bypasses the App Gateway and any
+  # WAF policy attached to it.
   frontend_ip_configuration {
-    name                 = "frontend"
-    public_ip_address_id = local.lb_public_ip_id
+    name                          = "frontend"
+    public_ip_address_id          = local.lb_frontend_public ? local.lb_public_ip_id : null
+    subnet_id                     = local.lb_frontend_public ? null : var.lb_subnet_id
+    private_ip_address_allocation = local.lb_frontend_public ? null : "Dynamic"
+  }
+
+  lifecycle {
+    precondition {
+      condition     = var.lb_frontend_public || local.enable_application_gateway
+      error_message = <<-EOM
+        lb_frontend_public = false requires enable_application_gateway = true.
+        The App Gateway does not sit in front of this load balancer -- the two
+        are parallel entry points -- so with both the gateway disabled and the
+        frontend internal, nothing would be publicly reachable at all.
+      EOM
+    }
+    precondition {
+      condition     = var.lb_frontend_public || var.public_ip_id == null
+      error_message = <<-EOM
+        lb_frontend_public = false cannot be combined with public_ip_id.
+        public_ip_id supplies an address for the LOAD BALANCER frontend, and an
+        internal frontend has no public address to attach it to. If the intent
+        was to reserve the address DNS points at, that is appgw_public_ip_id --
+        the gateway is the front door once it is enabled.
+      EOM
+    }
   }
 }
 

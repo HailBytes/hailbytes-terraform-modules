@@ -185,6 +185,18 @@ resource "azurerm_subnet_network_security_group_association" "vmss" {
 
 # ----- LB -----
 
+# KNOWN GAP, deliberately not closed here yet. As in ha-hot-hot/azure, the App
+# Gateway does not sit in front of this load balancer: the scale set is a member
+# of BOTH backend pools (see network_interface below), so the gateway and the
+# load balancer are parallel public entry points to the same port. An operator
+# who enables the gateway to attach a WAF therefore still has a second,
+# un-WAF-ed public route to it. var.allowed_cidrs bounds both paths, so this is
+# not an open internet surface.
+#
+# ha-hot-hot/azure closes it with var.lb_frontend_public. The equivalent here is
+# a larger change -- this public IP has no count to branch, and the scale set's
+# pool membership would need the same treatment -- so it is recorded rather than
+# half-done. Do not copy this comment away without closing the gap.
 resource "azurerm_public_ip" "lb" {
   name                = "${local.name_prefix}-lb-pip"
   resource_group_name = var.resource_group_name
