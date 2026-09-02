@@ -536,14 +536,11 @@ resource "aws_s3_bucket_policy" "alb_logs" {
 }
 
 resource "aws_lb" "main" {
-  # checkov:skip=CKV2_AWS_20: Category (B)+(C). By design on SAT, where :80
-  # carries the landing pages rather than an HTTP->HTTPS redirect -- a 301 sent
-  # to a target who clicked a phishing link breaks the simulation. And a false
-  # positive on ASM, which does keep the redirect (aws_lb_listener.http_redirect,
-  # var.enable_http_redirect, default true): checkov cannot resolve the `count`
-  # that makes the two listeners mutually exclusive, so it sees the SAT forward
-  # listener attached to this ALB either way. Waived per-resource rather than in
-  # .checkov.yaml, so the waiver cannot silently spread to a future module.
+  # Note for anyone reading a checkov report on this ALB: CKV2_AWS_20 ("ALB
+  # redirects HTTP to HTTPS") is waived in .checkov.yaml. On SAT :80 carries the
+  # landing pages rather than a redirect, and on ASM the redirect IS present --
+  # checkov just cannot resolve the `count` that makes the two :80 listeners
+  # mutually exclusive, so it flags this ALB either way.
   name = "${local.name_prefix}-alb"
   # The HailBytes SAT / ASM console is customer-facing by design; the ALB sits
   # in public subnets behind a security group that only allows ingress from
@@ -653,7 +650,6 @@ resource "aws_lb_listener" "http_redirect" {
 # product and this module deploys whichever marketplace image version the
 # caller pinned. Tying the check to it would drain the pool on an older image.)
 resource "aws_lb_target_group" "phish" {
-  # checkov:skip=CKV_AWS_378: The SAT phishing/landing surface is plaintext HTTP by product design: targets click http:// links on the customer's own phishing domain, for which this module holds no certificate, and the phish server binds :80 with use_tls false. The admin console (aws_lb_listener.https) stays HTTPS-only. Nothing here weakens the admin surface.
   count = var.product == "sat" ? 1 : 0
 
   name        = "${local.name_prefix}-phish"
@@ -677,12 +673,13 @@ resource "aws_lb_target_group" "phish" {
   tags                 = local.common_tags
 }
 
-# Plain HTTP is the point on this listener -- see the checkov:skip rationale
-# inside the block. Mirrors Checkov CKV_AWS_2.
+# Plain HTTP is the point on this listener -- see the block comment above for
+# why, and .checkov.yaml for the matching Checkov waivers (CKV_AWS_2 /
+# CKV_AWS_103). This inline ignore stays inline: unlike checkov, trivy
+# suppresses the finding outright rather than emitting it into its SARIF, so it
+# creates no code-scanning alert.
 #trivy:ignore:AVD-AWS-0054
 resource "aws_lb_listener" "phish" {
-  # checkov:skip=CKV_AWS_2: The SAT phishing/landing surface is plaintext HTTP by product design: targets click http:// links on the customer's own phishing domain, for which this module holds no certificate, and the phish server binds :80 with use_tls false. Terminating TLS here would need the customer's phishing-domain cert, which is not a module input, and redirecting to HTTPS is exactly what must not happen on this listener. The admin console (aws_lb_listener.https) stays HTTPS-only; ASM keeps its :80 redirect.
-  # checkov:skip=CKV_AWS_103: Same listener, same reason -- an ssl_policy on a plaintext HTTP listener is not a valid AWS configuration. TLS 1.2 stays enforced on the admin listener via ssl_policy = var.alb_min_tls_version.
   count = var.product == "sat" ? 1 : 0
 
   load_balancer_arn = aws_lb.main.arn
