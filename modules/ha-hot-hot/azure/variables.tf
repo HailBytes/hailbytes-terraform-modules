@@ -471,6 +471,30 @@ variable "public_ip_id" {
   default     = null
 }
 
+variable "lb_frontend_public" {
+  # The App Gateway does NOT sit in front of this load balancer: its backend
+  # pool points at the VM private IPs, so the two are PARALLEL public entry
+  # points to the same admin_port. An operator who enables the gateway to attach
+  # a WAF therefore still has a second, un-WAF-ed public route to that port.
+  # var.allowed_cidrs bounds both, so it was never an open internet surface --
+  # but there was no way to close it without also giving up the gateway.
+  #
+  # false makes the load-balancer frontend internal (a private address in
+  # lb_subnet_id), leaving the gateway as the only public route.
+  #
+  # WATCH OUT FOR EGRESS. This module defines no outbound rule, so backend VMs
+  # get implicit outbound SNAT from the load balancer's PUBLIC frontend. Make it
+  # internal and that path is gone. network/azure attaches a NAT Gateway to the
+  # workload subnet by default (enable_nat_gateway = true) and a NAT Gateway
+  # takes precedence over LB SNAT anyway, so the default composition is
+  # unaffected. But if you bring your own network with no NAT Gateway and no
+  # other egress, the nodes lose outbound internet -- which for SAT means
+  # campaign email stops leaving. Confirm your egress path before setting this.
+  description = "Whether the load balancer frontend gets a public IP. Default true. Set false (only valid with enable_application_gateway = true) to make it internal, so the App Gateway is the single public route to the admin port and no traffic can bypass a WAF policy attached to it. Requires egress independent of the load balancer -- a NAT Gateway, as network/azure provisions by default."
+  type        = bool
+  default     = true
+}
+
 variable "appgw_public_ip_id" {
   # var.public_ip_id fronts the LOAD BALANCER. When the App Gateway is enabled
   # the gateway is the front door and the LB becomes an internal hop, so a

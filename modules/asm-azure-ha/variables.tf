@@ -307,6 +307,12 @@ variable "key_vault_reader_principal_ids" {
   default     = []
 }
 
+variable "lb_frontend_public" {
+  description = "Whether the load balancer frontend gets a public IP. Default true. Set false (only valid with enable_application_gateway = true) to make it internal, so the App Gateway is the single public route to the admin port and nothing can bypass a WAF policy attached to it. Requires egress independent of the load balancer -- a NAT Gateway, as network/azure provisions by default."
+  type        = bool
+  default     = true
+}
+
 variable "appgw_public_ip_id" {
   description = "Resource ID of an existing Static, Standard-SKU public IP for the Application Gateway frontend. Leave null and the module creates one. Ignored unless enable_application_gateway = true. public_ip_id fronts the load balancer; when the gateway is enabled it is the front door, so this is the one DNS points at."
   type        = string
