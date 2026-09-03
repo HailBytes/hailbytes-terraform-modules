@@ -114,13 +114,31 @@ az() {
       printf '1\n2\n3\n'
       ;;
     "vm list-usage")
-      # az -o tsv columns: currentValue, limit, localizedName, name -- the
-      # script reads the last two fields, so keep the shape.
-      if [ "$scenario" = "no_quota" ]; then
-        echo "standardDSv5Family	Standard DSv5 Family vCPUs	10	12"
-      else
-        echo "standardDSv5Family	Standard DSv5 Family vCPUs	0	100"
-      fi
+      # This mock previously emitted the two numbers LAST, so that the script's
+      # `awk '{print $NF}'` found them. Real `az vm list-usage -o tsv` carries a
+      # multi-word name.localizedValue ("Standard DSv5 Family vCPUs"), which
+      # shifts every whitespace-split field -- so the parser never worked in
+      # production while this suite reported it green. A mock shaped to satisfy
+      # the parser tests nothing.
+      #
+      # The script now selects by name with --query, so answer the query it
+      # actually sends. Anything else gets a realistic full-table row, which is
+      # what a positional parser would have to survive.
+      _q=""
+      for _a in "$@"; do
+        case "$_a" in *currentValue*) _q=current ;; *".limit"*) _q=limit ;; esac
+      done
+      _fam="standardDSv5Family"
+      case "$*" in *standardBSFamily*) _fam="standardBSFamily" ;; esac
+      _label="Standard DSv5 Family vCPUs"
+      [ "$_fam" = "standardBSFamily" ] && _label="Standard BS Family vCPUs"
+      if [ "$scenario" = "no_quota" ]; then _cur=10; _lim=12; else _cur=0; _lim=100; fi
+      case "$_q" in
+        current) echo "$_cur" ;;
+        limit)   echo "$_lim" ;;
+        # Real column order, multi-word field included.
+        *)       printf 'Count\t%s\t%s\t%s\t%s\n' "$_cur" "$_lim" "$_label" "$_fam" ;;
+      esac
       ;;
     *) echo "MOCK az: unhandled invocation: $*" >&2; return 1 ;;
   esac
@@ -266,8 +284,16 @@ check "16-vCPU pair asks for 32 vCPUs" \
   "$(grep -c 'it needs 32 vCPUs' <<<"$out")" "1"
 
 out="$(sized_out happy Standard_B2s)"
-check "B-series reads the BS quota pool, not DSv5" \
-  "$(grep -c 'Standard BS Family' <<<"$out")" "1"
+# Assert on the READING line, not on a bare mention of the family. The old
+# assertion counted every occurrence and expected exactly 1 -- which passed only
+# because the quota parse was broken and the reading line never printed at all.
+# It went to 2 the moment the parse was fixed, so the assertion was pinning the
+# bug. These two check the thing that matters: the right pool is read, and the
+# wrong one is not.
+check "B-series actually reads the BS quota pool" \
+  "$(grep -cE 'Standard BS Family: [0-9]+ used of [0-9]+' <<<"$out")" "1"
+check "B-series does not read the DSv5 pool" \
+  "$(grep -cE 'Standard DSv5 Family: [0-9]+ used of' <<<"$out")" "0"
 
 printf '\npreflight-aws.sh fails cleanly with no credentials\n'
 (

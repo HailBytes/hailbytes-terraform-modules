@@ -29,6 +29,16 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+- **`quickstart/preflight-azure.sh`: the vCPU quota check had never actually run, and the test suite reported it green.** It read `az vm list-usage --location <loc> -o tsv`, grepped for the family slug, and took the two numbers with `awk '{print $(NF-1)}'` / `awk '{print $NF}'`. That output is tab-separated, but `name.localizedValue` contains spaces — `"Standard DSv5 Family vCPUs"` — and awk's default splitting is on *any* whitespace, so every field shifted: `$NF` landed on the family slug and `$(NF-1)` on the word `vCPUs`. The numeric guard immediately below then rejected them and the script printed *"Could not read quota for <region>"* on every invocation. A pre-flight whose entire job is catching a short quota before a deployment call silently never checked one.
+
+  It now selects both values by name (`--query "[?name.value=='<family>']|[0].currentValue"`), so column order cannot break it, and validates that what comes back is digits before any arithmetic — a bare word reaching `$(( ))` aborts the run outright under `set -u`.
+
+  **The mock is the real fix.** `quickstart/tests/cloud_prereqs_test.sh` emitted the two numbers *last*, shaped so that `$NF` and `$(NF-1)` found them — and its own comment described a different column order than the data it produced. A mock written to satisfy the parser cannot test the parser. It now answers the `--query` form the script actually sends and otherwise emits a realistic row with the multi-word field in place. Restoring the old positional parser against the corrected mock fails three tests; against the old mock it passed all of them.
+
+  One assertion was pinning the bug rather than the behaviour: *"B-series reads the BS quota pool, not DSv5"* counted occurrences of `Standard BS Family` and expected exactly **1**, which held only because the reading line never printed. Fixing the parse made it 2. It is now two assertions on the reading line itself — the right pool is read, and the wrong one is not.
+
+  Found while auditing a customer deployment toolkit that had reproduced the same parse from this script, where it crashed instead of degrading quietly. `shellcheck -S warning` is clean across every script in the repo and cannot see this class of defect; a sweep for the same pattern (`-o tsv` followed by positional `awk`/`cut`) found no other instance.
+
 - **The backup Storage Account could not be created at all: `ZRS` replication is not available for the `BlobStorage` account kind.** `account_kind = "BlobStorage"` was chosen deliberately — it is blob-only, so the azurerm provider makes no queue-service call over a data plane this account closes (shared keys off, public network access off, no private endpoint). But that kind offers **LRS, GRS and RAGRS only**; the zone-redundant tiers are a `StorageV2` / `BlockBlobStorage` feature. With `backup_storage_replication` defaulting to `"ZRS"`, every apply that created the account failed:
 
   ```
