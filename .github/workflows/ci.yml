@@ -123,8 +123,10 @@ jobs:
           # -backend=false skips remote state config — none of these
           # modules use a backend at the module level; consumers supply
           # one. -input=false fails fast on missing inputs instead of
-          # hanging waiting for prompts.
-          terraform init -backend=false -input=false
+          # hanging waiting for prompts. Both are passed by the wrapper,
+          # which retries ONLY on a registry/network error and still fails
+          # a bad configuration on the first attempt.
+          "${GITHUB_WORKSPACE}/.github/scripts/tf-init-retry.sh"
 
       - name: terraform validate
         working-directory: modules/${{ matrix.module }}
@@ -195,7 +197,7 @@ jobs:
           TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform.d/plugin-cache
         run: |
           mkdir -p "${TF_PLUGIN_CACHE_DIR}"
-          terraform init -backend=false -input=false
+          "${GITHUB_WORKSPACE}/.github/scripts/tf-init-retry.sh"
 
       - name: terraform test
         working-directory: modules/${{ matrix.module }}
@@ -314,7 +316,15 @@ jobs:
       - name: shellcheck
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-          shellcheck -S warning quickstart/deploy.sh quickstart/preflight-azure.sh             quickstart/preflight-aws.sh quickstart/tests/deploy_test.sh             quickstart/tests/cloud_prereqs_test.sh
+          # Every shell script in the repo, found rather than listed. The
+          # hardcoded list covered 5 of 10 -- keyvault-maintenance.sh,
+          # check-sender-reputation.sh, both cloudshell.sh and anything added
+          # later were never linted, and a new script silently escaping the
+          # gate is exactly the failure a list invites. -x follows `source`.
+          mapfile -t scripts < <(find . -name '*.sh' -not -path './.git/*' | sort)
+          printf 'linting %d script(s):\n' "${#scripts[@]}"
+          printf '  %s\n' "${scripts[@]}"
+          shellcheck -S warning -x "${scripts[@]}"
 
       - name: Unit tests
         run: bash quickstart/tests/deploy_test.sh
@@ -476,7 +486,7 @@ jobs:
           TF_PLUGIN_CACHE_DIR: ${{ github.workspace }}/.terraform.d/plugin-cache
         run: |
           mkdir -p "${TF_PLUGIN_CACHE_DIR}"
-          terraform init -backend=false -input=false
+          "${GITHUB_WORKSPACE}/.github/scripts/tf-init-retry.sh"
 
       - name: terraform validate
         if: steps.probe.outputs.exists == 'true'
