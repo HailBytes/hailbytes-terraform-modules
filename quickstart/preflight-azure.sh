@@ -357,28 +357,39 @@ if [ "$TIER" = "ha" ]; then
 fi
 echo
 
-usage_line="$(az vm list-usage --location "$LOCATION" -o tsv 2>/dev/null \
-                | grep -i "$quota_key" || true)"
-if [ -z "$usage_line" ]; then
+# Select the two numbers BY NAME, not by column position. `az ... -o tsv` is
+# tab-separated, but name.localizedValue contains spaces ("Standard DSv5 Family
+# vCPUs"), so awk's default whitespace splitting shifts every field: on a real
+# response $NF landed on the family slug and $(NF-1) on the word "vCPUs". The
+# numeric guard below then rejected them and this check reported "Could not read
+# quota" on every run -- it had never actually verified a quota.
+#
+# The suite did not catch it because the mock emitted the numbers last, shaped
+# to satisfy the parser rather than to match az. Its data now matches a real
+# response, which is the only way this stays honest.
+current="$(az vm list-usage --location "$LOCATION" \
+             --query "[?name.value=='${quota_key}']|[0].currentValue" -o tsv 2>/dev/null)"
+limit="$(az vm list-usage --location "$LOCATION" \
+             --query "[?name.value=='${quota_key}']|[0].limit" -o tsv 2>/dev/null)"
+# Never let a non-number reach the arithmetic: under `set -u` bash treats a
+# bare word in $(( )) as a variable name and aborts the whole run.
+case "${current}:${limit}" in
+    *[!0-9:]*|:*|*:) current=""; limit="" ;;
+esac
+if [ -z "$current" ] || [ -z "$limit" ]; then
     echo "  Could not read quota for ${LOCATION} (needs subscription read)."
     echo "  Check it by hand:"
     echo "    az vm list-usage --location ${LOCATION} -o table | grep -i DSv5"
 else
-    current="$(printf '%s' "$usage_line" | awk '{print $(NF-1)}')"
-    limit="$(printf '%s' "$usage_line" | awk '{print $NF}')"
-    if [ -n "$limit" ] && [ "$limit" -eq "$limit" ] 2>/dev/null; then
-        available=$(( limit - current ))
-        echo "  ${quota_family}: ${current} used of ${limit} — ${available} available."
-        if [ "$available" -lt "$needed" ]; then
-            echo
-            echo "  NOT ENOUGH. This deployment needs ${needed} and can get ${available}."
-            echo "  Request an increase in the portal (Subscription > Usage + quotas)"
-            echo "  before the deployment call -- approval is not instant."
-        else
-            echo "  Sufficient for the default sizing."
-        fi
+    available=$(( limit - current ))
+    echo "  ${quota_family}: ${current} used of ${limit} — ${available} available."
+    if [ "$available" -lt "$needed" ]; then
+        echo
+        echo "  NOT ENOUGH. This deployment needs ${needed} and can get ${available}."
+        echo "  Request an increase in the portal (Subscription > Usage + quotas)"
+        echo "  before the deployment call -- approval is not instant."
     else
-        echo "  ${usage_line}"
+        echo "  Sufficient for the default sizing."
     fi
 fi
 echo
