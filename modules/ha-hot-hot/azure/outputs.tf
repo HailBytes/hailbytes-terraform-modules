@@ -87,7 +87,7 @@ output "redis_endpoint" {
 }
 
 output "redis_mode" {
-  description = "How Redis is wired: 'managed' (this module provisioned Azure Cache), 'override' (customer-supplied endpoint), or 'disabled' (HA is not actually safe)."
+  description = "How Redis is wired: 'managed' (this module provisioned Azure Cache), 'override' (customer-supplied endpoint), or 'disabled' (no shared cache - sessions ride the cookie store, which is the default and is safe for HA; see enable_managed_redis)."
   value       = local.provision_managed_redis ? "managed" : (var.redis_endpoint_override == null ? "disabled" : "override")
 }
 

@@ -58,17 +58,48 @@ run "postgres_is_zone_redundant" {
   }
 }
 
-run "managed_redis_by_default" {
+# The default flipped to OFF. Three reasons, on the variable: it is not required
+# for HA (shared session keys make the cookie store work across nodes), at the
+# Standard SKU it is NOT zone-redundant so it is a single-zone dependency inside
+# a zone-redundant topology, and when it dies the console locks everyone out
+# because the session store is chosen once at boot. It also cost ~40 minutes of
+# a ~45 minute apply on a customer deployment.
+run "no_managed_redis_by_default" {
   command = plan
 
   assert {
+    condition     = length(azurerm_redis_cache.main) == 0
+    error_message = "The default must NOT create a cache. It is optional, single-zone at the default SKU, and on the critical path for login when it fails."
+  }
+
+  assert {
+    condition     = output.redis_mode == "disabled"
+    error_message = "redis_mode must report 'disabled' when no cache is provisioned, so a caller can tell which session store is in play."
+  }
+
+  # Off must mean nothing at all, not a half-built private-link path.
+  assert {
+    condition     = length(azurerm_private_endpoint.redis) == 0 && length(azurerm_key_vault_secret.redis) == 0
+    error_message = "With no cache there must be no private endpoint and no access-key secret."
+  }
+}
+
+# Opting in still works, and still produces the full private-link shape.
+run "managed_redis_when_opted_in" {
+  command = plan
+
+  variables {
+    enable_managed_redis = true
+  }
+
+  assert {
     condition     = length(azurerm_redis_cache.main) == 1
-    error_message = "Managed Redis is the HA default and must create one Azure Cache for Redis."
+    error_message = "enable_managed_redis = true must create exactly one cache."
   }
 
   assert {
     condition     = output.redis_mode == "managed"
-    error_message = "redis_mode must be 'managed' by default."
+    error_message = "redis_mode must be 'managed' when a cache is provisioned."
   }
 }
 
@@ -76,6 +107,7 @@ run "redis_private_link_uses_supplied_zone" {
   command = plan
 
   variables {
+    enable_managed_redis      = true
     redis_private_dns_zone_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.Network/privateDnsZones/privatelink.redis.cache.windows.net"
   }
 
@@ -270,9 +302,11 @@ run "external_db_still_provisions_the_app_tier" {
     error_message = "external mode changes only the database; the two app VMs remain."
   }
 
+  # The cache is off by default now, so "external mode does not disturb it"
+  # means it stays absent - db_mode must not turn one on.
   assert {
-    condition     = length(azurerm_redis_cache.main) == 1
-    error_message = "external mode must not disturb the shared session store."
+    condition     = length(azurerm_redis_cache.main) == 0
+    error_message = "external db_mode must not change the session store either way; with the default off, no cache should appear."
   }
 }
 

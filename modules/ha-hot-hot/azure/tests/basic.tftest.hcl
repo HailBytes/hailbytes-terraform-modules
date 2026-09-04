@@ -105,9 +105,11 @@ run "minimal_inputs_apply" {
     error_message = "key_vault_uri output must be non-empty"
   }
 
+  # The default no longer provisions a cache, so this output is empty. That is
+  # the assertion worth keeping: it proves the default composes without one.
   assert {
-    condition     = output.redis_endpoint != ""
-    error_message = "redis_endpoint output must be non-empty when managed Redis is enabled (the default)"
+    condition     = output.redis_endpoint == ""
+    error_message = "redis_endpoint must be empty by default - enable_managed_redis defaults to false, and a non-empty endpoint means a cache got created without being asked for."
   }
 
   # Regression: the app VMs' managed identities had no Key Vault data-plane
@@ -118,9 +120,28 @@ run "minimal_inputs_apply" {
     error_message = "Each app VM's managed identity must hold a Key Vault Secrets User assignment."
   }
 
-  # Regression: the cache is created with public_network_access_enabled =
-  # false and Standard SKU cannot be VNet-injected, so without a private
-  # endpoint it is unreachable from the VMs by construction.
+  # The two Redis regressions below moved to redis_opted_in_is_reachable, since
+  # the default no longer provisions a cache. They are regressions worth
+  # keeping: both were real defects.
+  assert {
+    condition     = length(azurerm_private_endpoint.redis) == 0
+    error_message = "No cache by default means no private endpoint."
+  }
+}
+
+# The two Redis regressions that used to live in minimal_inputs_apply. Both
+# were real defects, so they keep their assertions -- just behind the opt-in
+# now that the cache is off by default.
+run "redis_opted_in_is_reachable" {
+  command = plan
+
+  variables {
+    enable_managed_redis = true
+  }
+
+  # Regression: the cache is created with public_network_access_enabled = false
+  # and the Standard SKU cannot be VNet-injected, so without a private endpoint
+  # it is unreachable from the VMs by construction.
   assert {
     condition     = length(azurerm_private_endpoint.redis) == 1
     error_message = "Managed Redis must be reachable over Private Link."
