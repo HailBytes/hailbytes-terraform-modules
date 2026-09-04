@@ -95,12 +95,13 @@ run "every_vm_can_read_its_secrets" {
     error_message = "Secrets User is the least-privilege role that can read a secret value; Reader cannot."
   }
 
-  # The Redis access key has to be readable by the same identities — Azure Cache
-  # for Redis has no in-VNet no-auth mode, so a cache the VMs cannot
-  # authenticate to is a cache they cannot use.
+  # No cache by default, so no access-key secret. When one IS provisioned the
+  # key must be stored — Azure Cache for Redis has no in-VNet no-auth mode, so
+  # a cache the VMs cannot authenticate to is a cache they cannot use. That
+  # pairing is asserted in feature_flags' managed_redis_when_opted_in.
   assert {
-    condition     = length(azurerm_key_vault_secret.redis) == 1
-    error_message = "The managed Redis access key must be stored for the VMs to fetch."
+    condition     = length(azurerm_key_vault_secret.redis) == 0
+    error_message = "With enable_managed_redis defaulting to false there is no cache, so no Redis access-key secret should be created."
   }
 }
 

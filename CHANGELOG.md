@@ -29,6 +29,19 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+- **`ha-hot-hot/azure`: Postgres HA could not be turned off, so a subscription without the zone-redundant offer had no way through.** `high_availability` was an unconditional block with `mode = var.db_high_availability_mode`, and azurerm has no value meaning "off" — the only way to disable it is to omit the block. A subscription that is not entitled to zone-redundant Postgres therefore failed roughly fifteen minutes into the create, after the server had already been accepted:
+
+  ```
+  Status: "MultiAzHaIsOfferRestricted"
+  Multi-Zone HA is not supported in this region. Please choose a different
+  region. For exceptions to this rule please open a support request...
+  ```
+
+  The message is misleading: this is a **per-subscription offer entitlement**, not a regional capability. North Europe supports zone-redundant Postgres; the customer's subscription was not entitled to it, and no amount of changing region would have helped. `terraform plan` cannot see entitlement.
+
+  The block is now `dynamic` on `db_high_availability_mode == "Disabled"`, and the variable validates against `ZoneRedundant | SameZone | Disabled`. **The default is unchanged** — an entitled subscription still gets a zone-redundant standby without asking. `Disabled` costs the *database* its standby, so a zone loss becomes a restore rather than a failover; the application tier stays hot-hot across zones 1 and 2 either way. `tests/db_ha_mode.tftest.hcl` pins all four paths, verified by reverting the block to unconditional and confirming only the `Disabled` run fails.
+
+
 - **CI: `terraform init` now retries a registry/network failure instead of turning `main` red.** On `36839bd` one of fourteen Azure `terraform validate` jobs failed with `could not connect to registry.terraform.io: ... read: connection reset by peer`, on a commit that changed no Terraform at all — thirteen sibling jobs resolving the same provider from the same registry passed. A red `main` nobody can attribute to a change is worse than a slow one: the next person either re-runs on faith or bisects a phantom.
 
   `.github/scripts/tf-init-retry.sh` wraps the three `terraform init` sites (module validate, module test, examples validate) with up to 3 attempts and a 5s/15s backoff. It deliberately does **not** blanket-retry: the output is matched against known-transient patterns (registry unreachable, discovery-document failure, connection reset, TLS/i-o timeout, 502/503/504, provider install error) and **anything else fails on the first attempt**, so a bad provider constraint or a missing variable still goes red as fast as it did before. Retrying those would triple time-to-red on the failures that matter and make a genuinely broken config look merely slow. Verified against a stub `terraform` on all four paths: success once, a real error once, transient-then-success, and transient throughout.
@@ -156,6 +169,15 @@ All notable changes to this project are documented here. Format follows [Keep a 
   The branch is now the new `vm_subnet_is_lb_subnet` input (default `false`), which is known at plan time — matching how the sibling `unlimited-scale/azure` has always gated the same NSG. A `check` block reports a flag that disagrees with the actual IDs, on the first apply where both are known.
 
 ### Changed — BREAKING
+
+- **`enable_managed_redis` now defaults to `false`** on `ha-hot-hot/azure` and both HA wrappers. The variable's own comment has said for some time that this is "not the obvious choice it looks like"; a customer deployment settled it. Three reasons, unchanged: it is **not required for HA** (shared session hash/encryption keys make the cookie store work across nodes, hailbytes-sat#907); at the default Standard SKU it is **not zone-redundant**, so it was a single-zone dependency inside a zone-redundant topology; and when it is unreachable the app does not degrade evenly — the session store is chosen once at boot, so a dead cache logs everyone out *and* blocks logging back in, taking the admin console with it. The practical cost was the clincher: **~40 minutes of a ~45 minute apply**, and about the same again to delete.
+
+  Turning it off removes a single-zone dependency from the login path and saves ~$101/mo. Set `enable_managed_redis = true` to opt back in; with `redis_sku_name = "Premium"` it is genuinely zone-redundant, at ~$304/mo more.
+
+  **Upgrade impact:** an existing deployment that has a cache will plan to **destroy** it on the next apply unless `enable_managed_redis = true` is set explicitly. The destroy takes ~15–20 minutes and runs in parallel with the rest of the graph — nothing depends on the cache resource, so it does not extend the critical path. Sessions survive: the cookie store takes over.
+
+  Five existing tests asserted the old default and were pinning it rather than the behaviour — including two genuine Redis regressions (no private endpoint, no stored access key) that now live behind `enable_managed_redis = true` in `basic.tftest.hcl` so they keep their value. The `redis_mode` output's description also claimed `disabled` meant "HA is not actually safe", which contradicted the variable's own reasoning; corrected.
+
 
 - **Azure Storage-backed features now default OFF, because on their previous defaults the apply could not succeed.** `enable_flow_logs` on `network/azure` and `create_backup_storage_account` on all three Azure tier modules defaulted to `true`. Both create a Storage Account with `shared_access_key_enabled = false` **and** `public_network_access_enabled = false`, and this repo provisions no storage private endpoint and no `Microsoft.Storage` service endpoint. The `azurerm` provider nevertheless reads those accounts' **queue service properties over the storage data plane**, so an apply run from outside the VNet — Cloud Shell, a laptop, CI — failed with:
 

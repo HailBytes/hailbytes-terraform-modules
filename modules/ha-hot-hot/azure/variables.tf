@@ -252,9 +252,29 @@ variable "db_backup_retention_days" {
 }
 
 variable "db_high_availability_mode" {
-  description = "ZoneRedundant gives HA across availability zones; SameZone is cheaper but lower SLA."
+  # "Disabled" omits the high_availability block entirely -- azurerm has no
+  # off switch for it, so the block is dynamic on this value.
+  #
+  # Zone-redundant Postgres is an offer entitlement, not a regional capability.
+  # A subscription without it fails ~15 minutes into the create with
+  # MultiAzHaIsOfferRestricted, and nothing in a plan can predict it. Check
+  # before deploying, per region:
+  #
+  #   az postgres flexible-server list-skus -l <region> \
+  #     --query "[?name=='<sku>'].capabilities" -o json
+  #
+  # The application tier is still hot-hot across zones 1 and 2 with this
+  # Disabled -- it is the DATABASE that loses its standby, so a zone loss
+  # becomes a restore-from-backup rather than a failover. Acceptable for a
+  # pilot, a decision to make deliberately for production.
+  description = "Postgres HA mode. ZoneRedundant gives a standby in another zone (requires the subscription to be entitled to it - see MultiAzHaIsOfferRestricted); SameZone is cheaper with a lower SLA; Disabled omits HA entirely, which is the only option on a subscription without the zone-redundant offer."
   type        = string
   default     = "ZoneRedundant"
+
+  validation {
+    condition     = contains(["ZoneRedundant", "SameZone", "Disabled"], var.db_high_availability_mode)
+    error_message = "db_high_availability_mode must be ZoneRedundant, SameZone or Disabled."
+  }
 }
 
 variable "accept_marketplace_terms" {
@@ -421,7 +441,7 @@ variable "enable_post_patch_run_command" {
 variable "enable_managed_redis" {
   description = "Provision an Azure Cache for Redis. NOT required for HA -- shared session keys make the default cookie store work across nodes (hailbytes-sat#907), so this is an optimisation, and at the default Standard SKU it is a single-zone one. Read the comment above before leaving it on. Defaults true, which means a default apply needs the Microsoft.Cache provider registered; set false to skip both."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "redis_sku_name" {

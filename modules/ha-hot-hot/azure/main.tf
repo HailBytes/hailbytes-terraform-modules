@@ -1059,8 +1059,24 @@ resource "azurerm_postgresql_flexible_server" "main" {
   backup_retention_days        = var.db_backup_retention_days
   geo_redundant_backup_enabled = var.postgres_geo_redundant_backup_enabled
 
-  high_availability {
-    mode = var.db_high_availability_mode
+  # Conditional, because "no HA" is not a mode -- azurerm has no "Disabled"
+  # value, so the only way to switch it off is to omit the block. It used to be
+  # unconditional, which meant a subscription that cannot offer zone-redundant
+  # Postgres had no way through at all:
+  #
+  #   Status: "MultiAzHaIsOfferRestricted"
+  #   Multi-Zone HA is not supported in this region. Please choose a different
+  #   region. For exceptions to this rule please open a support request...
+  #
+  # That is a per-subscription offer restriction, not a regional capability --
+  # North Europe supports it, this customer's subscription is not entitled to
+  # it. Terraform cannot see that at plan time, and it surfaces ~15 minutes
+  # into the create, after the server has been accepted.
+  dynamic "high_availability" {
+    for_each = var.db_high_availability_mode == "Disabled" ? [] : [1]
+    content {
+      mode = var.db_high_availability_mode
+    }
   }
 
   # CMK (gap B6). Two Microsoft constraints shape this block:

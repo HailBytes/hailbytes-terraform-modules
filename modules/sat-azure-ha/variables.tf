@@ -411,7 +411,7 @@ variable "enable_post_patch_run_command" {
 variable "enable_managed_redis" {
   description = "Provision an Azure Cache for Redis (Standard or Premium SKU, zone-redundant in Premium). Required for HA; set to false only when supplying redis_endpoint_override."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "redis_sku_name" {
