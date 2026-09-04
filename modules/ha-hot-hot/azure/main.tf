@@ -1041,6 +1041,21 @@ resource "azurerm_postgresql_flexible_server" "main" {
   delegated_subnet_id = var.db_delegated_subnet_id
   private_dns_zone_id = var.private_dns_zone_id
 
+  # MUST be false whenever delegated_subnet_id is set. This module always sets
+  # it -- the server is VNet-injected by design -- and azurerm defaults this
+  # argument to true, so leaving it unset made Azure refuse the create:
+  #
+  #   400 ConflictingPublicNetworkAccessAndVirtualNetworkConfiguration:
+  #   Conflicting configuration is detected between Public Network Access and
+  #   Virtual Network arguments. Public Network Access is not supported along
+  #   with Virtual Network feature.
+  #
+  # It failed on a customer's first apply, ~40 minutes in, after the Redis
+  # cache and the rest of the network were already built. terraform plan cannot
+  # catch it: the conflict is server-side, exactly like the Key Vault service
+  # endpoint and the duplicate NSG name before it.
+  public_network_access_enabled = false
+
   backup_retention_days        = var.db_backup_retention_days
   geo_redundant_backup_enabled = var.postgres_geo_redundant_backup_enabled
 
