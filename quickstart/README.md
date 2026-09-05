@@ -82,6 +82,43 @@ complete root config for the Azure HA tier — networking included — that you 
 copy, edit and apply. Per-tier module documentation lives under
 [`../modules/`](../modules).
 
+## Cleaning up after test deploys
+
+Repeated test deploys leave resource groups behind, and the leftovers are not
+inert: a half-built load balancer, an orphaned diagnostic setting or a
+pre-existing key vault makes the **next** apply stop partway through with
+`already exists - to be managed via Terraform this resource needs to be
+imported`, after other resources have already been created.
+
+[`sweep-azure.sh`](sweep-azure.sh) finds that debris:
+
+```bash
+./quickstart/sweep-azure.sh list --prefix myprefix   # inventory
+./quickstart/sweep-azure.sh show <rg>                # what is inside, incl. child resources
+./quickstart/sweep-azure.sh imports <rg>             # PRINT terraform import commands
+./quickstart/sweep-azure.sh delete <rg>              # delete it, with guards
+```
+
+`list`, `show` and `imports` change nothing.
+
+`show` reports child resources that **`az resource list` does not show** — a
+diagnostic setting on a load balancer is the one that most often blocks an
+apply.
+
+For test debris, deleting is almost always the right answer and importing
+almost never is: `terraform import` writes ownership into state, so a resource
+whose settings don't exactly match the configuration gets mutated by the next
+apply and deleted by the next destroy. `imports` therefore **prints** commands
+for you to read and choose from and never runs one. When it does emit them it
+includes the load balancer's children (pool, probes, rules) — importing the
+load balancer alone just moves the same failure one layer down.
+
+`delete` refuses outright when the hostname you pass with `--hostname`
+currently resolves to an address inside the group, because Azure has **no
+undelete for a public IP**: deleting the group loses the address permanently
+and forces a DNS change. Locks, storage accounts and unattached public IPs are
+reported before it asks you to type the group name. There is no `--force`.
+
 ## Testing
 
 The wizard is interactive, but its pure logic is unit-tested and runs in CI:
@@ -89,6 +126,7 @@ The wizard is interactive, but its pure logic is unit-tested and runs in CI:
 ```bash
 bash quickstart/tests/deploy_test.sh
 bash quickstart/tests/cloud_prereqs_test.sh
+bash quickstart/tests/sweep_azure_test.sh
 ```
 
 `deploy_test.sh` covers cloud detection, the tier → module-name mapping (a typo
@@ -107,6 +145,16 @@ that the provider/role lists in the standalone `preflight-azure.sh` /
 paths would otherwise silently drift apart, which is exactly what happened to
 [`docs/DEPLOY_FROM_GALLERY.md`](../docs/DEPLOY_FROM_GALLERY.md)'s provider list
 before this test existed.
+
+`sweep_azure_test.sh` covers `sweep-azure.sh` against a mocked `az`. Its two
+targets are the failure modes that are silent rather than loud: reporting
+"nothing to clean up" when the lookup merely **failed** (an expired login
+otherwise reads as an all-clear on precisely the question being asked), and
+reading `az ... -o tsv` columns by a position the CLI does not use — with the
+multiselect *hash* form (`[].{k:a,...}`) the CLI emits columns **sorted by
+key**, not in written order, so `[].{type:type,name:name}` arrives name-first.
+The mock reproduces that sorting rather than papering over it, and a static
+assertion fails the build if a hash-form query reappears.
 
 `deploy.sh` can be sourced for testing without running the wizard:
 

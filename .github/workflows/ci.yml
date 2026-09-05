@@ -304,6 +304,12 @@ jobs:
   # deploy.sh checks before apply stay in sync with the standalone
   # preflight-azure.sh / preflight-aws.sh scripts that document the same
   # requirement outside the wizard.
+  #
+  # sweep_azure_test.sh covers quickstart/sweep-azure.sh, whose two ways of
+  # being wrong are both silent: reporting "nothing to clean up" when the
+  # lookup merely failed, and reading `az ... -o tsv` columns by a position
+  # the CLI does not actually use (it sorts multiselect-hash keys). Both are
+  # asserted directly rather than left to review.
   # ---------------------------------------------------------------------
   quickstart-wizard:
     name: quickstart wizard — shellcheck + unit tests
@@ -331,6 +337,9 @@ jobs:
 
       - name: Cloud account prerequisites tests (mocked az/aws, no credentials)
         run: bash quickstart/tests/cloud_prereqs_test.sh
+
+      - name: Leftover-sweep tests (mocked az, no credentials)
+        run: bash quickstart/tests/sweep_azure_test.sh
 
       - name: Cloud Shell tool availability
         # Both Cloud Shells ship terraform, git and their own CLI. If the
