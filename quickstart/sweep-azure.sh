@@ -156,7 +156,7 @@ audit_protection() {
     pips="$(az_ network public-ip list -g "$rg" --query "[].[ipAddress,name,ipConfiguration.id]" -o tsv)"
     if [ -n "${pips//[[:space:]]/}" ]; then
         warn "holds $(printf '%s\n' "$pips" | grep -c .) public IP(s) -- Azure cannot undelete these"
-        local ip name used host fwd
+        local ip name used host
         while IFS=$'\t' read -r ip name used; do
             [ -z "$ip" ] && continue
             printf '         %-16s %-30s %s\n' "$ip" "$name" \
@@ -164,8 +164,16 @@ audit_protection() {
             host="$(getent hosts "$ip" 2>/dev/null | awk '{print $2}' | head -1)"
             [ -n "$host" ] && { printf '         %-16s reverse-resolves to %s\n' "" "$host"; risky=1; }
             if [ -n "$HOSTNAME_GUARD" ]; then
-                fwd="$(getent hosts "$HOSTNAME_GUARD" 2>/dev/null | awk '{print $1}' | head -1)"
-                if [ "$fwd" = "$ip" ]; then
+                # EVERY address the name resolves to, not just the first.
+                # `getent hosts` prints a single line, and on a dual-stack host
+                # that line is usually the AAAA -- so a hostname with both an
+                # AAAA and an A record would slip past this guard even when the
+                # A record points straight at an address in this group, which is
+                # the one case the guard exists for. `getent ahosts` lists both
+                # families; -qxF matches a whole line literally so 10.0.0.1
+                # cannot match 110.0.0.10.
+                if getent ahosts "$HOSTNAME_GUARD" 2>/dev/null \
+                     | awk '{print $1}' | sort -u | grep -qxF "$ip"; then
                     bad "${HOSTNAME_GUARD} currently resolves to ${ip}, which is in this group"
                     note "Deleting the group destroys that address and Azure cannot give"
                     note "it back. Move it somewhere safe first:"

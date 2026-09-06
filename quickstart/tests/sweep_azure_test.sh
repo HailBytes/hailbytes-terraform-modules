@@ -145,11 +145,24 @@ has "no terminal refuses the delete"         "Refusing to delete without a termi
 o="$(MOCK_RG_COUNT=3 MOCK_STORAGE='hbteststate\n' bash "$SWEEP" delete hbtest-rg-01 2>&1)"
 has "a storage account is reported"          "holds storage account(s): hbteststate" "$o"
 
-# The one BLOCKING guard: a live hostname resolving into the group. localhost
-# is used because it resolves identically everywhere, including in CI.
+# The one BLOCKING guard: a live hostname resolving into the group.
+#
+# `localhost` is deliberately the hostname here. It is dual-stack on a GitHub
+# runner (::1 AND 127.0.0.1) and IPv4-only in some containers, and that
+# difference caught a real bug: the guard read only the FIRST address `getent`
+# returned, so on the runner it compared ::1, found no match, and let the
+# delete through. A hostname with both an AAAA and an A record -- the A
+# pointing into the group -- would have done the same in production.
+#
+# Assert the BLOCKING message specifically. "Refusing to delete" alone is not
+# enough: the no-terminal guard emits "Refusing to delete without a terminal",
+# so a substring assertion passes even when the blocking guard never fires --
+# which is exactly how the bug above stayed hidden.
 o="$(MOCK_RG_COUNT=3 MOCK_PIPS='127.0.0.1\thb-lb-pip\tNone\n' \
      bash "$SWEEP" delete hbtest-rg-01 --hostname localhost 2>&1)"
-has  "a live hostname in the group blocks the delete" "Refusing to delete" "$o"
+has  "a live hostname in the group blocks the delete" \
+     "BLOCKED  localhost currently resolves to 127.0.0.1" "$o"
+has  "and it stops for that reason, not for the tty"  "Refusing to delete -- see the blocked item" "$o"
 hasnt "and it never reaches the confirmation prompt"  "Type the resource group name" "$o"
 has  "and it says how to rescue the address"          "az resource move" "$o"
 
