@@ -462,12 +462,16 @@ pick_scale_knobs() {
   MIN_COUNT="$(ask "Minimum instances" "2")"
   MAX_COUNT="$(ask "Maximum instances the autoscaler may reach" "$MIN_COUNT")"
   if [ "$MAX_COUNT" -gt "$MIN_COUNT" ] 2>/dev/null; then
-    # 8 vCPU per node: the module default is the 8-vCore training floor
-    # (m6i.2xlarge / Standard_D8s_v5). This was hardcoded at 2 when the
-    # defaults shipped below the floor.
-    local extra=$(( (MAX_COUNT - MIN_COUNT) * 8 ))
+    # vCPUs per node at the module default, which now differs by cloud: AWS is
+    # still the 8-vCore training floor (m6i.2xlarge), Azure defaults to
+    # Standard_B4ms (4 vCPU) because the Dsv5 quota pool is commonly 0 in a
+    # fresh subscription. Quoting 8 for Azure would overstate the bill by
+    # double, which is the wrong direction for a cost warning to be wrong in.
+    local per_node=8
+    [ "$CLOUD" = azure ] && per_node=4
+    local extra=$(( (MAX_COUNT - MIN_COUNT) * per_node ))
     cost_warning "Autoscaling is enabled: max ${MAX_COUNT} instances." \
-      "Scaling out meters every extra instance. At 8 vCPU per instance that is" \
+      "Scaling out meters every extra instance. At ${per_node} vCPU per instance that is" \
       "up to ${extra} additional metered vCPUs, roughly" \
       "\$$(awk "BEGIN{printf \"%.0f\", ${extra}*730*${METER_PER_VCPU_HOUR}}")/month on top of your baseline if it" \
       "sits at maximum." \

@@ -28,7 +28,9 @@ VM Scale Set. The three are not interpolatable: don't quote "2× a single VM"
 for HA.
 
 > **⚠️ These rows are sized at 2 vCPU per app node, which is BELOW the module
-> default of `Standard_D8s_v5`.** That default is a deliberate starting point,
+> default of `Standard_B4ms` (4 vCPU, changed 2026-09-07 — see
+> [docs/SKU_DEPLOYMENT_MATRIX.md](docs/SKU_DEPLOYMENT_MATRIX.md#revised-2026-09-07-the-azure-default-moved-off-dsv5)
+> for why, and for what it costs commercially).** That default is a deliberate starting point,
 > not a minimum: since the payload and pagination work of 2026-08-24, 2 vCPU
 > carries a measured 11,579 students/day and 4 vCPU 37,186
 > (`hailbytes-sat/bench/locust/RESULTS.md`). The earlier claim here — that 2
@@ -42,7 +44,7 @@ for HA.
 
 All rows use **`Standard_D2s_v5` (2 vCPU)** as the app-VM size, the
 procurement-grade equivalent of the AWS table's `m6i.large`. The module default
-is `Standard_D8s_v5`, so these rows show the pilot rung rather than the default
+is `Standard_B4ms`, so these rows show the pilot rung rather than the default
 — read the meter column as `metered vCores × 730h × $0.24` and re-derive it for
 the size you are quoting.
 

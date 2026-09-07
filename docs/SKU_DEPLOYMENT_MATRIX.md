@@ -92,6 +92,51 @@ Every tier now lands on a purchasable rung at its defaults: single-vm on
 the smallest thing a customer could buy was 8 vCPU, and the largest thing this
 repo deployed by default was 6 vCores.
 
+### Revised 2026-09-07: the Azure default moved off Dsv5
+
+The Azure rows above are superseded. `vm_size` now defaults to
+`Standard_B4ms` (4 vCPU, burstable); AWS is unchanged on `m6i.2xlarge`.
+
+The reason is that the Dsv5 default **could not deploy at all** in a
+subscription that had not been granted Dsv5 quota. Every Dsv5 rung — `D2s_v5`
+through `D64s_v5` — draws one pool, `standardDSv5Family`, and Azure routinely
+grants that pool a limit of **0** to a subscription that has never asked for
+it. Observed on a HailBytes test subscription on 2026-09-07:
+
+```
+409 OperationNotAllowed: exceeding approved standardDSv5Family Cores quota.
+Location: northeurope, Current Limit: 0, Current Usage: 0, Additional Required: 2
+```
+
+An HA pair at the old default needed **16** vCPUs of that pool. And the
+failure arrives late: the VMs are created after the network, load balancer,
+Key Vault and Flexible Server, so it lands roughly twelve minutes into an
+apply and leaves a part-built stack to tear down. Clearing it needs a support
+request. B-series quota is granted by default, so `B4ms` deploys first time.
+
+**What this costs, stated plainly.** The Azure defaults no longer land on a
+purchasable rung, which re-opens gap 1 below for Azure specifically:
+
+| Tier module | Default | Instances | Metered vCores | Matching SKU |
+|---|---|---:|---:|---|
+| `single-vm/azure` | `Standard_B4ms` (4) | 1 | **4** | none — below `HB-ESS` (8) |
+| `ha-hot-hot/azure` | `Standard_B4ms` (4) | 2 | **8** | `HB-ESS` (8) |
+| `unlimited-scale/azure` | `Standard_B4ms` (4) | 2 | **8** | `HB-ESS` (8) |
+
+HA and autoscale still land on a sellable rung. **`single-vm/azure` does not** —
+it meters 4 vCores, and the smallest SKU is 8.
+
+B-series is also **burstable**: it banks CPU credits while idle and throttles
+to a fraction of a core once they are spent. That suits a pilot or steady low
+load, not sustained campaign sending. `Standard_D8s_v5` remains on the ladder
+and remains the published purchasable rung; the upgrade is a `vm_size` change
+once Dsv5 quota is granted.
+
+The trade was made deliberately: a default that deploys on the first attempt
+was judged worth more than a default that matches the price list, because the
+Dsv5 default was costing real deployment calls. Revisit if Azure's default
+grants change.
+
 Consequences, in order of how much they cost us:
 
 1. **The quickstart deploys a shape that matches no SKU.** `quickstart/deploy.sh`

@@ -264,8 +264,15 @@ check "a missing zone names the zone and the consequence" \
   "$(grep -c 'zone 2 is not available' <<<"$out")" "1"
 
 out="$(azure_out no_quota)"
+# 8, not 16: the Azure module default is Standard_B4ms (4 vCPU) x 2 nodes.
+# It moved off the 8-vCore Dsv5 floor because the Dsv5 pool is routinely
+# granted a limit of 0 in a fresh subscription, which failed the apply after
+# the network and database were built.
 check "short quota says how much is needed and how much there is" \
-  "$(grep -c 'NOT ENOUGH. This deployment needs 16 and can get 2' <<<"$out")" "1"
+  "$(grep -c 'NOT ENOUGH. This deployment needs 8 and can get 2' <<<"$out")" "1"
+# And it must read the BS pool, not Dsv5 -- a different pool entirely.
+check "the default reads the B-series quota pool" \
+  "$(grep -c "Standard BS Family" <<<"$out")" "2"
 
 # The quota figure has to follow the size being deployed. Pinned at the 8-vCore
 # default, a 2 x Standard_D2s_v5 pilot was told it needed 16 vCPUs instead of 4

@@ -103,16 +103,18 @@ variable "vmss_default_count" {
 }
 
 variable "vm_size" {
-  description = "Azure VM SKU for the HailBytes application node(s). Constrained to the portable Dsv5 ladder; see the validation message. Defaults to the 8-vCore training floor."
+  description = "Azure VM SKU for the HailBytes application node(s). Constrained to the portable ladder; see the validation message. Defaults to Standard_B4ms (4 vCPU, burstable) so that a first deployment succeeds without a quota request -- the Dsv5 families commonly sit at a limit of 0 in a fresh subscription. Move to the Dsv5 ladder before sustained campaign load."
   type        = string
-  default     = "Standard_D8s_v5"
+  default     = "Standard_B4ms"
 
   validation {
-    # The portable ladder. Every entry is a stock Dsv5 general-purpose shape at
+    # The portable ladder. The Dsv5 entries are stock general-purpose shapes at
     # the same 4 GB-per-vCore ratio as the AWS m6i equivalent, so a deployment
-    # can move between clouds without changing tier. B2s is the pilot exception.
+    # can move between clouds without changing tier. The B-series entries are
+    # burstable and have no m6i counterpart.
     condition = contains([
       "Standard_B2s",     # 2 vCPU  - pilot, phishing simulation only
+      "Standard_B4ms",    # 4 vCPU  - DEFAULT; burstable, deploys without a Dsv5 grant
       "Standard_D2s_v5",  # 2 vCPU  - phishing simulation only
       "Standard_D4s_v5",  # 4 vCPU  - phishing simulation only
       "Standard_D8s_v5",  # 8 vCPU  - training floor and purchasable entry rung
@@ -121,7 +123,7 @@ variable "vm_size" {
       "Standard_D48s_v5", # 48 vCPU
       "Standard_D64s_v5", # 64 vCPU
     ], var.vm_size)
-    error_message = "vm_size must be a portable HailBytes rung: Standard_B2s or Standard_D2s_v5 (2 vCPU), Standard_D4s_v5 (4), Standard_D8s_v5 (8), Standard_D16s_v5 (16), Standard_D32s_v5 (32), Standard_D48s_v5 (48), Standard_D64s_v5 (64). Azure Dsv5 has NO general-purpose size between 16 and 32 vCPU -- there is no Standard_D24s_v5 -- so a 24-vCore deployment cannot be delivered as one VM or as a symmetric pair; quote 16 or 32. The 2 and 4 vCPU rungs carry measured training capacity as of 2026-08-24 and are supported for pilots and small rosters; 8 remains the default and the published purchasable rung. Size from measured load rather than from the rung -- see hailbytes-sat/docs/VM_SCALING.md."
+    error_message = "vm_size must be a portable HailBytes rung: Standard_B2s (2 vCPU) or Standard_B4ms (4 vCPU) on the burstable B-series; Standard_D2s_v5 (2), Standard_D4s_v5 (4), Standard_D8s_v5 (8), Standard_D16s_v5 (16), Standard_D32s_v5 (32), Standard_D48s_v5 (48), Standard_D64s_v5 (64) on the Dsv5 ladder. Azure Dsv5 has NO general-purpose size between 16 and 32 vCPU -- there is no Standard_D24s_v5 -- so a 24-vCore deployment cannot be delivered as one VM or as a symmetric pair; quote 16 or 32. TWO THINGS ABOUT THE DEFAULT. It is Standard_B4ms because the Dsv5 families are frequently granted a quota LIMIT OF 0 in a subscription that has never asked for them, and every Dsv5 rung draws that one pool -- so a Dsv5 default fails the apply after the network, Key Vault and database are already built, and needs a support request to clear. B-series quota is granted by default, so B4ms deploys first time. And B-series is BURSTABLE: it banks CPU credits while idle and throttles to a fraction of a core once they are spent, which suits pilots and steady low load, not sustained campaign sending. Move to the Dsv5 ladder for production load, having first confirmed quota with: az vm list-usage --location <region> -o table. The 2 and 4 vCPU rungs carry measured training capacity as of 2026-08-24; Standard_D8s_v5 remains the published purchasable rung. Size from measured load rather than from the rung -- see hailbytes-sat/docs/VM_SCALING.md."
   }
 }
 

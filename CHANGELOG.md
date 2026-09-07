@@ -4,6 +4,27 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Changed
+
+- **Azure `vm_size` now defaults to `Standard_B4ms` (4 vCPU, burstable), not `Standard_D8s_v5`.** All three Azure tier modules and all six Azure product wrappers. AWS `instance_type` is unchanged on `m6i.2xlarge`, so the two clouds no longer default to the same rung.
+
+  The Dsv5 default **could not deploy** in a subscription that had never been granted Dsv5 quota. Every Dsv5 rung — `D2s_v5` through `D64s_v5` — draws one pool, `standardDSv5Family`, and Azure routinely grants that pool a limit of `0`. An HA pair at the old default needed 16 vCPUs of it. Observed on a HailBytes test subscription, 2026-09-07:
+
+  ```
+  409 OperationNotAllowed: exceeding approved standardDSv5Family Cores quota.
+  Location: northeurope, Current Limit: 0, Current Usage: 0, Additional Required: 2
+  ```
+
+  It fails late, which is what makes it expensive: the VMs are created after the network, load balancer, Key Vault and Flexible Server, so the failure lands about twelve minutes into an apply and leaves a part-built stack to tear down. Clearing it needs a support request. B-series quota is granted by default, so `Standard_B4ms` deploys first time.
+
+  **What this costs.** `single-vm/azure` now meters 4 vCores at its default, and the smallest purchasable SKU is 8 — so that tier's default no longer maps to a SKU. HA and autoscale still land on `HB-ESS` (8 metered). And B-series is burstable: it banks CPU credits while idle and throttles to a fraction of a core when they are spent, which suits pilots and steady low load rather than sustained campaign sending. `Standard_D8s_v5` stays on the ladder and stays the published purchasable rung; moving to it is a `vm_size` change once quota is granted. Rationale and the commercial trade: [docs/SKU_DEPLOYMENT_MATRIX.md](docs/SKU_DEPLOYMENT_MATRIX.md).
+
+  `Standard_B4ms` was added to the `vm_size` validation ladder (`Standard_B2s` was already there as the 2-vCPU pilot rung). `quickstart/preflight-azure.sh` now defaults to the same size, maps any `Standard_B*` to the `standardBSFamily` quota pool rather than only `Standard_B2s`, and `quickstart/deploy.sh`'s autoscale cost warning quotes 4 vCPU per node on Azure instead of 8 — quoting 8 would have overstated the bill by double.
+
+  **Existing deployments that rely on the default will see a size change on their next plan.** Pin `vm_size` explicitly to stay where you are.
+
+  New `tests/vm_size_default.tftest.hcl` pins the default, that it is 4 vCPU rather than 2, that the Dsv5 training floor stays selectable, that `B4ms` passes its own validation, and that an off-ladder size is still refused. Nothing asserted the default before this — the other 51 runs passed unchanged when it moved, which is how a default ships broken.
+
 ### Added
 
 - **`quickstart/sweep-azure.sh`: find and clean up the leftovers from repeated test deploys.** Debris from a failed or abandoned apply is not inert — a half-built load balancer, an orphaned diagnostic setting or a pre-existing key vault makes the *next* apply stop partway through with `already exists - to be managed via Terraform this resource needs to be imported`, after other resources have already been created, so the failed apply leaves debris of its own. Until now finding that meant a hand-written `az` loop per group, and the child resources most likely to be responsible are invisible to `az resource list`.

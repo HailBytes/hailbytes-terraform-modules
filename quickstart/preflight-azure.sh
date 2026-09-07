@@ -44,7 +44,7 @@ set -uo pipefail
 TIER="${1:-ha}"
 ACCEPT_TERMS=0
 LOCATION="${HB_LOCATION:-northeurope}"
-VM_SKU="${HB_VM_SIZE:-Standard_D8s_v5}"
+VM_SKU="${HB_VM_SIZE:-Standard_B4ms}"
 
 # Parse the flags after the tier. --location and --vm-size take values, so a
 # plain `for arg in "$@"` cannot read them.
@@ -91,6 +91,7 @@ SKU="standard-v2"
 # The ladder is the one in modules/*/azure/variables.tf vm_size validation.
 case "$VM_SKU" in
     Standard_B2s|Standard_D2s_v5)  VM_SKU_VCPUS=2  ;;
+    Standard_B4ms)                 VM_SKU_VCPUS=4  ;;
     Standard_D4s_v5)               VM_SKU_VCPUS=4  ;;
     Standard_D8s_v5)               VM_SKU_VCPUS=8  ;;
     Standard_D16s_v5)              VM_SKU_VCPUS=16 ;;
@@ -99,7 +100,7 @@ case "$VM_SKU" in
     Standard_D64s_v5)              VM_SKU_VCPUS=64 ;;
     *)
         echo "unknown --vm-size: ${VM_SKU}" >&2
-        echo "Portable rungs: Standard_B2s, Standard_D2s_v5, Standard_D4s_v5," >&2
+        echo "Portable rungs: Standard_B2s, Standard_B4ms, Standard_D2s_v5, Standard_D4s_v5," >&2
         echo "Standard_D8s_v5, Standard_D16s_v5, Standard_D32s_v5," >&2
         echo "Standard_D48s_v5, Standard_D64s_v5." >&2
         exit 2
@@ -344,9 +345,11 @@ needed=$(( node_count * VM_SKU_VCPUS ))
 
 # B-series draws its own quota pool, so a B2s pilot reading the DSv5 meter
 # would report a number that has nothing to do with what it is about to create.
+# The whole B-series shares one pool whatever the suffix, and it is a different
+# pool from Dsv5 -- which routinely sits at a limit of 0 in a fresh subscription.
 case "$VM_SKU" in
-    Standard_B2s) quota_family="Standard BS Family"; quota_key="standardBSFamily" ;;
-    *)            quota_family="Standard DSv5 Family"; quota_key="standardDSv5Family" ;;
+    Standard_B*) quota_family="Standard BS Family"; quota_key="standardBSFamily" ;;
+    *)           quota_family="Standard DSv5 Family"; quota_key="standardDSv5Family" ;;
 esac
 echo "The ${TIER} tier builds ${node_count} application VM(s) at ${VM_SKU}"
 echo "(${VM_SKU_VCPUS} vCPUs each), so it needs ${needed} vCPUs of"
