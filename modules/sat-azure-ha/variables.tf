@@ -16,13 +16,15 @@ variable "vm_subnet_id" {
 }
 
 variable "db_delegated_subnet_id" {
-  description = "Subnet delegated to Microsoft.DBforPostgreSQL/flexibleServers (vnet-integrated Postgres)."
+  description = "Subnet delegated to Microsoft.DBforPostgreSQL/flexibleServers (vnet-integrated Postgres). Required when db_mode = \"flexible_server\", which a precondition in the core module enforces. Leave null in \"vm\" and \"external\" modes: there is no Flexible Server to inject, so demanding it would force a delegated subnet nobody uses."
   type        = string
+  default     = null
 }
 
 variable "private_dns_zone_id" {
-  description = "Private DNS zone ID for postgres.database.azure.com (linked to the vnet)."
+  description = "Private DNS zone ID for postgres.database.azure.com (linked to the vnet). Required when db_mode = \"flexible_server\", which a precondition in the core module enforces. Leave null in \"vm\" and \"external\" modes."
   type        = string
+  default     = null
 }
 
 variable "lb_subnet_id" {
@@ -239,12 +241,16 @@ variable "marketplace_image_version" {
 # ----- Patching and migration safety -----
 
 variable "db_mode" {
-  description = "Database backend. 'flexible_server' (default) provisions Azure Database for PostgreSQL Flexible Server — recommended for production. 'vm' provisions a third Linux VM with self-managed Postgres 16 for customers that must keep data plane on a VM."
+  description = "Database backend. 'flexible_server' (default) provisions Azure Database for PostgreSQL Flexible Server — recommended for production, and the only mode with zone-redundant failover and point-in-time restore. 'vm' provisions a third Linux VM with self-managed Postgres 16 for customers that must keep data plane on a VM. 'external' connects to a Postgres server the customer already operates: this module provisions no database at all, and the customer owns its availability, backups and patching."
   type        = string
   default     = "flexible_server"
   validation {
-    condition     = contains(["flexible_server", "vm"], var.db_mode)
-    error_message = "db_mode must be one of: flexible_server, vm."
+    # 'external' was rejected here while main.tf forwarded every external_db_*
+    # variable to ha-hot-hot and outputs.tf documented db_is_customer_managed:
+    # the wrapper forbade the one mode its own passthrough and outputs already
+    # supported. ha-hot-hot has always accepted all three.
+    condition     = contains(["flexible_server", "vm", "external"], var.db_mode)
+    error_message = "db_mode must be one of: flexible_server, vm, external."
   }
 }
 

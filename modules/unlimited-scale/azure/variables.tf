@@ -344,7 +344,7 @@ variable "enable_post_patch_run_command" {
 # ----- Shared session store (Azure Cache for Redis) -----
 
 variable "enable_managed_redis" {
-  description = "Provision an Azure Cache for Redis (Standard or Premium SKU). Required for horizontal scaling; set to false only when supplying redis_endpoint_override."
+  description = "Provision an Azure Cache for Redis (Standard or Premium SKU). Genuinely required on this tier, unlike ha-hot-hot: it is the only shared session store, because this module does not yet mint the shared session-keys secret that lets the stateless cookie store work across instances (hailbytes-sat#907). Set false only when supplying redis_endpoint_override -- turning it off outright makes every hop between instances an unrecoverable logout. See the comment on provision_managed_redis in main.tf."
   type        = bool
   default     = true
 }

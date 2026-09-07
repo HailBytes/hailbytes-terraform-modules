@@ -228,6 +228,17 @@ resource "random_password" "db" {
       condition     = var.db_mode == "external" || (var.external_db_host == null && var.external_db_password == null)
       error_message = "external_db_host / external_db_password are only used when db_mode = \"external\"; unset them or switch db_mode."
     }
+    # db_delegated_subnet_id and private_dns_zone_id are consumed ONLY by
+    # azurerm_postgresql_flexible_server.main, which is count = 0 outside
+    # flexible_server mode. They used to be required variables regardless, so
+    # choosing "vm" or "external" still made the operator create a
+    # Postgres-delegated subnet and a private DNS zone that nothing would ever
+    # reference, and hold the permissions to do it. Now optional, and required
+    # only where they are actually read.
+    precondition {
+      condition     = var.db_mode != "flexible_server" || (var.db_delegated_subnet_id != null && var.private_dns_zone_id != null)
+      error_message = "db_mode = \"flexible_server\" requires both db_delegated_subnet_id and private_dns_zone_id: the server is VNet-injected, so it needs a delegated subnet and a linked private DNS zone."
+    }
   }
 
   length           = 32
@@ -816,12 +827,23 @@ resource "azurerm_linux_virtual_machine" "vm" {
 
   boot_diagnostics {}
 
-  # This payload is what the image is SUPPOSED to consume to wire itself to the
-  # shared DB. As of this commit the published marketplace image does not read
-  # it at all -- see hailbytes-sat#906. Until that lands, a VM booted from the
-  # marketplace image ignores every field below and comes up on its own local
-  # Postgres, which is a split-brain pair, not an HA pair. Do not read the
-  # presence of this block as evidence the wiring works.
+  # This payload is what the image consumes to wire itself to the shared DB.
+  #
+  # It used to be inert: the published image ignored it and every VM came up on
+  # its own local Postgres, which is a split-brain pair rather than an HA pair.
+  # That was hailbytes-sat#906, and it is fixed. cloud_tools/bootstrap.sh now
+  # reads /var/lib/waagent/CustomData and resolves the secrets named below from
+  # Key Vault over IMDS, so no Azure CLI is needed on the box.
+  #
+  # The fix landed in hailbytes-sat b739f2e7 at commit count 2353. Any image at
+  # or above 1.2353 contains it; marketplace_image_version pins which one you
+  # actually get, so check that before trusting this block. Verified for
+  # v1.2368 with `git merge-base --is-ancestor`.
+  #
+  # Caveat worth keeping: "the image contains the code" is not "the wiring is
+  # proven live". Confirm on a real deployment by logging in through the load
+  # balancer twice and checking both nodes report the same schema version
+  # (scripts/ci/lb_login_probe.sh does exactly this).
   #
   # Redis is NOT required for HA. The session payload is a handful of scalars,
   # so shared hash/encryption keys alone make the default cookie store work
@@ -1123,6 +1145,26 @@ resource "azurerm_postgresql_flexible_server" "main" {
     }
   }
 
+  # Required for CMK correctness: the crypto-user grant must exist before the
+  # server uses the key. It also costs time when CMK is OFF, which is default.
+  #
+  # MEASURED, two independent applies (2026-09-07): this server begins creating
+  # on the exact tick azurerm_key_vault.main completes, and so do both
+  # azurerm_managed_disk.data instances, which carry the same pattern via
+  # des_kv_crypto_user. The role assignments are count = 0 in those runs, so the
+  # edge survives count = 0 -- Terraform builds its graph from static config
+  # references, and the assignment's `scope` names the vault.
+  #
+  # NOT CONFIRMED: that breaking the edge would recover the ~3 minutes. In the
+  # same logs two azurerm_subnet_* associations ALSO took 3m6s, which points at
+  # Azure serializing concurrent mutations on a single VNet rather than at Key
+  # Vault being slow. If that is the cause, breaking this edge buys nothing and
+  # the fix is to reduce concurrent VNet operations. Measure first.
+  #
+  # Terraform has no conditional depends_on, so dropping the edge when CMK is
+  # off means splitting this into CMK and non-CMK resources with count, which
+  # changes state addresses and needs `terraform state mv` on every existing
+  # deployment. Not worth it for an unconfirmed 3 minutes.
   depends_on = [azurerm_role_assignment.cmk_kv_crypto_user]
 }
 
@@ -1543,6 +1585,33 @@ resource "azurerm_virtual_machine_run_command" "pre_patch_backup" {
         echo "NOTE: db_mode=external — the database is customer-managed, so this"
         echo "      Run Command takes no server-side snapshot. Ensure your own"
         echo "      backup or PITR covers the patch window before proceeding."
+        exit 0
+      fi
+      # The Marketplace image does not ship the Azure CLI, and nothing in
+      # scripts/packer/hailbytes-sat.pkr.hcl installs it. Everything above this
+      # point uses curl + IMDS precisely because of that; these two snapshot
+      # calls did not, so the whole Run Command exited 127 AFTER writing a
+      # valid backup bundle. Because azurerm_virtual_machine_run_command
+      # EXECUTES on create (unlike the aws_ssm_document it mirrors, which only
+      # registers), that turned a successful backup into a failed apply and
+      # took the entire deployment red at resource 55 of 59.
+      #
+      # Fail soft instead: the application-level bundle is the part that
+      # protects the customer's data, and it is already written. The
+      # server-side snapshot is belt-and-braces, so say plainly that it was
+      # skipped rather than destroying the apply over it.
+      if ! command -v az >/dev/null 2>&1; then
+        echo "NOTE: the Azure CLI is not installed on this image, so NO server-side"
+        echo "      snapshot was taken. The application backup bundle above WAS"
+        echo "      written successfully and is the part that holds your data."
+        echo ""
+        echo "      Before patching, take a server-side backup from the Portal, or"
+        echo "      run this from Cloud Shell (not on the VM), as one line:"
+        if [ "$DB_MODE" = "flexible_server" ]; then
+          echo "        az postgres flexible-server backup create --resource-group '${var.resource_group_name}' --name '${try(azurerm_postgresql_flexible_server.main[0].name, "")}' --backup-name '${local.name_prefix}-pre-patch-$${TS}'"
+        else
+          echo "        az snapshot create --resource-group '${var.resource_group_name}' --name '${local.name_prefix}-db-pre-patch-$${TS}' --source '${try(azurerm_managed_disk.db_data[0].id, "")}' --incremental true"
+        fi
         exit 0
       fi
       az login --identity --allow-no-subscriptions >/dev/null

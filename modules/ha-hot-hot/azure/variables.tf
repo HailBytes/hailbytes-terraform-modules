@@ -31,13 +31,15 @@ variable "vm_subnet_id" {
 }
 
 variable "db_delegated_subnet_id" {
-  description = "Subnet delegated to Microsoft.DBforPostgreSQL/flexibleServers (vnet-integrated Postgres)."
+  description = "Subnet delegated to Microsoft.DBforPostgreSQL/flexibleServers (vnet-integrated Postgres). Required when db_mode = \"flexible_server\", which a precondition enforces. Leave null in \"vm\" and \"external\" modes: there is no Flexible Server to inject, so demanding it would force a delegated subnet nobody uses."
   type        = string
+  default     = null
 }
 
 variable "private_dns_zone_id" {
-  description = "Private DNS zone ID for postgres.database.azure.com (linked to the vnet)."
+  description = "Private DNS zone ID for postgres.database.azure.com (linked to the vnet). Required when db_mode = \"flexible_server\", which a precondition enforces. Leave null in \"vm\" and \"external\" modes."
   type        = string
+  default     = null
 }
 
 variable "lb_subnet_id" {
@@ -405,13 +407,13 @@ variable "backup_blob_noncurrent_expiration_days" {
 }
 
 variable "enable_pre_patch_run_command" {
-  description = "Install an Azure Run Command document named RunPrePatchBackup on the first SAT VM. Customers fire it from the Portal."
+  description = "Install an Azure Run Command named RunPrePatchBackup on the first SAT VM, for customers to fire from the Portal before a patch. NOTE: azurerm_virtual_machine_run_command EXECUTES on create -- it does not merely register the script the way the aws_ssm_document it mirrors does. So a first apply runs one no-op backup against an empty instance, and anything that makes that script exit non-zero fails the whole apply. Keep the script fail-soft."
   type        = bool
   default     = true
 }
 
 variable "enable_post_patch_run_command" {
-  description = "Install an Azure Run Command document named RunPostPatchVerify on each VM, mirroring the AWS aws_ssm_document.post_patch_verify in the SAT/ASM aws-ha modules. Customers fire it from the Portal after a Run Command-driven image swap."
+  description = "Install an Azure Run Command named RunPostPatchVerify on each VM, mirroring aws_ssm_document.post_patch_verify in the SAT/ASM aws-ha modules. Customers fire it from the Portal after a Run Command-driven image swap. Same caveat as enable_pre_patch_run_command: it EXECUTES on create, so it also serves as a first-apply health gate -- which is useful, but means a genuine verify failure correctly fails the apply."
   type        = bool
   default     = true
 }

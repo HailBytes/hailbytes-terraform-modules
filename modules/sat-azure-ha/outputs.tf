@@ -29,7 +29,7 @@ output "vm_private_ips" {
 }
 
 output "postgres_fqdn" {
-  description = "DB endpoint. Flexible Server FQDN in 'flexible_server' mode; private-IP:5432 of the self-managed Postgres VM in 'vm' mode."
+  description = "DB endpoint. Flexible Server FQDN in 'flexible_server' mode; the self-managed Postgres VM's private IP in 'vm' mode; the customer-supplied host in 'external' mode."
   value       = module.this.postgres_fqdn
   sensitive   = false
 }
@@ -48,7 +48,7 @@ output "key_vault_id" {
 # ----- Patching and migration safety -----
 
 output "db_mode" {
-  description = "Active DB mode: 'flexible_server' or 'vm'."
+  description = "Active DB mode: 'flexible_server', 'vm' or 'external'."
   value       = module.this.db_mode
   sensitive   = false
 }
