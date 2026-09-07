@@ -174,6 +174,26 @@ check_contains "it steers away from the Premium upsell" "$redis_body" "NOT buy t
 printf '\nBoth new steps are actually wired into the wizard flow\n'
 main_body="$(sed -n '/^main() {/,/^}/p' <<<"$src")"
 check_contains "pick_key_vault_name runs" "$main_body" "pick_key_vault_name"
+# Sizing was previously never asked, so every deployment silently took the
+# module default -- which on Azure is now a BURSTABLE size chosen for
+# deployability rather than capacity. An organisation sizing for real campaign
+# load has to be given the choice, and told what burstable means.
+check_contains "pick_node_size runs"       "$main_body" "pick_node_size"
+size_body="$(sed -n '/^pick_node_size() {/,/^}/p' <<<"$src")"
+check_contains "sizing offers the pilot rung"          "$size_body" "Pilot - 2 vCPU"
+check_contains "sizing offers the purchasable rung"    "$size_body" "Organisational - 8 vCPU"
+check_contains "sizing warns that B-series is burstable" "$size_body" "BURSTABLE"
+check_contains "sizing links the pricing page"         "$size_body" "hailbytes.com/pricing"
+check_contains "sizing costs by node COUNT, not per node" "$size_body" "metered vCPUs"
+check_contains "sizing reaches the generated config"   "$src" "vm_size = \\\"\${NODE_SIZE}"
+check_contains "sizing reaches the AWS config too"     "$src" "instance_type = \\\"\${NODE_SIZE}"
+# Every size it offers must be on the module ladder, or plan refuses it.
+for sz in Standard_B2s Standard_B4ms Standard_D8s_v5 Standard_D16s_v5; do
+  check_contains "offered size ${sz} is on the vm_size ladder" \
+    "$(cat "${REPO}/modules/ha-hot-hot/azure/variables.tf")" "\"${sz}\""
+done
+# The IPv6 trap: an address from a dual-stack curl with /32 allows nobody.
+check_contains "admin CIDR lookup forces IPv4" "$src" "curl -4 -fsS"
 check_contains "warn_about_redis_retirement runs" "$main_body" "warn_about_redis_retirement"
 check_contains "key_vault_name reaches the generated config" "$src" "key_vault_name = "
 
