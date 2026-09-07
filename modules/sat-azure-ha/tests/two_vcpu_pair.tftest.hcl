@@ -1,6 +1,6 @@
 # The two-vCPU HA pair — the pilot shape, at the bottom of the portable ladder.
 #
-# basic.tftest.hcl covers the DEFAULT shape (8 vCore, Standard_D8s_v5). This
+# basic.tftest.hcl covers the DEFAULT shape (4 vCore, Standard_B4ms). This
 # covers the other end: Standard_D2s_v5 on both nodes, customer-supplied VM
 # names, a phishing allow-list distinct from the admin one, and an IPv6 CIDR in
 # allowed_cidrs. Every one of those is a live pilot configuration rather than a
