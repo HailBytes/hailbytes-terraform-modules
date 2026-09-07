@@ -40,6 +40,7 @@ declare -A AWS_LISTING=(
 
 # The per-vCPU Marketplace meter. Used only to show the operator what their
 # choices cost; billing itself is the cloud's, not ours.
+RAW_BASE="https://raw.githubusercontent.com/hailbytes/hailbytes-terraform-modules/main"
 METER_PER_VCPU_HOUR="0.24"
 
 # ---------------------------------------------------------------------------
@@ -457,6 +458,23 @@ pick_db_mode() {
   esac
 }
 
+
+explain_or_tell() {   # <logfile>
+  local log="$1" e
+  for e in ./explain.sh ./quickstart/explain.sh "${WORKDIR}/explain.sh"; do
+    [ -x "$e" ] && { "$e" "$log" || true; return 0; }
+  done
+  warn "The apply failed. This says what to do about it, in one step:"
+  note "  curl -fsSL ${RAW_BASE}/quickstart/explain.sh -o explain.sh"
+  note "  bash explain.sh ${log}"
+  note ""
+  note "It is read-only -- no cloud credentials, no API calls, nothing changed."
+  note "Most of these failures are a one-line change or a permission to request,"
+  note "and it prints the exact text to forward to whoever administers the"
+  note "subscription."
+  return 0
+}
+
 pick_scale_knobs() {
   [ "$TIER" = autoscale ] || return 0
   MIN_COUNT="$(ask "Minimum instances" "2")"
@@ -673,7 +691,21 @@ run_plan_and_apply() {
     ok "Nothing applied. Your configuration is in ${WORKDIR} — run 'terraform apply hailbytes.tfplan' there when you are ready."
     exit 0
   fi
-  terraform apply -input=false hailbytes.tfplan
+  # tee, so a failure has a log to explain. PIPESTATUS[0] rather than $?:
+  # with a pipe $? is tee's status, and tee essentially always succeeds.
+  terraform apply -input=false hailbytes.tfplan 2>&1 | tee apply.log
+  local apply_rc="${PIPESTATUS[0]}"
+  if [ "$apply_rc" -ne 0 ]; then
+    say ""
+    # Most people who hit a wall here never contact us -- they stop. So a
+    # failure has to end with what to do about it, not with what the cloud
+    # said. Several of these errors name the wrong cause outright: a Key
+    # Vault error that is really RBAC scope, a "not supported in this region"
+    # that is really a subscription entitlement.
+    explain_or_tell apply.log
+    note "Your configuration and log are in ${WORKDIR}."
+    exit 1
+  fi
 
   head2 "Done"
   terraform output || true

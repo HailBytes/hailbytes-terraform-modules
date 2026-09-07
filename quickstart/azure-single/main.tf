@@ -33,7 +33,36 @@ provider "azurerm" {
   # explicit, and ../preflight-azure.sh is the explicit step.
   resource_provider_registrations = "none"
 
-  features {}
+  features {
+    key_vault {
+      # This defaults to TRUE, and on true the provider will not create a vault
+      # until it has checked whether a soft-deleted one already holds the name.
+      # That check is a SUBSCRIPTION-scoped read:
+      #
+      #   Microsoft.KeyVault/locations/<region>/deletedVaults/<name>/read
+      #
+      # An operator whose access is scoped to a resource group rather than the
+      # whole subscription cannot perform it -- a common shape in enterprise
+      # tenants, where roles are granted per resource group. The provider does
+      # not treat the refusal as "cannot tell": anything other than a clean 404
+      # puts it on the recover path, so it asks Azure to RECOVER a vault that
+      # never existed, and the apply dies with
+      #
+      #   400 SoftDeletedVaultDoesNotExist: A soft deleted vault with the given
+      #   name does not exist.
+      #
+      # The message names soft delete and the real cause is RBAC scope, which
+      # is why it is expensive to diagnose. Seen in a customer tenant on
+      # 2026-09-07 on a freshly randomised name in a brand-new resource group,
+      # so nothing was colliding.
+      #
+      # false skips the lookup and creates. If a soft-deleted vault genuinely
+      # holds the name, Azure refuses with a message that says exactly that,
+      # which is the honest failure. Nothing here wants to adopt a vault
+      # somebody else deleted.
+      recover_soft_deleted_key_vaults = false
+    }
+  }
 }
 
 variable "resource_group_name" {

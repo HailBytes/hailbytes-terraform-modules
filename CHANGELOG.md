@@ -4,6 +4,41 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- **`quickstart/explain.sh`: turn a failed deployment into the next thing to do.** A failed apply prints what the cloud said, which is often not what to do about it — and sometimes not even what went wrong. Three real examples, all of which cost a customer round trip to diagnose:
+
+  | The cloud says | The cause actually is |
+  |---|---|
+  | `SoftDeletedVaultDoesNotExist` on a Key Vault | RBAC scope. The provider's pre-create lookup is a subscription-scoped read that resource-group-scoped access cannot perform, and the refusal puts it on the recover path for a vault that never existed |
+  | `Multi-Zone HA is not supported in this region` | A per-subscription offer entitlement. The region does support it; changing region does not help |
+  | `exceeding approved standardDSv5Family Cores quota` | Every Dsv5 rung draws that one pool, so no Dsv5 size works regardless of vCPU count |
+
+  For each failure it recognises it prints what happened, **who** can fix it — the deployer or whoever administers the subscription — and the exact command or portal page. Where the fix needs more access than the deployer has, it prints a paragraph to forward as-is, with the refused action and scope extracted from the cloud's own message, so the request needs no conversation. Covers both clouds: Azure RBAC and AWS IAM refusals, Marketplace terms and programmatic-deployment enablement, compute quota, leftover resources, provider registration, globally-unique name collisions, and the Postgres HA entitlement.
+
+  Read-only: no cloud credentials, no API calls, so it is safe to run against a log somebody emails you. `deploy.sh` runs it automatically when an apply fails, and falls back to printing a one-line `curl` for it when the wizard was itself run via `curl | bash` and has no sibling files on disk.
+
+  `quickstart/tests/explain_test.sh` (42 assertions) uses real error text rather than paraphrases — the tool matches provider strings, so a paraphrased fixture tests the paraphrase. It also asserts that **nothing is invented**: every script path, module variable and marketplace identifier the tool emits is checked against this repository. Advice that does not work costs a round trip *and* the reader's confidence in everything else printed. Neuter-checked by pointing the tool at a nonexistent script and a non-existent variable; both fail the suite.
+
+### Fixed
+
+- **Azure quickstarts and examples set `recover_soft_deleted_key_vaults = false`.** It defaults to `true`, and on `true` the provider will not create a Key Vault until it has checked whether a soft-deleted one already holds the name. That check is a **subscription-scoped** read:
+
+  ```
+  Microsoft.KeyVault/locations/<region>/deletedVaults/<name>/read
+  ```
+
+  An operator whose access is scoped to a resource group rather than the whole subscription — a common shape in enterprise tenants, where roles are granted per resource group — cannot perform it. The provider does not treat the refusal as "cannot tell": anything other than a clean 404 puts it on the recover path, so it asks Azure to *recover* a vault that never existed and the apply dies with
+
+  ```
+  400 SoftDeletedVaultDoesNotExist: A soft deleted vault with the given name
+  does not exist.
+  ```
+
+  Observed in a customer tenant on 2026-09-07 on a freshly randomised name in a brand-new resource group, so nothing was colliding. The message names soft delete while the cause is RBAC scope, which is why it is expensive to diagnose.
+
+  Fixed in `quickstart/azure-ha`, `quickstart/azure-single`, `quickstart/azure-ha-byoip` and the `single-vm` / `ha-hot-hot` / `unlimited-scale` Azure examples. The `network/azure` example is unchanged — it creates no vault. This lives in the caller's provider block, not in the modules, so anyone with their own root configuration should add it there too; `explain.sh` says so if they hit it.
+
 ### Changed
 
 - **Azure `vm_size` now defaults to `Standard_B4ms` (4 vCPU, burstable), not `Standard_D8s_v5`.** All three Azure tier modules and all six Azure product wrappers. AWS `instance_type` is unchanged on `m6i.2xlarge`, so the two clouds no longer default to the same rung.

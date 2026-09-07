@@ -305,6 +305,14 @@ jobs:
   # preflight-azure.sh / preflight-aws.sh scripts that document the same
   # requirement outside the wizard.
   #
+  # explain_test.sh covers quickstart/explain.sh, which turns a failed apply
+  # into the next thing to do. Its fixtures are real customer and lab error
+  # text, and beyond checking the right explanation fires it asserts that
+  # NOTHING IS INVENTED: every script path, module variable and marketplace
+  # identifier it tells a reader to use is checked against this repository.
+  # Advice that does not work costs a round trip AND the reader's confidence
+  # in the rest of the output.
+  #
   # sweep_azure_test.sh covers quickstart/sweep-azure.sh, whose two ways of
   # being wrong are both silent: reporting "nothing to clean up" when the
   # lookup merely failed, and reading `az ... -o tsv` columns by a position
@@ -340,6 +348,9 @@ jobs:
 
       - name: Leftover-sweep tests (mocked az, no credentials)
         run: bash quickstart/tests/sweep_azure_test.sh
+
+      - name: Failure-explainer tests (real error fixtures, no credentials)
+        run: bash quickstart/tests/explain_test.sh
 
       - name: Cloud Shell tool availability
         # Both Cloud Shells ship terraform, git and their own CLI. If the

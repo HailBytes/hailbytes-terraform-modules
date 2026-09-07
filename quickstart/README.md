@@ -119,6 +119,36 @@ undelete for a public IP**: deleting the group loses the address permanently
 and forces a DNS change. Locks, storage accounts and unattached public IPs are
 reported before it asks you to type the group name. There is no `--force`.
 
+## When a deployment fails
+
+[`explain.sh`](explain.sh) turns a failure into the next thing to do:
+
+```bash
+terraform apply 2>&1 | tee apply.log
+./quickstart/explain.sh apply.log
+```
+
+`deploy.sh` runs it for you automatically if an apply fails.
+
+It is read-only — no cloud credentials, no API calls — so it is also safe to
+run against a log somebody sends you.
+
+For each failure it recognises it prints **what happened**, **who can fix it**
+(you, or whoever administers the subscription), and the exact command or portal
+page. Where the fix needs more access than the deployer has, it prints a
+paragraph to forward as-is, with the refused action and scope already extracted
+from the cloud's own error message.
+
+That last part matters because some of these errors name the wrong cause:
+
+| The cloud says | The cause actually is |
+|---|---|
+| `SoftDeletedVaultDoesNotExist` on a Key Vault | RBAC scope — the provider's pre-create lookup is a subscription-scoped read that resource-group-scoped access cannot perform |
+| `Multi-Zone HA is not supported in this region` | A per-subscription offer entitlement. The region supports it; changing region does not help |
+| `exceeding approved standardDSv5Family Cores quota` | Every Dsv5 size draws that one pool, so no Dsv5 size will work regardless of vCPU count |
+
+Each of those cost a customer round trip to diagnose before this existed.
+
 ## Testing
 
 The wizard is interactive, but its pure logic is unit-tested and runs in CI:
@@ -127,6 +157,7 @@ The wizard is interactive, but its pure logic is unit-tested and runs in CI:
 bash quickstart/tests/deploy_test.sh
 bash quickstart/tests/cloud_prereqs_test.sh
 bash quickstart/tests/sweep_azure_test.sh
+bash quickstart/tests/explain_test.sh
 ```
 
 `deploy_test.sh` covers cloud detection, the tier → module-name mapping (a typo
@@ -145,6 +176,14 @@ that the provider/role lists in the standalone `preflight-azure.sh` /
 paths would otherwise silently drift apart, which is exactly what happened to
 [`docs/DEPLOY_FROM_GALLERY.md`](../docs/DEPLOY_FROM_GALLERY.md)'s provider list
 before this test existed.
+
+`explain_test.sh` covers `explain.sh` using **real** error text from customer
+and lab deployments rather than paraphrases — this tool works by matching
+provider error strings, so a paraphrased fixture would test the paraphrase. It
+also asserts that nothing is invented: every script path, module variable and
+marketplace identifier the tool tells a reader to use is checked against this
+repository. Advice that does not work costs a round trip *and* the reader's
+confidence in the rest of the output.
 
 `sweep_azure_test.sh` covers `sweep-azure.sh` against a mocked `az`. Its two
 targets are the failure modes that are silent rather than loud: reporting
