@@ -49,16 +49,31 @@ variables {
 
 
 # The default. If this changes, it should change deliberately and visibly.
-run "default_vm_size_is_b4ms" {
+# The default moved from Standard_B4ms to Standard_D4s_v5: general compute
+# rather than burstable.
+#
+# The reason B4ms was chosen has not gone away -- every Dsv5 rung draws
+# standardDSv5Family, Azure commonly grants that pool a limit of 0, and the VMs
+# are created late enough that the failure lands about twelve minutes into an
+# apply. What changed is that the failure is now caught BEFORE the apply:
+# quickstart/preflight-azure.sh and the deployment bundles both read the pool
+# for whatever size is set and refuse to proceed, so the trap costs a re-run of
+# a read-only check rather than twelve minutes and a half-built stack.
+#
+# Given that, burstable is the worse default: B-series banks CPU credits while
+# idle and throttles to a fraction of a core once they are spent, which is a
+# silent degradation under exactly the sustained sending a campaign does. A
+# loud pre-flight failure beats a quiet throttle.
+run "default_vm_size_is_general_compute" {
   command = plan
 
   assert {
-    condition     = azurerm_linux_virtual_machine.vm[0].size == "Standard_B4ms"
-    error_message = "The default vm_size must be Standard_B4ms. A Dsv5 default fails on a fresh subscription: every Dsv5 rung draws standardDSv5Family, which Azure commonly grants a limit of 0, and the VMs are created late enough that the failure lands about twelve minutes into the apply."
+    condition     = azurerm_linux_virtual_machine.vm[0].size == "Standard_D4s_v5"
+    error_message = "The default vm_size must be Standard_D4s_v5: general compute, not burstable. B-series throttles once CPU credits are spent, which degrades campaign sending silently. The Dsv5 quota trap that once justified a B-series default is now caught by preflight before anything is built."
   }
 
   assert {
-    condition     = azurerm_linux_virtual_machine.vm[1].size == "Standard_B4ms"
+    condition     = azurerm_linux_virtual_machine.vm[1].size == "Standard_D4s_v5"
     error_message = "Both nodes of the HA pair must take the same default size."
   }
 }
@@ -106,12 +121,56 @@ run "b4ms_passes_its_own_validation" {
 
 # The ladder still refuses a size Azure does not sell. There is no
 # Standard_D24s_v5, which is why a 24-vCore SKU cannot be delivered as a pair.
-run "off_ladder_size_is_refused" {
+# What the validation still refuses, now that it checks SHAPE rather than
+# membership of a hand-written list.
+
+run "single_vcpu_size_is_refused" {
+  command = plan
+
+  variables {
+    vm_size = "Standard_B1s"
+  }
+
+  # One core cannot carry the web tier, the worker and the phishing server
+  # together, so this is the one size gate worth keeping.
+  expect_failures = [var.vm_size]
+}
+
+run "a_malformed_size_is_refused" {
+  command = plan
+
+  variables {
+    vm_size = "d4s_v5"
+  }
+
+  # Missing the Standard_ prefix. Azure would reject it at apply; rejecting it
+  # at plan is free.
+  expect_failures = [var.vm_size]
+}
+
+# WHAT THIS DESIGN GIVES UP, asserted so it is a recorded decision rather than
+# a latent surprise.
+#
+# The old validation enumerated nine Dsv5 rungs and two B-series sizes, so it
+# could refuse Standard_D24s_v5 -- a size that does not exist. A shape check
+# cannot: "D" followed by "24" is well formed, and no regex knows Azure's SKU
+# catalogue.
+#
+# That trade is deliberate. The enumerated list blocked two real deployments --
+# Standard_B4ms while it was the only family with quota, and every family
+# released after the list was written -- and refusing a size the customer can
+# actually buy is a worse failure than accepting one they cannot. A
+# well-formed-but-nonexistent size fails at the VM create with an explicit
+# Azure error naming the size, which quickstart/explain.sh matches.
+run "a_nonexistent_but_wellformed_size_is_accepted" {
   command = plan
 
   variables {
     vm_size = "Standard_D24s_v5"
   }
 
-  expect_failures = [var.vm_size]
+  assert {
+    condition     = azurerm_linux_virtual_machine.vm[0].size == "Standard_D24s_v5"
+    error_message = "A well-formed size must pass validation even when Azure has no such SKU. If this run starts failing, someone has re-added an enumerated allowlist -- which is the change that blocked Standard_B4ms and every post-2021 family. Check quota and SKU availability in preflight, not in a regex."
+  }
 }

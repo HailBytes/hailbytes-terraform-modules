@@ -240,7 +240,16 @@ run "reports rather than fails: no zone 2"   0 no_zones bash "${REPO}/quickstart
 run "reports rather than fails: short quota" 0 no_quota bash "${REPO}/quickstart/preflight-azure.sh" ha
 run "provider registration failure still exits 1" 1 fail_create bash "${REPO}/quickstart/preflight-azure.sh" ha
 run "rejects --vm-size with no value"     2 happy bash "${REPO}/quickstart/preflight-azure.sh" ha --vm-size
-run "rejects an off-ladder --vm-size"     2 happy bash "${REPO}/quickstart/preflight-azure.sh" ha --vm-size Standard_D24s_v5
+# What preflight refuses now that vm_size is validated by shape rather than by
+# membership of an enumerated list. Standard_D24s_v5 used to be refused here
+# for being off the ladder; it is well formed, so it is accepted now and fails
+# later at the VM create with an explicit Azure error naming the size. That
+# trade is deliberate -- the list also refused Standard_B4ms while it was the
+# only family with quota, and every family released after it was written.
+run "rejects a single-vCPU --vm-size"     2 happy bash "${REPO}/quickstart/preflight-azure.sh" ha --vm-size Standard_B1s
+run "rejects a malformed --vm-size"       2 happy bash "${REPO}/quickstart/preflight-azure.sh" ha --vm-size d4s_v5
+# The point of widening: a memory-optimised size the old list refused outright.
+run "accepts a family the old list refused" 0 happy bash "${REPO}/quickstart/preflight-azure.sh" ha --vm-size Standard_E8ds_v5
 run "accepts the 2-vCPU pilot rung"       0 happy bash "${REPO}/quickstart/preflight-azure.sh" ha --vm-size Standard_D2s_v5
 
 # The regional checks earn their place only if they say something specific
@@ -270,9 +279,12 @@ out="$(azure_out no_quota)"
 # the network and database were built.
 check "short quota says how much is needed and how much there is" \
   "$(grep -c 'NOT ENOUGH. This deployment needs 8 and can get 2' <<<"$out")" "1"
-# And it must read the BS pool, not Dsv5 -- a different pool entirely.
-check "the default reads the B-series quota pool" \
-  "$(grep -c "Standard BS Family" <<<"$out")" "2"
+# The quota pool has to follow the FAMILY of the size being deployed, because
+# each pool is granted separately -- reading the wrong one reports room that
+# does not exist. The default is general compute now, so the default reads the
+# Dsv5 pool.
+check "the default reads the Dsv5 quota pool" \
+  "$(grep -c "standardDSv5Family" <<<"$out")" "2"
 
 # The quota figure has to follow the size being deployed. Pinned at the 8-vCore
 # default, a 2 x Standard_D2s_v5 pilot was told it needed 16 vCPUs instead of 4

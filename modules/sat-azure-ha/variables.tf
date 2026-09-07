@@ -148,27 +148,26 @@ variable "db_vm_name" {
 }
 
 variable "vm_size" {
-  description = "Azure VM SKU for the HailBytes application node(s). Constrained to the portable ladder; see the validation message. Defaults to Standard_B4ms (4 vCPU, burstable) so that a first deployment succeeds without a quota request -- the Dsv5 families commonly sit at a limit of 0 in a fresh subscription. Move to the Dsv5 ladder before sustained campaign load."
+  description = "Azure VM SKU for the HailBytes application node(s). Any Standard_* size with 2 or more vCPU is accepted; the default is a general-compute shape. THE ALLOWLIST WAS REMOVED ON PURPOSE. It was an enumerated list of nine Dsv5 rungs plus two B-series, and it blocked two real deployments: Standard_B4ms was rejected while it was the only family with quota in the target subscription, and every newer family (Dsv6, the as/ps AMD and ARM variants, the memory and compute-optimised lines) was rejected for having been released after the list was written. A hand-maintained list of SKUs goes stale faster than anyone updates it, and the failure mode is refusing a size the customer can actually get. QUOTA IS THE THING TO CHECK, NOT THE NAME. Every Dsv5 rung draws one pool, standardDSv5Family, which is frequently granted a limit of 0 in a subscription that has never asked for it -- so a Dsv5 size can be perfectly valid and still fail the apply. quickstart/preflight-azure.sh and the deployment bundles check the pool for whatever size is set, before anything is built. Confirm with: az vm list-usage --location <region> -o table. B-series is BURSTABLE: it banks CPU credits while idle and throttles to a fraction of a core once they are spent, which suits pilots and steady low load, not sustained campaign sending. Size from measured load rather than from a rung -- see hailbytes-sat/docs/VM_SCALING.md."
   type        = string
-  default     = "Standard_B4ms"
+  default     = "Standard_D4s_v5"
 
   validation {
-    # The portable ladder. The Dsv5 entries are stock general-purpose shapes at
-    # the same 4 GB-per-vCore ratio as the AWS m6i equivalent, so a deployment
-    # can move between clouds without changing tier. The B-series entries are
-    # burstable and have no m6i counterpart.
-    condition = contains([
-      "Standard_B2s",     # 2 vCPU  - pilot, phishing simulation only
-      "Standard_B4ms",    # 4 vCPU  - DEFAULT; burstable, deploys without a Dsv5 grant
-      "Standard_D2s_v5",  # 2 vCPU  - phishing simulation only
-      "Standard_D4s_v5",  # 4 vCPU  - phishing simulation only
-      "Standard_D8s_v5",  # 8 vCPU  - training floor and purchasable entry rung
-      "Standard_D16s_v5", # 16 vCPU
-      "Standard_D32s_v5", # 32 vCPU
-      "Standard_D48s_v5", # 48 vCPU
-      "Standard_D64s_v5", # 64 vCPU
-    ], var.vm_size)
-    error_message = "vm_size must be a portable HailBytes rung: Standard_B2s (2 vCPU) or Standard_B4ms (4 vCPU) on the burstable B-series; Standard_D2s_v5 (2), Standard_D4s_v5 (4), Standard_D8s_v5 (8), Standard_D16s_v5 (16), Standard_D32s_v5 (32), Standard_D48s_v5 (48), Standard_D64s_v5 (64) on the Dsv5 ladder. Azure Dsv5 has NO general-purpose size between 16 and 32 vCPU -- there is no Standard_D24s_v5 -- so a 24-vCore deployment cannot be delivered as one VM or as a symmetric pair; quote 16 or 32. TWO THINGS ABOUT THE DEFAULT. It is Standard_B4ms because the Dsv5 families are frequently granted a quota LIMIT OF 0 in a subscription that has never asked for them, and every Dsv5 rung draws that one pool -- so a Dsv5 default fails the apply after the network, Key Vault and database are already built, and needs a support request to clear. B-series quota is granted by default, so B4ms deploys first time. And B-series is BURSTABLE: it banks CPU credits while idle and throttles to a fraction of a core once they are spent, which suits pilots and steady low load, not sustained campaign sending. Move to the Dsv5 ladder for production load, having first confirmed quota with: az vm list-usage --location <region> -o table. The 2 and 4 vCPU rungs carry measured training capacity as of 2026-08-24; Standard_D8s_v5 remains the published purchasable rung. Size from measured load rather than from the rung -- see hailbytes-sat/docs/VM_SCALING.md."
+    # Shape, not membership. The vCPU count is the first run of digits after
+    # the family letters, which holds across every current Azure family:
+    # D4s_v5 -> 4, B4ms -> 4, E8ds_v5 -> 8, D16as_v5 -> 16, D2plds_v6 -> 2,
+    # DC2s_v3 -> 2, DS2_v2 -> 2. Verified against those and against malformed
+    # input before this replaced the enumerated list.
+    #
+    # Known imprecision, and it is the safe direction: a constrained-core SKU
+    # such as Standard_E8-2s_v5 reports 8 here when only 2 vCPU are licensed.
+    # That passes a >= 2 gate, which is correct -- it just is not a vCPU count
+    # to bill from.
+    condition = (
+      can(regex("^Standard_[A-Za-z]{1,5}[0-9]+", var.vm_size)) &&
+      tonumber(regex("^Standard_[A-Za-z]{1,5}([0-9]+)", var.vm_size)[0]) >= 2
+    )
+    error_message = "vm_size must be an Azure SKU name of the form Standard_<family><vCPUs>[suffix][_vN] with 2 or more vCPU -- for example Standard_D4s_v5, Standard_B4ms, Standard_E8ds_v5, Standard_D16as_v5. Single-vCPU sizes (Standard_B1s, Standard_A1_v2) are refused: the application node runs the web tier, the worker and the phishing server together, and one core cannot carry them. Any family is allowed -- what is NOT checked here is whether this subscription has quota for it, because that is per-family and per-region and no validation can see it. Run quickstart/preflight-azure.sh, or az vm list-usage --location <region> -o table."
   }
 }
 

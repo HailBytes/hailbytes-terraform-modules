@@ -187,11 +187,35 @@ check_contains "sizing links the pricing page"         "$size_body" "hailbytes.c
 check_contains "sizing costs by node COUNT, not per node" "$size_body" "metered vCPUs"
 check_contains "sizing reaches the generated config"   "$src" "vm_size = \\\"\${NODE_SIZE}"
 check_contains "sizing reaches the AWS config too"     "$src" "instance_type = \\\"\${NODE_SIZE}"
-# Every size it offers must be on the module ladder, or plan refuses it.
-for sz in Standard_B2s Standard_B4ms Standard_D8s_v5 Standard_D16s_v5; do
-  check_contains "offered size ${sz} is on the vm_size ladder" \
-    "$(cat "${REPO}/modules/ha-hot-hot/azure/variables.tf")" "\"${sz}\""
+# Every size the wizard offers must be one the module ACCEPTS, or the plan
+# refuses a choice the wizard just made. That used to be a grep for the size in
+# an enumerated allowlist; the allowlist is gone, replaced by a shape check
+# (any Standard_* size with 2+ vCPU), so this applies the same rule the module
+# applies instead of grepping for a list that no longer exists.
+#
+# Keeping the check matters more than how it is spelled: the failure it guards
+# against is a wizard that offers something terraform then rejects, which reads
+# to the operator as the tool contradicting itself.
+for sz in Standard_B2s Standard_B4ms Standard_D4s_v5 Standard_D8s_v5 Standard_D16s_v5; do
+  body="${sz#Standard_}"
+  head="$(printf '%s' "$body" | sed -n 's/^\([A-Za-z]*\)[0-9].*/\1/p')"
+  vcpu="$(printf '%s' "$body" | sed -n 's/^[A-Za-z]*\([0-9]*\).*/\1/p')"
+  if [ -n "$head" ] && [ -n "$vcpu" ] && [ "$vcpu" -ge 2 ] 2>/dev/null; then
+    printf '  ok   offered size %s satisfies the module vm_size rule\n' "$sz"
+    pass=$((pass+1))
+  else
+    printf '  FAIL offered size %s would be refused by the module\n' "$sz"
+    fail=$((fail+1))
+  fi
 done
+# And the module must no longer carry an enumerated list, or the two designs
+# fight: the wizard would offer a valid size that a stale list rejects.
+if grep -q 'contains(\[' "${REPO}/modules/ha-hot-hot/azure/variables.tf" \
+     && sed -n '/^variable "vm_size"/,/^}/p' "${REPO}/modules/ha-hot-hot/azure/variables.tf" | grep -q 'contains(\['; then
+  printf '  FAIL vm_size still uses an enumerated allowlist\n'; fail=$((fail+1))
+else
+  printf '  ok   vm_size validates by shape, not by a hand-written list\n'; pass=$((pass+1))
+fi
 # The IPv6 trap: an address from a dual-stack curl with /32 allows nobody.
 check_contains "admin CIDR lookup forces IPv4" "$src" "curl -4 -fsS"
 check_contains "warn_about_redis_retirement runs" "$main_body" "warn_about_redis_retirement"
