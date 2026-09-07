@@ -475,6 +475,74 @@ explain_or_tell() {   # <logfile>
   return 0
 }
 
+
+# The wizard never asked about sizing, so every deployment silently took the
+# module default. On Azure that default is now Standard_B4ms, chosen because
+# the Dsv5 quota pool is commonly granted a limit of 0 in a fresh subscription
+# -- deployability, not capacity. Burstable is right for a pilot and wrong for
+# an organisation running campaigns, so the choice belongs in front of people
+# rather than in a variable default nobody reads.
+#
+# Rungs match the vm_size / instance_type validation ladders. Anything off
+# them is refused at plan time, so only real rungs are offered.
+pick_node_size() {
+  NODE_SIZE=""
+  local answer vcpu
+  answer="$(choose "How many vCPUs per application node?" \
+    "Pilot - 2 vCPU. Evaluation and small rosters|2" \
+    "Departmental - 4 vCPU. The current default|4" \
+    "Organisational - 8 vCPU. The published purchasable rung|8" \
+    "Larger - 16 vCPU|16")"
+  vcpu="${answer##*|}"
+
+  if [ "$CLOUD" = azure ]; then
+    case "$vcpu" in
+      2)  NODE_SIZE="Standard_B2s"     ;;
+      4)  NODE_SIZE="Standard_B4ms"    ;;
+      8)  NODE_SIZE="Standard_D8s_v5"  ;;
+      16) NODE_SIZE="Standard_D16s_v5" ;;
+    esac
+  else
+    case "$vcpu" in
+      2)  NODE_SIZE="m6i.large"    ;;
+      4)  NODE_SIZE="m6i.xlarge"   ;;
+      8)  NODE_SIZE="m6i.2xlarge"  ;;
+      16) NODE_SIZE="m6i.4xlarge"  ;;
+    esac
+  fi
+  ok "Each application node will be ${NODE_SIZE} (${vcpu} vCPU)."
+
+  # Burstable has to be said out loud. It banks CPU credits while idle and
+  # throttles to a fraction of a core once they are spent, which stays
+  # invisible until a campaign is actually sending.
+  case "$NODE_SIZE" in
+    Standard_B*)
+      warn "This is a BURSTABLE size: it banks CPU credits while idle and"
+      warn "throttles to a fraction of a core once they are spent."
+      note "Fine for evaluation and steady low load. For sustained campaign"
+      note "sending choose 8 vCPU or more, which are not burstable."
+      note "Burstable is the default because the Dsv5 quota pool is frequently"
+      note "0 in a subscription that has never requested it, so it deploys"
+      note "first time where a Dsv5 default fails partway into the apply."
+      ;;
+  esac
+
+  # The bill is the per-node size TIMES the node count, which is the part
+  # people get wrong.
+  local nodes=1
+  [ "$TIER" = ha ] && nodes=2
+  [ "$TIER" = autoscale ] && nodes="${MIN_COUNT:-2}"
+  local total=$(( vcpu * nodes ))
+  cost_warning "The HailBytes software meters per vCPU-hour, across every node." \
+    "${nodes} node(s) x ${vcpu} vCPU = ${total} metered vCPUs, roughly" \
+    "\$$(awk "BEGIN{printf \"%.0f\", ${total}*730*${METER_PER_VCPU_HOUR}}")/month for the software alone," \
+    "before any cloud infrastructure charges." \
+    "" \
+    "Sizing guidance and what each tier expects:" \
+    "  https://hailbytes.com/pricing"
+  confirm "Keep ${NODE_SIZE}?" || pick_node_size
+}
+
 pick_scale_knobs() {
   [ "$TIER" = autoscale ] || return 0
   MIN_COUNT="$(ask "Minimum instances" "2")"
@@ -761,6 +829,7 @@ main() {
   pick_db_mode
   pick_scale_knobs
   pick_frontend
+  pick_node_size
   pick_key_vault_name
   warn_about_egress
   warn_about_redis_retirement
@@ -774,16 +843,30 @@ main() {
     local keyfile; keyfile="$(ask "Path to your SSH public key" "$HOME/.ssh/id_rsa.pub")"
     [ -f "$keyfile" ] || die "No SSH public key at ${keyfile}. Generate one with: ssh-keygen -t ed25519"
     SETTINGS+=("ssh_public_key = file(\"${keyfile}\")")
-    SETTINGS+=("allowed_cidrs = [\"$(ask "CIDR allowed to reach the admin UI" "$(curl -fsS -m 5 ifconfig.me 2>/dev/null || echo 10.0.0.0/8)/32")\"]")
+    # -4 is not optional. On a dual-stack connection curl returns the IPv6
+    # address, and these firewall rules are IPv4 -- so an IPv6 address with a
+    # /32 suffix is both invalid and allows nobody. The operator who "allowed
+    # their IP" then cannot reach the console, which reads as a broken
+    # deployment and is not one.
+    SETTINGS+=("allowed_cidrs = [\"$(ask "CIDR allowed to reach the admin UI" "$(curl -4 -fsS -m 5 ifconfig.me 2>/dev/null || echo 10.0.0.0/8)/32")\"]")
     note "You must also supply the network inputs (vm_subnet_id, lb_subnet_id,"
     note "db_delegated_subnet_id, private_dns_zone_id). quickstart/azure-ha shows a"
     note "root config that creates them with modules/network/azure."
     [ "${APPGW:-false}" = true ] && SETTINGS+=("enable_application_gateway = true")
     [ -n "${KEY_VAULT_NAME:-}" ] && SETTINGS+=("key_vault_name = \"${KEY_VAULT_NAME}\"")
+    if [ -n "${NODE_SIZE:-}" ]; then
+      if [ "$CLOUD" = azure ]; then SETTINGS+=("vm_size = \"${NODE_SIZE}\"")
+      else SETTINGS+=("instance_type = \"${NODE_SIZE}\""); fi
+    fi
   else
     SETTINGS+=("# vpc_id, public_subnet_ids, private_subnet_ids and acm_certificate_arn")
     SETTINGS+=("# are required — see modules/network/aws to create the network.")
-    SETTINGS+=("allowed_cidrs = [\"$(ask "CIDR allowed to reach the admin UI" "$(curl -fsS -m 5 ifconfig.me 2>/dev/null || echo 10.0.0.0/8)/32")\"]")
+    # -4 is not optional. On a dual-stack connection curl returns the IPv6
+    # address, and these firewall rules are IPv4 -- so an IPv6 address with a
+    # /32 suffix is both invalid and allows nobody. The operator who "allowed
+    # their IP" then cannot reach the console, which reads as a broken
+    # deployment and is not one.
+    SETTINGS+=("allowed_cidrs = [\"$(ask "CIDR allowed to reach the admin UI" "$(curl -4 -fsS -m 5 ifconfig.me 2>/dev/null || echo 10.0.0.0/8)/32")\"]")
   fi
   [ -n "${DB_MODE:-}" ] && SETTINGS+=("db_mode = \"${DB_MODE}\"")
   if [ "${DB_MODE:-}" = external ]; then
