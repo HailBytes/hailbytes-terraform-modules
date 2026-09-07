@@ -113,9 +113,9 @@ variable "db_instance_class" {
 # ----- Shared session store (ElastiCache for Redis) -----
 
 variable "enable_managed_redis" {
-  description = "Provision an ElastiCache Multi-AZ replication group for HailBytes shared sessions and worker locks. HA mode requires a shared Redis endpoint — set to false only if you supply redis_endpoint_override."
+  description = "Provision an ElastiCache Multi-AZ replication group. NOT required for HA -- this module mints a shared session-keys secret that both nodes read, which makes the stateless cookie store work across them (hailbytes-sat#907), and the worker lock is a DB-backed table rather than a Redis heartbeat. So this is a performance option. Defaults false, matching ha-hot-hot/azure: leaving it on was 20-40 minutes of a ~45 minute apply and the only reason a default apply needed ElastiCache permissions. Set redis_endpoint_override to use a cache you already run."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "redis_node_type" {

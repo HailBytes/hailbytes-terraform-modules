@@ -59,17 +59,49 @@ run "kms_enabled_creates_one_key" {
   }
 }
 
-run "managed_redis_by_default" {
+# Mirrors ha-hot-hot/azure's "no_managed_redis_by_default". This tier used to
+# provision a Multi-AZ replication group by default on the belief that HA needed
+# a shared session store. It does not: aws_secretsmanager_secret.session_keys is
+# read by every node, which makes the stateless cookie store work across them
+# (hailbytes-sat#907), and the worker lock is a DB table. The default was the
+# single largest block of apply time and the only reason ElastiCache permissions
+# were needed at all.
+run "no_managed_redis_by_default" {
   command = plan
 
   assert {
+    condition     = length(aws_elasticache_replication_group.main) == 0
+    error_message = "The default must NOT create a replication group. It is optional, it was 20-40 minutes of a ~45 minute apply, and it forced an ElastiCache permission on every deployment."
+  }
+
+  assert {
+    condition     = output.redis_mode == "disabled"
+    error_message = "redis_mode must report 'disabled' when no cache is provisioned, so a caller can tell which session store is in play."
+  }
+
+  # The shared secret is what replaces it, so its absence would mean this
+  # default is unsafe rather than merely cheaper.
+  assert {
+    condition     = length(aws_secretsmanager_secret.session_keys) > 0 || can(aws_secretsmanager_secret.session_keys.arn)
+    error_message = "Turning Redis off is only safe because a shared session-keys secret exists for every node to read. If that secret is gone, cross-node logins break and this default must be reverted."
+  }
+}
+
+run "managed_redis_when_opted_in" {
+  command = plan
+
+  variables {
+    enable_managed_redis = true
+  }
+
+  assert {
     condition     = length(aws_elasticache_replication_group.main) == 1
-    error_message = "Managed Redis is the HA default and must create one ElastiCache replication group."
+    error_message = "Opting in must still create exactly one replication group."
   }
 
   assert {
     condition     = output.redis_mode == "managed"
-    error_message = "redis_mode must be 'managed' by default."
+    error_message = "redis_mode must be 'managed' when a cache was asked for."
   }
 }
 
