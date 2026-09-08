@@ -1815,7 +1815,16 @@ resource "azurerm_application_gateway" "main" {
     rule_type                  = "Basic"
     http_listener_name         = "https-listener"
     backend_address_pool_name  = "vms"
-    backend_http_settings_name = "https-passthrough"
+    # "backend", not "https-passthrough". This referenced a name no
+    # backend_http_settings block has ever had, so Azure refused the whole
+    # gateway with 400 InvalidResourceReference -- found by the 2026-09-07
+    # smoke run, phase 2. Nothing in a plan can catch it: Application Gateway
+    # resolves its internal names server-side at create.
+    #
+    # The block is named "backend" because the hop protocol is conditional
+    # (var.appgw_backend_protocol, HTTP by default), so a name asserting HTTPS
+    # would be wrong for the default configuration.
+    backend_http_settings_name = "backend"
     priority                   = 100
   }
 
