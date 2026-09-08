@@ -141,6 +141,8 @@ Concrete, so this does not get re-litigated on instinct:
 
 - **Aurora spike on AWS.** Worth doing. Measure duty cycle first, then compare
   Serverless v2 against the current instance class on real campaign traffic.
+  The measurement is below, because "measure first" without a method is how a
+  spike turns into an argument.
 - **A single primary runs out of WRITE capacity.** Then, and only then, Cosmos
   DB for PostgreSQL / Citus becomes the conversation. Read pressure is not this
   trigger.
@@ -150,3 +152,58 @@ Concrete, so this does not get re-litigated on instinct:
 - **A customer mandates a specific engine.** `db_mode = "external"` already
   covers "we run our own Postgres". A non-Postgres mandate is a rewrite, and
   should be priced as one rather than absorbed.
+
+---
+
+## Appendix — how to measure the duty cycle before quoting Aurora
+
+Serverless v2 is the only variant that can be *cheaper*: provisioned Aurora is
+roughly 20% more per instance-hour than the equivalent RDS class, so on a steady
+load it loses. The whole question is therefore how spiky the real load is, and
+that is measurable from the deployment that already exists — no Aurora needed to
+decide whether to move to Aurora.
+
+Pull at least **four weeks** from CloudWatch for the existing
+`aws_db_instance`, covering at least two real campaigns. Anything shorter
+measures the gap between campaigns and flatters the case:
+
+```
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/RDS --metric-name CPUUtilization \
+  --dimensions Name=DBInstanceIdentifier,Value=<instance-id> \
+  --start-time  "$(date -u -d '28 days ago' +%Y-%m-%dT%H:%M:%SZ)" \
+  --end-time    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --period 300 --statistics Average Maximum --output table
+```
+
+Repeat for `DatabaseConnections`, `ReadIOPS` and `WriteIOPS`. Together those
+say how much of the provisioned instance is actually used, and when.
+
+What decides it:
+
+- **Ratio of peak to median.** A campaign burst against a mostly-idle baseline
+  is the profile Serverless v2 is for. A flat line is not, and the answer is
+  then "stay on RDS" rather than "Aurora is expensive".
+- **Duration of the peaks.** Serverless v2 bills the capacity it scales to, for
+  as long as it holds it. Long plateaus erode the saving; short bursts do not.
+- **The floor.** Serverless v2 has a minimum capacity that bills continuously,
+  so an idle deployment is not free. A low duty cycle wins only if the floor is
+  below what the current instance class costs at idle — which is a price-list
+  question, not one this document can answer.
+
+Do NOT convert any of this into a saving using numbers from this file. Take the
+ACU and instance-class prices from the current AWS price list for the target
+region on the day of the comparison, and state the measured duty cycle alongside
+the figure so the next reader can tell whether it still applies.
+
+Two things worth knowing before the spike starts, because they change the shape
+of the work rather than the number:
+
+- Aurora is wire-compatible, so **no application change** — `models/` and the
+  DSN in `/etc/hailbytes-sat/env` are untouched. The change is confined to
+  `modules/ha-hot-hot/aws` and `modules/unlimited-scale/aws`.
+- Moving an existing deployment is a **migration, not an in-place edit**:
+  `aws_db_instance` and `aws_rds_cluster` are different resources, so Terraform
+  plans a destroy and create. Any customer already running on RDS needs a
+  snapshot-restore path and a maintenance window, and that cost belongs in the
+  spike's estimate rather than being discovered during it.
