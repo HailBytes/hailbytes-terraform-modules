@@ -73,9 +73,20 @@ variable "vm_size" {
     # such as Standard_E8-2s_v5 reports 8 here when only 2 vCPU are licensed.
     # That passes a >= 2 gate, which is correct -- it just is not a vCPU count
     # to bill from.
-    condition = (
-      can(regex("^Standard_[A-Za-z]{1,5}[0-9]+", var.vm_size)) &&
-      tonumber(regex("^Standard_[A-Za-z]{1,5}([0-9]+)", var.vm_size)[0]) >= 2
+    # try(), not `can(...) && tonumber(regex(...))`. Terraform's && does not
+    # short-circuit inside a validation condition: it evaluates both operands,
+    # so a malformed size ("d4s_v5") made the second regex() throw
+    #   Call to function "regex" failed: pattern did not match any part of the
+    #   given string
+    # instead of failing the condition. The operator then got a function-call
+    # error naming variables.tf and a line number, rather than the error_message
+    # written for exactly this case, and tests/vm_size_default.tftest.hcl's
+    # a_malformed_size_is_refused failed because expect_failures cannot match a
+    # thrown error. try() yields false on the throw, which is the intended
+    # meaning: unparseable is not >= 2.
+    condition = try(
+      tonumber(regex("^Standard_[A-Za-z]{1,5}([0-9]+)", var.vm_size)[0]) >= 2,
+      false
     )
     error_message = "vm_size must be an Azure SKU name of the form Standard_<family><vCPUs>[suffix][_vN] with 2 or more vCPU -- for example Standard_D4s_v5, Standard_B4ms, Standard_E8ds_v5, Standard_D16as_v5. Single-vCPU sizes (Standard_B1s, Standard_A1_v2) are refused: the application node runs the web tier, the worker and the phishing server together, and one core cannot carry them. Any family is allowed -- what is NOT checked here is whether this subscription has quota for it, because that is per-family and per-region and no validation can see it. Run quickstart/preflight-azure.sh, or az vm list-usage --location <region> -o table."
   }

@@ -1811,10 +1811,10 @@ resource "azurerm_application_gateway" "main" {
   }
 
   request_routing_rule {
-    name                       = "https-to-vms"
-    rule_type                  = "Basic"
-    http_listener_name         = "https-listener"
-    backend_address_pool_name  = "vms"
+    name                      = "https-to-vms"
+    rule_type                 = "Basic"
+    http_listener_name        = "https-listener"
+    backend_address_pool_name = "vms"
     # "backend", not "https-passthrough". This referenced a name no
     # backend_http_settings block has ever had, so Azure refused the whole
     # gateway with 400 InvalidResourceReference -- found by the 2026-09-07
