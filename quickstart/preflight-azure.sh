@@ -421,9 +421,43 @@ case "${current}:${limit}" in
     *[!0-9:]*|:*|*:) current=""; limit="" ;;
 esac
 if [ -z "$current" ] || [ -z "$limit" ]; then
-    echo "  Could not read quota for ${LOCATION} (needs subscription read)."
+    # An empty answer has three different causes with three different fixes, and
+    # saying "needs subscription read" asserted one of them without checking.
+    # A run against northeurope once reported that Azure "does not list
+    # standardBSFamily" while an identical run found it -- there was no way to
+    # tell a permission problem from a family this region does not offer from a
+    # read that came back short, so the message was wrong at least some of the
+    # time. A spurious "cannot check quota" in front of a customer costs more
+    # trust than the check earns.
+    #
+    # One extra call settles it: list the family slugs and count them.
+    quota_names="$(az vm list-usage --location "$LOCATION" \
+                     --query "[].name.value" -o tsv 2>/dev/null)"
+    quota_count="$(printf '%s\n' "$quota_names" | grep -c 'Family$' || true)"
+
+    if [ -z "${quota_names//[[:space:]]/}" ]; then
+        echo "  Could not read quota for ${LOCATION}: the usage list came back"
+        echo "  empty. That is a permissions or connectivity problem, not a"
+        echo "  quota of zero -- it needs Reader on the subscription."
+    elif [ "${quota_count:-0}" -lt 10 ]; then
+        # Every real region answers with dozens of Family rows. Far fewer means
+        # the response was partial, and concluding "this family is not offered
+        # here" from a partial list is how the flaky message happened.
+        echo "  Could not read quota for ${LOCATION}: the usage list came back"
+        echo "  with only ${quota_count} families, which is too few to be a"
+        echo "  complete answer. Treat this as a failed read, not a missing"
+        echo "  family, and re-run before believing it."
+    elif ! printf '%s\n' "$quota_names" | grep -qxF "$quota_family"; then
+        echo "  ${quota_family} is not offered in ${LOCATION}."
+        echo "  ${quota_count} other families are. This is a real answer, not a"
+        echo "  failed read: ${VM_SKU} cannot be deployed here at all, whatever"
+        echo "  quota is granted. Pick a size from a family this region has."
+    else
+        echo "  ${quota_family} is listed in ${LOCATION}, but its numbers did not"
+        echo "  parse. Treat this as unknown, not as sufficient."
+    fi
     echo "  Check it by hand:"
-    echo "    az vm list-usage --location ${LOCATION} -o table | grep -i DSv5"
+    echo "    az vm list-usage --location ${LOCATION} -o table | grep -i '${quota_family}'"
 else
     available=$(( limit - current ))
     echo "  ${quota_family}: ${current} used of ${limit} — ${available} available."

@@ -499,6 +499,48 @@ check "vm_subnet_is_lb_subnet_matches_ids" {
   }
 }
 
+# The database standby is the one part of this tier that can be switched off
+# without the topology looking any different, and it is the part a customer
+# hears as "HA".
+#
+# db_high_availability_mode = "Disabled" is frequently not a choice: a
+# subscription that is not entitled to zone-redundant Postgres fails the create
+# about fifteen minutes in with MultiAzHaIsOfferRestricted, and the only way
+# past it today is to turn the standby off. That is a reasonable thing to do and
+# a terrible thing to do QUIETLY -- the resulting deployment is two app VMs
+# across two zones in front of a SINGLE-ZONE database, which is a real
+# improvement on one VM and is not what "HA" is usually sold as.
+#
+# A check block rather than a validation: this must not block an apply that the
+# entitlement leaves no alternative to. It warns on every plan and every apply
+# instead, so the gap is in front of whoever runs it rather than in a comment in
+# someone's tfvars.
+#
+# Only when this module owns the database. db_mode = "external" means the
+# caller's own server, whose standby is not ours to describe.
+check "database_has_a_standby" {
+  assert {
+    condition = local.use_external_db || var.db_high_availability_mode != "Disabled"
+    error_message = join("", [
+      "The DATABASE has no standby (db_high_availability_mode = \"Disabled\"), ",
+      "so a zone loss is a restore from backup, not a failover. The application ",
+      "tier is unaffected -- it is still hot-hot across zones 1 and 2 behind a ",
+      "zone-redundant address -- but if this deployment was sold as HA, the ",
+      "database is the part that is not. ",
+      "This is often forced rather than chosen: zone-redundant Postgres is a ",
+      "per-SUBSCRIPTION offer entitlement, and without it the create fails ~15 ",
+      "minutes in with MultiAzHaIsOfferRestricted, whose message blames the ",
+      "region rather than the subscription. Changing region does not help and ",
+      "no plan can detect it. ",
+      "To fix it properly, request the entitlement for this subscription, then ",
+      "set db_high_availability_mode = \"ZoneRedundant\" (it bills 2x compute ",
+      "and 2x storage: the standby is a full server, and \"SameZone\" is not a ",
+      "saving -- it costs the same and trades SLA for latency). ",
+      "To keep it off deliberately, say so to whoever is buying it."
+    ])
+  }
+}
+
 # A separate NSG for the VM subnet, created only when vm_subnet_id is a subnet
 # of its own (a subnet can have exactly one associated NSG — when the two
 # subnet variables point at the same subnet, azurerm_network_security_group.lb

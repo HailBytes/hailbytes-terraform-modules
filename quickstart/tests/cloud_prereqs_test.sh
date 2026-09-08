@@ -126,8 +126,34 @@ az() {
       # what a positional parser would have to survive.
       _q=""
       for _a in "$@"; do
-        case "$_a" in *currentValue*) _q=current ;; *".limit"*) _q=limit ;; esac
+        case "$_a" in
+          *currentValue*)   _q=current ;;
+          *".limit"*)       _q=limit ;;
+          *"[].name.value"*) _q=names ;;
+        esac
       done
+      # The family slugs this region offers. A real region answers with dozens;
+      # this is a representative subset, long enough to be a plausible COMPLETE
+      # answer (the script treats a short list as a failed read, which is the
+      # whole point of the branch). MOCK_FAMILIES=short truncates it on purpose.
+      _fams="standardBSFamily
+standardDSv3Family
+standardDSv5Family
+standardDSv2Family
+standardDADSv5Family
+standardDASv5Family
+standardEDSv5Family_NOT
+standardFSv2Family
+standardLSv3Family
+standardMSFamily
+standardNCASv3_T4Family
+standardNVSv3Family
+standardHBrsv2Family
+standardDPLSv5Family"
+      [ "${MOCK_FAMILIES:-}" = "short" ] && _fams="standardBSFamily
+standardDSv5Family"
+      [ "${MOCK_FAMILIES:-}" = "empty" ] && _fams=""
+      if [ "$_q" = "names" ]; then printf '%s\n' "$_fams"; return 0; fi
       # Answer about the family the script ASKED for, not a hardcoded one. The
       # mock used to reply "standardDSv5Family" whatever the query, so it agreed
       # with the script even when the script asked for a pool that does not
@@ -332,16 +358,59 @@ check "2-vCPU pair asks for 4 vCPUs, not the default 16" \
 check "2-vCPU pair names the size in the quota sentence" \
   "$(grep -c 'application VM(s) at Standard_D2s_v5' <<<"$out")" "1"
 
-# A family the region does not list must read as UNKNOWN, not as fine. az
-# answers an unlisted family with nothing, and an empty answer that fell through
-# to "Sufficient" would greenlight a deployment into a pool with no grant --
-# which is the failure preflight exists to prevent, arrived at from the other
-# direction.
+# An empty quota answer has THREE causes with three different fixes, and the
+# script used to assert one of them ("needs subscription read") without
+# checking. A run against northeurope once reported that Azure "does not list
+# standardBSFamily" while an identical run found it -- there was no way to tell
+# a permission problem from a family the region does not offer from a read that
+# came back short. A spurious "cannot check quota" in front of a customer costs
+# more trust than the check earns, so each cause now has to name itself.
+#
+# None of these may ever read as sufficient: an empty answer that fell through
+# to "Sufficient" would greenlight a deployment into a pool with no grant.
+
+# (a) The family is genuinely not offered here, and the list proves it.
 out="$(sized_out happy Standard_E8ds_v5)"
-check "an unlisted quota family is reported as unreadable" \
-  "$(grep -c 'Could not read quota' <<<"$out")" "1"
-check "and is NOT reported as sufficient" \
+check "an unoffered family says so, and does not blame permissions" \
+  "$(grep -c 'is not offered in northeurope' <<<"$out")" "1"
+check "  ...and does not claim the read failed" \
+  "$(grep -c 'Could not read quota' <<<"$out")" "0"
+check "  ...and is NOT reported as sufficient" \
   "$(grep -c 'Sufficient for the default sizing' <<<"$out")" "0"
+
+# (b) The list came back short. Concluding "not offered here" from a partial
+#     answer is exactly the flake; it has to read as a failed read.
+short_out() { ( export MOCK_SCENARIO=happy MOCK_FAMILIES=short
+                bash "${REPO}/quickstart/preflight-azure.sh" ha --location northeurope \
+                     --vm-size Standard_E8ds_v5 2>&1 ); }
+out="$(short_out)"
+check "a truncated usage list reads as a failed read" \
+  "$(grep -c 'too few to be a' <<<"$out")" "1"
+check "  ...and does not claim the family is unoffered" \
+  "$(grep -c 'is not offered in' <<<"$out")" "0"
+check "  ...and is NOT reported as sufficient" \
+  "$(grep -c 'Sufficient for the default sizing' <<<"$out")" "0"
+
+# (c) Nothing came back at all. That is the one case where "permissions" is the
+#     right thing to say.
+empty_out() { ( export MOCK_SCENARIO=happy MOCK_FAMILIES=empty
+                bash "${REPO}/quickstart/preflight-azure.sh" ha --location northeurope \
+                     --vm-size Standard_E8ds_v5 2>&1 ); }
+out="$(empty_out)"
+check "an empty usage list points at permissions" \
+  "$(grep -c 'permissions or connectivity problem' <<<"$out")" "1"
+check "  ...and is NOT reported as sufficient" \
+  "$(grep -c 'Sufficient for the default sizing' <<<"$out")" "0"
+
+# The by-hand hint must name the family actually being checked. It was
+# hardcoded to "grep -i DSv5", which sends the reader to the wrong pool for
+# every size that is not Dsv5 -- including the current default.
+# The dot stands in for the quote character: nesting single quotes inside the
+# escaped double quotes of a check argument is more trouble than it is worth.
+check "the by-hand command greps for the family being checked" \
+  "$(grep -c 'grep -i .standardEDSv5Family.' <<<"$out")" "1"
+check "  ...and no longer hardcodes DSv5" \
+  "$(grep -c 'grep -i DSv5' <<<"$out")" "0"
 
 
 out="$(sized_out happy Standard_D16s_v5)"
