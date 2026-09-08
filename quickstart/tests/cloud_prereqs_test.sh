@@ -128,10 +128,25 @@ az() {
       for _a in "$@"; do
         case "$_a" in *currentValue*) _q=current ;; *".limit"*) _q=limit ;; esac
       done
-      _fam="standardDSv5Family"
-      case "$*" in *standardBSFamily*) _fam="standardBSFamily" ;; esac
-      _label="Standard DSv5 Family vCPUs"
-      [ "$_fam" = "standardBSFamily" ] && _label="Standard BS Family vCPUs"
+      # Answer about the family the script ASKED for, not a hardcoded one. The
+      # mock used to reply "standardDSv5Family" whatever the query, so it agreed
+      # with the script even when the script asked for a pool that does not
+      # exist -- and it would have kept agreeing after the default moved off
+      # Dsv5, testing nothing.
+      _fam="$(printf '%s' "$*" | sed -n "s/.*name\.value=='\([A-Za-z0-9]*\)'.*/\1/p" | head -1)"
+      [ -z "$_fam" ] && _fam="standardDSv5Family"
+      # A region does NOT list every family, and az answers an unknown one with
+      # nothing at all. Stocking only the families this lab actually has makes
+      # that case reachable: without it the mock answered for any family ever
+      # asked about, so preflight could be reporting room in a pool that is not
+      # offered here and the suite would call it a pass.
+      case "$_fam" in
+        standardDSv3Family|standardDSv5Family|standardBSFamily) : ;;
+        *) return 0 ;;
+      esac
+      # Reconstruct the multi-word localizedValue az really sends, e.g.
+      # standardDSv3Family -> "Standard DSv3 Family vCPUs".
+      _label="Standard $(printf '%s' "${_fam#standard}" | sed 's/Family$//') Family vCPUs"
       if [ "$scenario" = "no_quota" ]; then _cur=10; _lim=12; else _cur=0; _lim=100; fi
       case "$_q" in
         current) echo "$_cur" ;;
@@ -273,18 +288,37 @@ check "a missing zone names the zone and the consequence" \
   "$(grep -c 'zone 2 is not available' <<<"$out")" "1"
 
 out="$(azure_out no_quota)"
-# 8, not 16: the Azure module default is Standard_B4ms (4 vCPU) x 2 nodes.
-# It moved off the 8-vCore Dsv5 floor because the Dsv5 pool is routinely
-# granted a limit of 0 in a fresh subscription, which failed the apply after
-# the network and database were built.
+# Both figures below are DERIVED from the module default rather than typed.
+# They were literals -- "needs 8", "standardDSv5Family" -- and every time the
+# default moved they had to be hand-edited, which is a check that tests the
+# edit rather than the behaviour. What actually has to hold is that preflight
+# asks about the pool the default size draws from, and asks for the vCPUs two
+# of that size need.
+azure_default_size="$(sed -n '/^variable "vm_size"/,/^}/p' \
+  "${REPO}/modules/ha-hot-hot/azure/variables.tf" \
+  | sed -n 's/^  default     = "\(.*\)"$/\1/p' | head -1)"
+if [ -z "$azure_default_size" ]; then
+  printf '  FAIL could not read the Azure module default vm_size\n'; fail=$((fail+1))
+fi
+_body="${azure_default_size#Standard_}"
+_head="$(printf '%s' "$_body" | sed -n 's/^\([A-Za-z]*\)[0-9].*/\1/p')"
+_vcpu="$(printf '%s' "$_body" | sed -n 's/^[A-Za-z]*\([0-9]*\).*/\1/p')"
+_tail="$(printf '%s' "$_body" | sed -n 's/^[A-Za-z]*[0-9]*\([a-z]*\).*/\1/p')"
+_ver="$(printf '%s' "$_body"  | sed -n 's/.*_\(v[0-9]*\)$/\1/p')"
+case "$azure_default_size" in
+  Standard_B*) _fam_expected="standardBSFamily" ;;
+  *) _fam_expected="standard${_head}$(printf '%s' "$_tail" | tr '[:lower:]' '[:upper:]')${_ver}Family" ;;
+esac
+# Two application VMs at the default size. The mock's no_quota scenario offers
+# 2 available (10 used of 12), which is short for any size on the ladder.
+_needed=$(( _vcpu * 2 ))
 check "short quota says how much is needed and how much there is" \
-  "$(grep -c 'NOT ENOUGH. This deployment needs 8 and can get 2' <<<"$out")" "1"
+  "$(grep -c "NOT ENOUGH. This deployment needs ${_needed} and can get 2" <<<"$out")" "1"
 # The quota pool has to follow the FAMILY of the size being deployed, because
 # each pool is granted separately -- reading the wrong one reports room that
-# does not exist. The default is general compute now, so the default reads the
-# Dsv5 pool.
-check "the default reads the Dsv5 quota pool" \
-  "$(grep -c "standardDSv5Family" <<<"$out")" "2"
+# does not exist.
+check "the default reads its own family's quota pool (${_fam_expected})" \
+  "$(grep -c "$_fam_expected" <<<"$out")" "2"
 
 # The quota figure has to follow the size being deployed. Pinned at the 8-vCore
 # default, a 2 x Standard_D2s_v5 pilot was told it needed 16 vCPUs instead of 4
@@ -297,6 +331,18 @@ check "2-vCPU pair asks for 4 vCPUs, not the default 16" \
   "$(grep -c 'it needs 4 vCPUs' <<<"$out")" "1"
 check "2-vCPU pair names the size in the quota sentence" \
   "$(grep -c 'application VM(s) at Standard_D2s_v5' <<<"$out")" "1"
+
+# A family the region does not list must read as UNKNOWN, not as fine. az
+# answers an unlisted family with nothing, and an empty answer that fell through
+# to "Sufficient" would greenlight a deployment into a pool with no grant --
+# which is the failure preflight exists to prevent, arrived at from the other
+# direction.
+out="$(sized_out happy Standard_E8ds_v5)"
+check "an unlisted quota family is reported as unreadable" \
+  "$(grep -c 'Could not read quota' <<<"$out")" "1"
+check "and is NOT reported as sufficient" \
+  "$(grep -c 'Sufficient for the default sizing' <<<"$out")" "0"
+
 
 out="$(sized_out happy Standard_D16s_v5)"
 check "16-vCPU pair asks for 32 vCPUs" \

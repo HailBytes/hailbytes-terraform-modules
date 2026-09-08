@@ -196,7 +196,17 @@ check_contains "sizing reaches the AWS config too"     "$src" "instance_type = \
 # Keeping the check matters more than how it is spelled: the failure it guards
 # against is a wizard that offers something terraform then rejects, which reads
 # to the operator as the tool contradicting itself.
-for sz in Standard_B2s Standard_B4ms Standard_D4s_v5 Standard_D8s_v5 Standard_D16s_v5; do
+#
+# The size list is READ OUT OF deploy.sh rather than typed here. It used to be a
+# literal, and the moment the ladder changed the loop went on checking sizes the
+# wizard no longer offers -- passing while testing nothing, which is worse than
+# failing.
+offered="$(sed -n '/^  if \[ "$CLOUD" = azure \]; then$/,/^    esac$/p' "${REPO}/quickstart/deploy.sh" \
+           | sed -n 's/.*NODE_SIZE="\(Standard_[A-Za-z0-9_]*\)".*/\1/p')"
+if [ -z "$offered" ]; then
+  printf '  FAIL could not read the Azure size ladder out of deploy.sh\n'; fail=$((fail+1))
+fi
+for sz in $offered; do
   body="${sz#Standard_}"
   head="$(printf '%s' "$body" | sed -n 's/^\([A-Za-z]*\)[0-9].*/\1/p')"
   vcpu="$(printf '%s' "$body" | sed -n 's/^[A-Za-z]*\([0-9]*\).*/\1/p')"
@@ -208,6 +218,23 @@ for sz in Standard_B2s Standard_B4ms Standard_D4s_v5 Standard_D8s_v5 Standard_D1
     fail=$((fail+1))
   fi
 done
+# The Pilot rung and the module default must be the SAME size. The wizard
+# labels that rung "THE DEFAULT"; if the module disagrees, a plain
+# `terraform apply` silently gets a different shape than the wizard promised,
+# and the preflight checks the wrong quota pool on the way there.
+mod_default="$(sed -n '/^variable "vm_size"/,/^}/p' "${REPO}/modules/ha-hot-hot/azure/variables.tf" \
+               | sed -n 's/^  default     = "\(.*\)"$/\1/p' | head -1)"
+wiz_default="$(printf '%s\n' $offered | head -1)"
+pre_default="$(sed -n 's/^VM_SKU="${HB_VM_SIZE:-\(.*\)}"$/\1/p' "${REPO}/quickstart/preflight-azure.sh" | head -1)"
+if [ -n "$mod_default" ] && [ "$mod_default" = "$wiz_default" ] && [ "$mod_default" = "$pre_default" ]; then
+  printf '  ok   wizard, module and preflight agree the default is %s\n' "$mod_default"
+  pass=$((pass+1))
+else
+  printf '  FAIL default disagrees: module=%s wizard=%s preflight=%s\n' \
+    "${mod_default:-<unread>}" "${wiz_default:-<unread>}" "${pre_default:-<unread>}"
+  fail=$((fail+1))
+fi
+
 # And the module must no longer carry an enumerated list, or the two designs
 # fight: the wizard would offer a valid size that a stale list rejects.
 if grep -q 'contains(\[' "${REPO}/modules/ha-hot-hot/azure/variables.tf" \

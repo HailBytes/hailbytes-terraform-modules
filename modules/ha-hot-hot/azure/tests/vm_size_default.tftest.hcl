@@ -49,43 +49,55 @@ variables {
 
 
 # The default. If this changes, it should change deliberately and visibly.
-# The default moved from Standard_B4ms to Standard_D4s_v5: general compute
-# rather than burstable.
+# It has moved twice: Standard_B4ms -> Standard_D4s_v5 -> Standard_D2s_v3.
 #
-# The reason B4ms was chosen has not gone away -- every Dsv5 rung draws
-# standardDSv5Family, Azure commonly grants that pool a limit of 0, and the VMs
-# are created late enough that the failure lands about twelve minutes into an
-# apply. What changed is that the failure is now caught BEFORE the apply:
-# quickstart/preflight-azure.sh and the deployment bundles both read the pool
-# for whatever size is set and refuse to proceed, so the trap costs a re-run of
-# a read-only check rather than twelve minutes and a half-built stack.
+# WHY Dsv3 AND NOT Dsv5. Every Dsv5 rung draws one pool, standardDSv5Family,
+# and Azure commonly grants that pool a limit of 0 to a subscription that has
+# never asked for it. The VMs are created late enough that the refusal lands
+# about twelve minutes into an apply, with the network, Key Vault and database
+# already built. standardDSv3Family is granted a non-zero default on most
+# subscriptions, so the same shape deploys first time. Preflight catches the
+# Dsv5 case before anything is built, but a default that does not need
+# catching is better than one that does.
 #
-# Given that, burstable is the worse default: B-series banks CPU credits while
-# idle and throttles to a fraction of a core once they are spent, which is a
-# silent degradation under exactly the sustained sending a campaign does. A
-# loud pre-flight failure beats a quiet throttle.
-run "default_vm_size_is_general_compute" {
+# WHY 2 vCPU AND NOT 4. Deployability again: 2 vCPU is the smallest shape this
+# stack runs on, so it is the one most likely to fit inside a regional grant
+# that has never been raised. The trade is real and is stated in the wizard --
+# changing vm_size REPLACES the VM, so starting small is not free.
+#
+# WHY NOT BURSTABLE. B-series banks CPU credits while idle and throttles to a
+# fraction of a core once they are spent, which is a silent degradation under
+# exactly the sustained sending a campaign does. Dsv3 gets the
+# deploys-first-time property without that.
+run "default_vm_size_is_two_vcpu_general_compute" {
   command = plan
 
   assert {
-    condition     = azurerm_linux_virtual_machine.vm[0].size == "Standard_D4s_v5"
-    error_message = "The default vm_size must be Standard_D4s_v5: general compute, not burstable. B-series throttles once CPU credits are spent, which degrades campaign sending silently. The Dsv5 quota trap that once justified a B-series default is now caught by preflight before anything is built."
+    condition     = azurerm_linux_virtual_machine.vm[0].size == "Standard_D2s_v3"
+    error_message = "The default vm_size must be Standard_D2s_v3: 2 vCPU, general compute, on the Dsv3 quota pool that a fresh subscription is most likely to already have. Not Dsv5 (commonly granted 0, fails twelve minutes into an apply) and not B-series (burstable, throttles silently under campaign load)."
   }
 
   assert {
-    condition     = azurerm_linux_virtual_machine.vm[1].size == "Standard_D4s_v5"
+    condition     = azurerm_linux_virtual_machine.vm[1].size == "Standard_D2s_v3"
     error_message = "Both nodes of the HA pair must take the same default size."
   }
 }
 
-# 4 vCPU, not 2: it clears the 4-vCPU minimum in the ASM hardening guide, which
-# a 2-vCPU default would ship underneath.
-run "default_is_four_vcpu_not_two" {
+# Not burstable, whatever the rung. This is the half of the old
+# default_is_four_vcpu_not_two check that still holds: that check also asserted
+# 4 vCPU, on the grounds that ASM's HARDENING_GUIDE.md sets a 4-vCPU minimum
+# and a 2-vCPU default would ship underneath it. That reasoning is still
+# correct FOR ASM, which is why modules/asm-azure-ha keeps its own
+# Standard_D4s_v5 default rather than inheriting this one. This tier module and
+# the SAT wrapper start at 2 because deployability on an ungranted subscription
+# was judged the bigger cost for SAT. See docs/SKU_DEPLOYMENT_MATRIX.md
+# Finding 1 for the argument against, which remains on the record.
+run "default_is_not_burstable" {
   command = plan
 
   assert {
-    condition     = azurerm_linux_virtual_machine.vm[0].size != "Standard_B2s"
-    error_message = "Standard_B2s is 2 vCPU and sits below the documented 4-vCPU product minimum. It stays on the ladder as a pilot rung but must not be the default."
+    condition     = !startswith(azurerm_linux_virtual_machine.vm[0].size, "Standard_B")
+    error_message = "The default must not be a B-series size. B-series is burstable: it banks CPU credits while idle and throttles to a fraction of a core once they are spent, which degrades campaign sending without any signal. It stays selectable; it must not be the default."
   }
 }
 

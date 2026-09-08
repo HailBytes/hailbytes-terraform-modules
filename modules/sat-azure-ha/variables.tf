@@ -148,9 +148,9 @@ variable "db_vm_name" {
 }
 
 variable "vm_size" {
-  description = "Azure VM SKU for the HailBytes application node(s). Any Standard_* size with 2 or more vCPU is accepted; the default is a general-compute shape. THE ALLOWLIST WAS REMOVED ON PURPOSE. It was an enumerated list of nine Dsv5 rungs plus two B-series, and it blocked two real deployments: Standard_B4ms was rejected while it was the only family with quota in the target subscription, and every newer family (Dsv6, the as/ps AMD and ARM variants, the memory and compute-optimised lines) was rejected for having been released after the list was written. A hand-maintained list of SKUs goes stale faster than anyone updates it, and the failure mode is refusing a size the customer can actually get. QUOTA IS THE THING TO CHECK, NOT THE NAME. Every Dsv5 rung draws one pool, standardDSv5Family, which is frequently granted a limit of 0 in a subscription that has never asked for it -- so a Dsv5 size can be perfectly valid and still fail the apply. quickstart/preflight-azure.sh and the deployment bundles check the pool for whatever size is set, before anything is built. Confirm with: az vm list-usage --location <region> -o table. B-series is BURSTABLE: it banks CPU credits while idle and throttles to a fraction of a core once they are spent, which suits pilots and steady low load, not sustained campaign sending. Size from measured load rather than from a rung -- see hailbytes-sat/docs/VM_SCALING.md."
+  description = "Azure VM SKU for the HailBytes application node(s). Any Standard_* size with 2 or more vCPU is accepted; the default is the smallest general-compute shape, on the D family generation most likely to already have quota. THE DEFAULT IS Standard_D2s_v3 FOR ONE REASON: it is the size a subscription that has never asked for anything is most likely to be able to actually deploy. It draws standardDSv3Family, which Azure grants a non-zero default to on most subscriptions; standardDSv5Family is commonly 0 on a subscription that has never requested it, which is what failed the 2026-09-06 apply twelve minutes in, after the network, Key Vault and database were already built. Two vCPU because that is the smallest shape this stack runs on, so it fits inside the smallest regional grant -- size UP from measured load, rather than starting large and discovering the quota ceiling during an apply. It is not burstable, which B-series is: B-series banks CPU credits while idle and throttles to a fraction of a core once they are spent, so it suits a pilot and steady low load but not sustained campaign sending. THE ALLOWLIST WAS REMOVED ON PURPOSE. It was an enumerated list of nine Dsv5 rungs plus two B-series, and it blocked two real deployments: Standard_B4ms was rejected while it was the only family with quota in the target subscription, and every newer family (Dsv6, the as/ps AMD and ARM variants, the memory and compute-optimised lines) was rejected for having been released after the list was written. A hand-maintained list of SKUs goes stale faster than anyone updates it, and the failure mode is refusing a size the customer can actually get. QUOTA IS THE THING TO CHECK, NOT THE NAME, and no validation can see it: it is per-family and per-region. quickstart/preflight-azure.sh and the deployment bundles check the pool for whatever size is set, before anything is built. Confirm with: az vm list-usage --location <region> -o table. Size from measured load rather than from a rung -- see hailbytes-sat/docs/VM_SCALING.md."
   type        = string
-  default     = "Standard_D4s_v5"
+  default     = "Standard_D2s_v3"
 
   validation {
     # Shape, not membership. The vCPU count is the first run of digits after
@@ -163,9 +163,20 @@ variable "vm_size" {
     # such as Standard_E8-2s_v5 reports 8 here when only 2 vCPU are licensed.
     # That passes a >= 2 gate, which is correct -- it just is not a vCPU count
     # to bill from.
-    condition = (
-      can(regex("^Standard_[A-Za-z]{1,5}[0-9]+", var.vm_size)) &&
-      tonumber(regex("^Standard_[A-Za-z]{1,5}([0-9]+)", var.vm_size)[0]) >= 2
+    # try(), not `can(...) && tonumber(regex(...))`. Terraform's && does not
+    # short-circuit inside a validation condition: it evaluates both operands,
+    # so a malformed size ("d4s_v5") made the second regex() throw
+    #   Call to function "regex" failed: pattern did not match any part of the
+    #   given string
+    # instead of failing the condition. The operator then got a function-call
+    # error naming variables.tf and a line number, rather than the error_message
+    # written for exactly this case, and tests/vm_size_default.tftest.hcl's
+    # a_malformed_size_is_refused failed because expect_failures cannot match a
+    # thrown error. try() yields false on the throw, which is the intended
+    # meaning: unparseable is not >= 2.
+    condition = try(
+      tonumber(regex("^Standard_[A-Za-z]{1,5}([0-9]+)", var.vm_size)[0]) >= 2,
+      false
     )
     error_message = "vm_size must be an Azure SKU name of the form Standard_<family><vCPUs>[suffix][_vN] with 2 or more vCPU -- for example Standard_D4s_v5, Standard_B4ms, Standard_E8ds_v5, Standard_D16as_v5. Single-vCPU sizes (Standard_B1s, Standard_A1_v2) are refused: the application node runs the web tier, the worker and the phishing server together, and one core cannot carry them. Any family is allowed -- what is NOT checked here is whether this subscription has quota for it, because that is per-family and per-region and no validation can see it. Run quickstart/preflight-azure.sh, or az vm list-usage --location <region> -o table."
   }

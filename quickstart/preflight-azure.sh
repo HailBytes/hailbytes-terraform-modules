@@ -44,7 +44,9 @@ set -uo pipefail
 TIER="${1:-ha}"
 ACCEPT_TERMS=0
 LOCATION="${HB_LOCATION:-northeurope}"
-VM_SKU="${HB_VM_SIZE:-Standard_D4s_v5}"
+# Must match the Azure module default, or the preflight checks a quota pool
+# the apply will not draw from. See modules/ha-hot-hot/azure/variables.tf.
+VM_SKU="${HB_VM_SIZE:-Standard_D2s_v3}"
 
 # Parse the flags after the tier. --location and --vm-size take values, so a
 # plain `for arg in "$@"` cannot read them.
