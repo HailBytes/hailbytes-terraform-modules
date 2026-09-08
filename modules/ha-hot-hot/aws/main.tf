@@ -742,11 +742,29 @@ resource "aws_volume_attachment" "db_data" {
 
 # ----- Shared session store: ElastiCache for Redis (Multi-AZ) -----
 #
-# HailBytes SAT / ASM both keep session state in Redis when running in HA. Without
-# a shared Redis endpoint each VM falls back to in-memory sessions, which breaks
-# every cross-instance login and worker-lock claim. This block provisions a
-# Multi-AZ replication group by default; set enable_managed_redis = false and
-# pass redis_endpoint_override to point at a customer-owned cache instead.
+# OPTIONAL. This comment used to say a shared Redis endpoint was required or
+# every cross-instance login and worker-lock claim would break, and it
+# contradicted the comment on user_data further down this same file, which
+# correctly records that the requirement went away.
+#
+# Neither half of the old claim holds:
+#
+#   Sessions      the payload is a handful of scalars, so it travels inside the
+#                 cookie. What breaks a cross-node login is each node deriving
+#                 its OWN cookie keys, and this module now mints one
+#                 session_keys secret that both nodes read
+#                 (aws_secretsmanager_secret.session_keys, hailbytes-sat#907).
+#                 Sharing the keys is sufficient on its own.
+#   Worker locks  a DB-backed `worker_locks` table in the app, not a Redis
+#                 heartbeat (hailbytes-sat migration 20260218000001).
+#
+# enable_managed_redis therefore defaults FALSE, matching ha-hot-hot/azure. It
+# stays available as a performance option, and redis_endpoint_override still
+# points at a customer-owned cache.
+#
+# Do not read a Multi-AZ replication group as free: it was 20-40 minutes of a
+# ~45 minute apply, and it is the only reason a default apply needed
+# ElastiCache permissions at all.
 
 resource "aws_elasticache_subnet_group" "main" {
   count      = local.provision_managed_redis ? 1 : 0

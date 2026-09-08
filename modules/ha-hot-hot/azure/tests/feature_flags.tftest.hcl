@@ -535,3 +535,33 @@ run "backup_replication_defaults_to_a_kind_compatible_tier" {
     error_message = "account_kind must stay BlobStorage -- StorageV2 reintroduces the queue-service data-plane call this account cannot serve."
   }
 }
+
+# db_delegated_subnet_id and private_dns_zone_id became OPTIONAL so that "vm"
+# and "external" modes stop demanding a Postgres-delegated subnet and a private
+# DNS zone that nothing in those modes references. Making them optional opens a
+# hole if it is not guarded: flexible_server mode would take null and fail deep
+# inside the azurerm provider instead of at plan time.
+#
+# These two runs are that guard. If the precondition in random_password.db is
+# removed or weakened, they stop failing and start passing, which is the signal.
+run "flexible_server_rejects_a_missing_delegated_subnet" {
+  command = plan
+
+  variables {
+    db_mode                = "flexible_server"
+    db_delegated_subnet_id = null
+  }
+
+  expect_failures = [random_password.db]
+}
+
+run "flexible_server_rejects_a_missing_private_dns_zone" {
+  command = plan
+
+  variables {
+    db_mode             = "flexible_server"
+    private_dns_zone_id = null
+  }
+
+  expect_failures = [random_password.db]
+}

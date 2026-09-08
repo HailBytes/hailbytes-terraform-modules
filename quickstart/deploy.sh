@@ -477,28 +477,37 @@ explain_or_tell() {   # <logfile>
 
 
 # The wizard never asked about sizing, so every deployment silently took the
-# module default. On Azure that default is now Standard_B4ms, chosen because
-# the Dsv5 quota pool is commonly granted a limit of 0 in a fresh subscription
-# -- deployability, not capacity. Burstable is right for a pilot and wrong for
-# an organisation running campaigns, so the choice belongs in front of people
-# rather than in a variable default nobody reads.
+# module default. That default is now the SMALLEST shape the stack runs on --
+# 2 vCPU, Standard_D2s_v3 on Azure -- chosen for one property: it is the size a
+# subscription that has never asked for quota is most likely to be able to
+# deploy today. Dsv3 is granted a non-zero default on most subscriptions;
+# Dsv5 commonly sits at 0, which is what failed an apply twelve minutes in.
 #
-# Rungs match the vm_size / instance_type validation ladders. Anything off
-# them is refused at plan time, so only real rungs are offered.
+# Starting small is a deliberate trade and it has a cost worth stating out
+# loud: changing vm_size later REPLACES the VM. On a two-node pair that is a
+# rolling replacement, not an outage, but it is not free either. So the choice
+# belongs in front of people rather than in a variable default nobody reads.
+#
+# The 2 and 4 rungs are Dsv3 for the quota reason above. 8 and 16 stay on Dsv5:
+# anyone sizing there is running real campaign volume and is requesting quota
+# regardless, and 8 vCPU is the published purchasable rung.
+#
+# Rungs are real Azure and AWS sizes; the module validates by shape (any
+# Standard_* with 2+ vCPU), so anything offered here is accepted at plan time.
 pick_node_size() {
   NODE_SIZE=""
   local answer vcpu
   answer="$(choose "How many vCPUs per application node?" \
-    "Pilot - 2 vCPU. Evaluation and small rosters|2" \
-    "Departmental - 4 vCPU. The current default|4" \
+    "Pilot - 2 vCPU. THE DEFAULT. Evaluation, demos and small rosters|2" \
+    "Departmental - 4 vCPU. Steady multi-team use|4" \
     "Organisational - 8 vCPU. The published purchasable rung|8" \
     "Larger - 16 vCPU|16")"
   vcpu="${answer##*|}"
 
   if [ "$CLOUD" = azure ]; then
     case "$vcpu" in
-      2)  NODE_SIZE="Standard_B2s"     ;;
-      4)  NODE_SIZE="Standard_B4ms"    ;;
+      2)  NODE_SIZE="Standard_D2s_v3"  ;;
+      4)  NODE_SIZE="Standard_D4s_v3"  ;;
       8)  NODE_SIZE="Standard_D8s_v5"  ;;
       16) NODE_SIZE="Standard_D16s_v5" ;;
     esac
@@ -512,6 +521,19 @@ pick_node_size() {
   fi
   ok "Each application node will be ${NODE_SIZE} (${vcpu} vCPU)."
 
+  # Say the migration cost before the choice is made, not after. Azure replaces
+  # the VM on a vm_size change, so "start small and grow" is not free -- on the
+  # HA pair it is a rolling replacement, on a single VM it is downtime.
+  note "Changing this later REPLACES the VM. On the HA pair that is a rolling"
+  note "replacement one node at a time; on a single VM it is downtime. Pick the"
+  note "size you expect to run at, not the smallest one that starts."
+  case "$vcpu" in
+    2) note "2 vCPU is the smallest shape this stack runs on: the web tier, the"
+       note "worker and the phishing server share it. Right for evaluation and"
+       note "demos, and for the quota a fresh subscription actually has."
+       ;;
+  esac
+
   # Burstable has to be said out loud. It banks CPU credits while idle and
   # throttles to a fraction of a core once they are spent, which stays
   # invisible until a campaign is actually sending.
@@ -521,9 +543,9 @@ pick_node_size() {
       warn "throttles to a fraction of a core once they are spent."
       note "Fine for evaluation and steady low load. For sustained campaign"
       note "sending choose 8 vCPU or more, which are not burstable."
-      note "Burstable is the default because the Dsv5 quota pool is frequently"
-      note "0 in a subscription that has never requested it, so it deploys"
-      note "first time where a Dsv5 default fails partway into the apply."
+      note "B-series is no longer the default: Standard_D2s_v3 gets the same"
+      note "deploys-first-time property from the Dsv3 quota pool without being"
+      note "burstable. B-series stays selectable for anyone who wants it."
       ;;
   esac
 

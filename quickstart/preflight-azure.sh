@@ -44,7 +44,9 @@ set -uo pipefail
 TIER="${1:-ha}"
 ACCEPT_TERMS=0
 LOCATION="${HB_LOCATION:-northeurope}"
-VM_SKU="${HB_VM_SIZE:-Standard_B4ms}"
+# Must match the Azure module default, or the preflight checks a quota pool
+# the apply will not draw from. See modules/ha-hot-hot/azure/variables.tf.
+VM_SKU="${HB_VM_SIZE:-Standard_D2s_v3}"
 
 # Parse the flags after the tier. --location and --vm-size take values, so a
 # plain `for arg in "$@"` cannot read them.
@@ -83,27 +85,73 @@ PUBLISHER="lcmcon1687976613543"
 OFFER="gophish-phishing-simulator"
 SKU="standard-v2"
 
-# vCPUs per application node, derived from the size actually being deployed.
+# vCPUs per application node, and the quota pool the size draws from. Both are
+# DERIVED from the SKU name rather than looked up in a table.
 #
-# This was pinned to the 8-vCore default, which is wrong for anyone deploying
-# off the default: a 2 x Standard_D2s_v5 pilot needs 4 vCPUs of quota and was
-# told it needed 16, which sends them to request an increase they do not need.
-# The ladder is the one in modules/*/azure/variables.tf vm_size validation.
+# They were tables, keyed to the enumerated vm_size allowlist in
+# modules/*/variables.tf. That allowlist has been replaced by a shape check
+# (any Standard_* size with 2+ vCPU), which made both tables wrong rather than
+# merely incomplete:
+#
+#   - the vCPU table `exit 2`ed on any size outside the old nine rungs, so a
+#     perfectly valid Standard_E8ds_v5 could not be pre-flighted at all
+#   - the family map sent everything that was not B-series to
+#     standardDSv5Family, so an E-series or F-series size was checked against a
+#     pool it does not draw from, and could be reported as having room when its
+#     own pool sat at zero
+#
+# The vCPU count is the first run of digits after the family letters, which
+# holds across every current family: D4s_v5 -> 4, B4ms -> 4, E8ds_v5 -> 8,
+# D16as_v5 -> 16, F2s_v2 -> 2, DC2s_v3 -> 2.
+#
+# Caveat, in the safe direction: a constrained-core SKU such as
+# Standard_E8-2s_v5 reads as 8 when only 2 vCPU are licensed, so this
+# over-estimates the quota needed. Over-asking is recoverable; under-asking
+# fails the apply.
+# The Standard_ prefix is required, not merely stripped. Without this check a
+# lowercase or prefix-less name ("d4s_v5") derived a plausible family and vCPU
+# count and sailed through preflight, only to be refused by the module's own
+# regex at plan -- so preflight passed and the deploy still failed, which is
+# the exact failure mode preflight exists to prevent.
 case "$VM_SKU" in
-    Standard_B2s|Standard_D2s_v5)  VM_SKU_VCPUS=2  ;;
-    Standard_B4ms)                 VM_SKU_VCPUS=4  ;;
-    Standard_D4s_v5)               VM_SKU_VCPUS=4  ;;
-    Standard_D8s_v5)               VM_SKU_VCPUS=8  ;;
-    Standard_D16s_v5)              VM_SKU_VCPUS=16 ;;
-    Standard_D32s_v5)              VM_SKU_VCPUS=32 ;;
-    Standard_D48s_v5)              VM_SKU_VCPUS=48 ;;
-    Standard_D64s_v5)              VM_SKU_VCPUS=64 ;;
+    Standard_*) : ;;
     *)
-        echo "unknown --vm-size: ${VM_SKU}" >&2
-        echo "Portable rungs: Standard_B2s, Standard_B4ms, Standard_D2s_v5, Standard_D4s_v5," >&2
-        echo "Standard_D8s_v5, Standard_D16s_v5, Standard_D32s_v5," >&2
-        echo "Standard_D48s_v5, Standard_D64s_v5." >&2
+        echo "--vm-size must be a full Azure SKU name beginning 'Standard_': ${VM_SKU}" >&2
+        echo "Expected Standard_<family><vCPUs>[suffix][_vN], e.g. Standard_D4s_v5." >&2
         exit 2
+        ;;
+esac
+sku_body="${VM_SKU#Standard_}"
+sku_head="$(printf '%s' "$sku_body" | sed -n 's/^\([A-Za-z]*\)[0-9].*/\1/p')"
+VM_SKU_VCPUS="$(printf '%s' "$sku_body" | sed -n 's/^[A-Za-z]*\([0-9]*\).*/\1/p')"
+sku_tail="$(printf '%s' "$sku_body" | sed -n 's/^[A-Za-z]*[0-9]*\([a-z]*\).*/\1/p')"
+sku_ver="$(printf '%s' "$sku_body"  | sed -n 's/.*_\(v[0-9]*\)$/\1/p')"
+
+if [ -z "$sku_head" ] || [ -z "$VM_SKU_VCPUS" ]; then
+    echo "cannot read a family and vCPU count from --vm-size: ${VM_SKU}" >&2
+    echo "Expected Standard_<family><vCPUs>[suffix][_vN], e.g. Standard_D4s_v5." >&2
+    exit 2
+fi
+if [ "$VM_SKU_VCPUS" -lt 2 ] 2>/dev/null; then
+    echo "--vm-size ${VM_SKU} has ${VM_SKU_VCPUS} vCPU; the application node needs 2 or more." >&2
+    echo "It runs the web tier, the worker and the phishing server together." >&2
+    exit 2
+fi
+
+# The whole B-series shares one pool whatever the suffix (B2s, B2ms, B4ms), and
+# it is a DIFFERENT pool from Dsv5 -- which routinely sits at a limit of 0 in a
+# subscription that has never asked for it.
+case "$VM_SKU" in
+    Standard_B*)
+        quota_key="standardBSFamily"
+        quota_family="Standard BS Family"
+        ;;
+    *)
+        quota_key="standard$(printf '%s%s%s' \
+            "$sku_head" \
+            "$(printf '%s' "$sku_tail" | tr '[:lower:]' '[:upper:]')" \
+            "$sku_ver")Family"
+        quota_family="$quota_key"
         ;;
 esac
 
@@ -343,14 +391,7 @@ else
 fi
 needed=$(( node_count * VM_SKU_VCPUS ))
 
-# B-series draws its own quota pool, so a B2s pilot reading the DSv5 meter
-# would report a number that has nothing to do with what it is about to create.
-# The whole B-series shares one pool whatever the suffix, and it is a different
-# pool from Dsv5 -- which routinely sits at a limit of 0 in a fresh subscription.
-case "$VM_SKU" in
-    Standard_B*) quota_family="Standard BS Family"; quota_key="standardBSFamily" ;;
-    *)           quota_family="Standard DSv5 Family"; quota_key="standardDSv5Family" ;;
-esac
+# quota_key and quota_family were derived from the SKU name above.
 echo "The ${TIER} tier builds ${node_count} application VM(s) at ${VM_SKU}"
 echo "(${VM_SKU_VCPUS} vCPUs each), so it needs ${needed} vCPUs of"
 echo "'${quota_family}' quota here."
@@ -380,9 +421,43 @@ case "${current}:${limit}" in
     *[!0-9:]*|:*|*:) current=""; limit="" ;;
 esac
 if [ -z "$current" ] || [ -z "$limit" ]; then
-    echo "  Could not read quota for ${LOCATION} (needs subscription read)."
+    # An empty answer has three different causes with three different fixes, and
+    # saying "needs subscription read" asserted one of them without checking.
+    # A run against northeurope once reported that Azure "does not list
+    # standardBSFamily" while an identical run found it -- there was no way to
+    # tell a permission problem from a family this region does not offer from a
+    # read that came back short, so the message was wrong at least some of the
+    # time. A spurious "cannot check quota" in front of a customer costs more
+    # trust than the check earns.
+    #
+    # One extra call settles it: list the family slugs and count them.
+    quota_names="$(az vm list-usage --location "$LOCATION" \
+                     --query "[].name.value" -o tsv 2>/dev/null)"
+    quota_count="$(printf '%s\n' "$quota_names" | grep -c 'Family$' || true)"
+
+    if [ -z "${quota_names//[[:space:]]/}" ]; then
+        echo "  Could not read quota for ${LOCATION}: the usage list came back"
+        echo "  empty. That is a permissions or connectivity problem, not a"
+        echo "  quota of zero -- it needs Reader on the subscription."
+    elif [ "${quota_count:-0}" -lt 10 ]; then
+        # Every real region answers with dozens of Family rows. Far fewer means
+        # the response was partial, and concluding "this family is not offered
+        # here" from a partial list is how the flaky message happened.
+        echo "  Could not read quota for ${LOCATION}: the usage list came back"
+        echo "  with only ${quota_count} families, which is too few to be a"
+        echo "  complete answer. Treat this as a failed read, not a missing"
+        echo "  family, and re-run before believing it."
+    elif ! printf '%s\n' "$quota_names" | grep -qxF "$quota_family"; then
+        echo "  ${quota_family} is not offered in ${LOCATION}."
+        echo "  ${quota_count} other families are. This is a real answer, not a"
+        echo "  failed read: ${VM_SKU} cannot be deployed here at all, whatever"
+        echo "  quota is granted. Pick a size from a family this region has."
+    else
+        echo "  ${quota_family} is listed in ${LOCATION}, but its numbers did not"
+        echo "  parse. Treat this as unknown, not as sufficient."
+    fi
     echo "  Check it by hand:"
-    echo "    az vm list-usage --location ${LOCATION} -o table | grep -i DSv5"
+    echo "    az vm list-usage --location ${LOCATION} -o table | grep -i '${quota_family}'"
 else
     available=$(( limit - current ))
     echo "  ${quota_family}: ${current} used of ${limit} — ${available} available."

@@ -187,11 +187,62 @@ check_contains "sizing links the pricing page"         "$size_body" "hailbytes.c
 check_contains "sizing costs by node COUNT, not per node" "$size_body" "metered vCPUs"
 check_contains "sizing reaches the generated config"   "$src" "vm_size = \\\"\${NODE_SIZE}"
 check_contains "sizing reaches the AWS config too"     "$src" "instance_type = \\\"\${NODE_SIZE}"
-# Every size it offers must be on the module ladder, or plan refuses it.
-for sz in Standard_B2s Standard_B4ms Standard_D8s_v5 Standard_D16s_v5; do
-  check_contains "offered size ${sz} is on the vm_size ladder" \
-    "$(cat "${REPO}/modules/ha-hot-hot/azure/variables.tf")" "\"${sz}\""
+# Every size the wizard offers must be one the module ACCEPTS, or the plan
+# refuses a choice the wizard just made. That used to be a grep for the size in
+# an enumerated allowlist; the allowlist is gone, replaced by a shape check
+# (any Standard_* size with 2+ vCPU), so this applies the same rule the module
+# applies instead of grepping for a list that no longer exists.
+#
+# Keeping the check matters more than how it is spelled: the failure it guards
+# against is a wizard that offers something terraform then rejects, which reads
+# to the operator as the tool contradicting itself.
+#
+# The size list is READ OUT OF deploy.sh rather than typed here. It used to be a
+# literal, and the moment the ladder changed the loop went on checking sizes the
+# wizard no longer offers -- passing while testing nothing, which is worse than
+# failing.
+offered="$(sed -n '/^  if \[ "$CLOUD" = azure \]; then$/,/^    esac$/p' "${REPO}/quickstart/deploy.sh" \
+           | sed -n 's/.*NODE_SIZE="\(Standard_[A-Za-z0-9_]*\)".*/\1/p')"
+if [ -z "$offered" ]; then
+  printf '  FAIL could not read the Azure size ladder out of deploy.sh\n'; fail=$((fail+1))
+fi
+for sz in $offered; do
+  body="${sz#Standard_}"
+  head="$(printf '%s' "$body" | sed -n 's/^\([A-Za-z]*\)[0-9].*/\1/p')"
+  vcpu="$(printf '%s' "$body" | sed -n 's/^[A-Za-z]*\([0-9]*\).*/\1/p')"
+  if [ -n "$head" ] && [ -n "$vcpu" ] && [ "$vcpu" -ge 2 ] 2>/dev/null; then
+    printf '  ok   offered size %s satisfies the module vm_size rule\n' "$sz"
+    pass=$((pass+1))
+  else
+    printf '  FAIL offered size %s would be refused by the module\n' "$sz"
+    fail=$((fail+1))
+  fi
 done
+# The Pilot rung and the module default must be the SAME size. The wizard
+# labels that rung "THE DEFAULT"; if the module disagrees, a plain
+# `terraform apply` silently gets a different shape than the wizard promised,
+# and the preflight checks the wrong quota pool on the way there.
+mod_default="$(sed -n '/^variable "vm_size"/,/^}/p' "${REPO}/modules/ha-hot-hot/azure/variables.tf" \
+               | sed -n 's/^  default     = "\(.*\)"$/\1/p' | head -1)"
+wiz_default="$(printf '%s\n' $offered | head -1)"
+pre_default="$(sed -n 's/^VM_SKU="${HB_VM_SIZE:-\(.*\)}"$/\1/p' "${REPO}/quickstart/preflight-azure.sh" | head -1)"
+if [ -n "$mod_default" ] && [ "$mod_default" = "$wiz_default" ] && [ "$mod_default" = "$pre_default" ]; then
+  printf '  ok   wizard, module and preflight agree the default is %s\n' "$mod_default"
+  pass=$((pass+1))
+else
+  printf '  FAIL default disagrees: module=%s wizard=%s preflight=%s\n' \
+    "${mod_default:-<unread>}" "${wiz_default:-<unread>}" "${pre_default:-<unread>}"
+  fail=$((fail+1))
+fi
+
+# And the module must no longer carry an enumerated list, or the two designs
+# fight: the wizard would offer a valid size that a stale list rejects.
+if grep -q 'contains(\[' "${REPO}/modules/ha-hot-hot/azure/variables.tf" \
+     && sed -n '/^variable "vm_size"/,/^}/p' "${REPO}/modules/ha-hot-hot/azure/variables.tf" | grep -q 'contains(\['; then
+  printf '  FAIL vm_size still uses an enumerated allowlist\n'; fail=$((fail+1))
+else
+  printf '  ok   vm_size validates by shape, not by a hand-written list\n'; pass=$((pass+1))
+fi
 # The IPv6 trap: an address from a dual-stack curl with /32 allows nobody.
 check_contains "admin CIDR lookup forces IPv4" "$src" "curl -4 -fsS"
 check_contains "warn_about_redis_retirement runs" "$main_body" "warn_about_redis_retirement"

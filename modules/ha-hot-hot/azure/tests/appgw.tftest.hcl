@@ -127,3 +127,97 @@ run "https_backend_hop_without_host_header_is_refused" {
 
   expect_failures = [azurerm_application_gateway.main]
 }
+
+# The gateway's blocks refer to each other BY NAME, and Application Gateway
+# resolves those names server-side at create. A typo therefore survives
+# validate, survives plan, and fails the apply with
+#
+#   400 InvalidResourceReference: Resource .../backendHttpSettingsCollection/
+#   https-passthrough referenced by .../requestRoutingRules/https-to-vms was
+#   not found.
+#
+# which is what the 2026-09-07 smoke run hit in phase 2. The four runs above
+# all passed while it was broken, because none of them looked at whether the
+# names line up.
+#
+# These do, at plan time, by comparing the reference against the block it names
+# rather than against a literal -- so they stay honest if a name is renamed.
+run "the_routing_rule_names_blocks_that_exist" {
+  command = plan
+
+  assert {
+    condition = (
+      one(azurerm_application_gateway.main[0].request_routing_rule).backend_http_settings_name ==
+      one(azurerm_application_gateway.main[0].backend_http_settings).name
+    )
+    error_message = "request_routing_rule.backend_http_settings_name must name the backend_http_settings block. A mismatch is invisible to plan and fails the apply with 400 InvalidResourceReference after the gateway has spent ~10 minutes provisioning."
+  }
+
+  assert {
+    condition = (
+      one(azurerm_application_gateway.main[0].request_routing_rule).backend_address_pool_name ==
+      one(azurerm_application_gateway.main[0].backend_address_pool).name
+    )
+    error_message = "request_routing_rule.backend_address_pool_name must name the backend_address_pool block."
+  }
+
+  assert {
+    condition = (
+      one(azurerm_application_gateway.main[0].request_routing_rule).http_listener_name ==
+      one(azurerm_application_gateway.main[0].http_listener).name
+    )
+    error_message = "request_routing_rule.http_listener_name must name the http_listener block."
+  }
+
+  assert {
+    condition = (
+      one(azurerm_application_gateway.main[0].http_listener).frontend_ip_configuration_name ==
+      one(azurerm_application_gateway.main[0].frontend_ip_configuration).name
+    )
+    error_message = "http_listener.frontend_ip_configuration_name must name the frontend_ip_configuration block."
+  }
+
+  assert {
+    condition = (
+      one(azurerm_application_gateway.main[0].http_listener).frontend_port_name ==
+      one(azurerm_application_gateway.main[0].frontend_port).name
+    )
+    error_message = "http_listener.frontend_port_name must name the frontend_port block."
+  }
+
+  assert {
+    condition = (
+      one(azurerm_application_gateway.main[0].backend_http_settings).probe_name ==
+      one(azurerm_application_gateway.main[0].probe).name
+    )
+    error_message = "backend_http_settings.probe_name must name the probe block."
+  }
+
+  assert {
+    condition = (
+      one(azurerm_application_gateway.main[0].http_listener).ssl_certificate_name ==
+      one(azurerm_application_gateway.main[0].ssl_certificate).name
+    )
+    error_message = "http_listener.ssl_certificate_name must name the ssl_certificate block."
+  }
+}
+
+# The HTTPS hop adds one more cross-reference: the trusted root certificate.
+# It is the only one that is conditional, so it needs its own run.
+run "the_https_hop_names_a_trusted_root_that_exists" {
+  command = plan
+
+  variables {
+    appgw_backend_protocol      = "Https"
+    appgw_backend_host_header   = "hailbytes-sat-admin"
+    appgw_backend_root_cert_pem = "-----BEGIN CERTIFICATE-----\nTU9DSw==\n-----END CERTIFICATE-----"
+  }
+
+  assert {
+    condition = (
+      one(azurerm_application_gateway.main[0].backend_http_settings).trusted_root_certificate_names[0] ==
+      one(azurerm_application_gateway.main[0].trusted_root_certificate).name
+    )
+    error_message = "backend_http_settings.trusted_root_certificate_names must name the trusted_root_certificate block, or the gateway serves 502 on a self-signed backend."
+  }
+}

@@ -31,13 +31,15 @@ variable "vm_subnet_id" {
 }
 
 variable "db_delegated_subnet_id" {
-  description = "Subnet delegated to Microsoft.DBforPostgreSQL/flexibleServers (vnet-integrated Postgres)."
+  description = "Subnet delegated to Microsoft.DBforPostgreSQL/flexibleServers (vnet-integrated Postgres). Required when db_mode = \"flexible_server\", which a precondition enforces. Leave null in \"vm\" and \"external\" modes: there is no Flexible Server to inject, so demanding it would force a delegated subnet nobody uses."
   type        = string
+  default     = null
 }
 
 variable "private_dns_zone_id" {
-  description = "Private DNS zone ID for postgres.database.azure.com (linked to the vnet)."
+  description = "Private DNS zone ID for postgres.database.azure.com (linked to the vnet). Required when db_mode = \"flexible_server\", which a precondition enforces. Leave null in \"vm\" and \"external\" modes."
   type        = string
+  default     = null
 }
 
 variable "lb_subnet_id" {
@@ -189,27 +191,37 @@ variable "db_vm_name" {
 }
 
 variable "vm_size" {
-  description = "Azure VM SKU for the HailBytes application node(s). Constrained to the portable ladder; see the validation message. Defaults to Standard_B4ms (4 vCPU, burstable) so that a first deployment succeeds without a quota request -- the Dsv5 families commonly sit at a limit of 0 in a fresh subscription. Move to the Dsv5 ladder before sustained campaign load."
+  description = "Azure VM SKU for the HailBytes application node(s). Any Standard_* size with 2 or more vCPU is accepted; the default is the smallest general-compute shape, on the D family generation most likely to already have quota. THE DEFAULT IS Standard_D2s_v3 FOR ONE REASON: it is the size a subscription that has never asked for anything is most likely to be able to actually deploy. It draws standardDSv3Family, which Azure grants a non-zero default to on most subscriptions; standardDSv5Family is commonly 0 on a subscription that has never requested it, which is what failed the 2026-09-06 apply twelve minutes in, after the network, Key Vault and database were already built. Two vCPU because that is the smallest shape this stack runs on, so it fits inside the smallest regional grant -- size UP from measured load, rather than starting large and discovering the quota ceiling during an apply. It is not burstable, which B-series is: B-series banks CPU credits while idle and throttles to a fraction of a core once they are spent, so it suits a pilot and steady low load but not sustained campaign sending. THE ALLOWLIST WAS REMOVED ON PURPOSE. It was an enumerated list of nine Dsv5 rungs plus two B-series, and it blocked two real deployments: Standard_B4ms was rejected while it was the only family with quota in the target subscription, and every newer family (Dsv6, the as/ps AMD and ARM variants, the memory and compute-optimised lines) was rejected for having been released after the list was written. A hand-maintained list of SKUs goes stale faster than anyone updates it, and the failure mode is refusing a size the customer can actually get. QUOTA IS THE THING TO CHECK, NOT THE NAME, and no validation can see it: it is per-family and per-region. quickstart/preflight-azure.sh and the deployment bundles check the pool for whatever size is set, before anything is built. Confirm with: az vm list-usage --location <region> -o table. Size from measured load rather than from a rung -- see hailbytes-sat/docs/VM_SCALING.md."
   type        = string
-  default     = "Standard_B4ms"
+  default     = "Standard_D2s_v3"
 
   validation {
-    # The portable ladder. The Dsv5 entries are stock general-purpose shapes at
-    # the same 4 GB-per-vCore ratio as the AWS m6i equivalent, so a deployment
-    # can move between clouds without changing tier. The B-series entries are
-    # burstable and have no m6i counterpart.
-    condition = contains([
-      "Standard_B2s",     # 2 vCPU  - pilot, phishing simulation only
-      "Standard_B4ms",    # 4 vCPU  - DEFAULT; burstable, deploys without a Dsv5 grant
-      "Standard_D2s_v5",  # 2 vCPU  - phishing simulation only
-      "Standard_D4s_v5",  # 4 vCPU  - phishing simulation only
-      "Standard_D8s_v5",  # 8 vCPU  - training floor and purchasable entry rung
-      "Standard_D16s_v5", # 16 vCPU
-      "Standard_D32s_v5", # 32 vCPU
-      "Standard_D48s_v5", # 48 vCPU
-      "Standard_D64s_v5", # 64 vCPU
-    ], var.vm_size)
-    error_message = "vm_size must be a portable HailBytes rung: Standard_B2s (2 vCPU) or Standard_B4ms (4 vCPU) on the burstable B-series; Standard_D2s_v5 (2), Standard_D4s_v5 (4), Standard_D8s_v5 (8), Standard_D16s_v5 (16), Standard_D32s_v5 (32), Standard_D48s_v5 (48), Standard_D64s_v5 (64) on the Dsv5 ladder. Azure Dsv5 has NO general-purpose size between 16 and 32 vCPU -- there is no Standard_D24s_v5 -- so a 24-vCore deployment cannot be delivered as one VM or as a symmetric pair; quote 16 or 32. TWO THINGS ABOUT THE DEFAULT. It is Standard_B4ms because the Dsv5 families are frequently granted a quota LIMIT OF 0 in a subscription that has never asked for them, and every Dsv5 rung draws that one pool -- so a Dsv5 default fails the apply after the network, Key Vault and database are already built, and needs a support request to clear. B-series quota is granted by default, so B4ms deploys first time. And B-series is BURSTABLE: it banks CPU credits while idle and throttles to a fraction of a core once they are spent, which suits pilots and steady low load, not sustained campaign sending. Move to the Dsv5 ladder for production load, having first confirmed quota with: az vm list-usage --location <region> -o table. The 2 and 4 vCPU rungs carry measured training capacity as of 2026-08-24; Standard_D8s_v5 remains the published purchasable rung. Size from measured load rather than from the rung -- see hailbytes-sat/docs/VM_SCALING.md."
+    # Shape, not membership. The vCPU count is the first run of digits after
+    # the family letters, which holds across every current Azure family:
+    # D4s_v5 -> 4, B4ms -> 4, E8ds_v5 -> 8, D16as_v5 -> 16, D2plds_v6 -> 2,
+    # DC2s_v3 -> 2, DS2_v2 -> 2. Verified against those and against malformed
+    # input before this replaced the enumerated list.
+    #
+    # Known imprecision, and it is the safe direction: a constrained-core SKU
+    # such as Standard_E8-2s_v5 reports 8 here when only 2 vCPU are licensed.
+    # That passes a >= 2 gate, which is correct -- it just is not a vCPU count
+    # to bill from.
+    # try(), not `can(...) && tonumber(regex(...))`. Terraform's && does not
+    # short-circuit inside a validation condition: it evaluates both operands,
+    # so a malformed size ("d4s_v5") made the second regex() throw
+    #   Call to function "regex" failed: pattern did not match any part of the
+    #   given string
+    # instead of failing the condition. The operator then got a function-call
+    # error naming variables.tf and a line number, rather than the error_message
+    # written for exactly this case, and tests/vm_size_default.tftest.hcl's
+    # a_malformed_size_is_refused failed because expect_failures cannot match a
+    # thrown error. try() yields false on the throw, which is the intended
+    # meaning: unparseable is not >= 2.
+    condition = try(
+      tonumber(regex("^Standard_[A-Za-z]{1,5}([0-9]+)", var.vm_size)[0]) >= 2,
+      false
+    )
+    error_message = "vm_size must be an Azure SKU name of the form Standard_<family><vCPUs>[suffix][_vN] with 2 or more vCPU -- for example Standard_D4s_v5, Standard_B4ms, Standard_E8ds_v5, Standard_D16as_v5. Single-vCPU sizes (Standard_B1s, Standard_A1_v2) are refused: the application node runs the web tier, the worker and the phishing server together, and one core cannot carry them. Any family is allowed -- what is NOT checked here is whether this subscription has quota for it, because that is per-family and per-region and no validation can see it. Run quickstart/preflight-azure.sh, or az vm list-usage --location <region> -o table."
   }
 }
 
@@ -405,13 +417,13 @@ variable "backup_blob_noncurrent_expiration_days" {
 }
 
 variable "enable_pre_patch_run_command" {
-  description = "Install an Azure Run Command document named RunPrePatchBackup on the first SAT VM. Customers fire it from the Portal."
+  description = "Install an Azure Run Command named RunPrePatchBackup on the first SAT VM, for customers to fire from the Portal before a patch. NOTE: azurerm_virtual_machine_run_command EXECUTES on create -- it does not merely register the script the way the aws_ssm_document it mirrors does. So a first apply runs one no-op backup against an empty instance, and anything that makes that script exit non-zero fails the whole apply. Keep the script fail-soft."
   type        = bool
   default     = true
 }
 
 variable "enable_post_patch_run_command" {
-  description = "Install an Azure Run Command document named RunPostPatchVerify on each VM, mirroring the AWS aws_ssm_document.post_patch_verify in the SAT/ASM aws-ha modules. Customers fire it from the Portal after a Run Command-driven image swap."
+  description = "Install an Azure Run Command named RunPostPatchVerify on each VM, mirroring aws_ssm_document.post_patch_verify in the SAT/ASM aws-ha modules. Customers fire it from the Portal after a Run Command-driven image swap. Same caveat as enable_pre_patch_run_command: it EXECUTES on create, so it also serves as a first-apply health gate -- which is useful, but means a genuine verify failure correctly fails the apply."
   type        = bool
   default     = true
 }

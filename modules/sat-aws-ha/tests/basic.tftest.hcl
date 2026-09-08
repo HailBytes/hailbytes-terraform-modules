@@ -71,8 +71,8 @@ run "wrapper_outputs_populated" {
   }
 
   assert {
-    condition     = output.redis_endpoint != ""
-    error_message = "redis_endpoint output must be re-exported (was missing in the v0.3.x regression)"
+    condition     = output.redis_endpoint == ""
+    error_message = "redis_endpoint must be empty by default - enable_managed_redis now defaults to false on this wrapper and its core, so a non-empty endpoint means a cache was created unasked. The output itself is still asserted as re-exported by redis_mode below, which is what the v0.3.x regression actually lost."
   }
 
   assert {

@@ -126,12 +126,53 @@ az() {
       # what a positional parser would have to survive.
       _q=""
       for _a in "$@"; do
-        case "$_a" in *currentValue*) _q=current ;; *".limit"*) _q=limit ;; esac
+        case "$_a" in
+          *currentValue*)   _q=current ;;
+          *".limit"*)       _q=limit ;;
+          *"[].name.value"*) _q=names ;;
+        esac
       done
-      _fam="standardDSv5Family"
-      case "$*" in *standardBSFamily*) _fam="standardBSFamily" ;; esac
-      _label="Standard DSv5 Family vCPUs"
-      [ "$_fam" = "standardBSFamily" ] && _label="Standard BS Family vCPUs"
+      # The family slugs this region offers. A real region answers with dozens;
+      # this is a representative subset, long enough to be a plausible COMPLETE
+      # answer (the script treats a short list as a failed read, which is the
+      # whole point of the branch). MOCK_FAMILIES=short truncates it on purpose.
+      _fams="standardBSFamily
+standardDSv3Family
+standardDSv5Family
+standardDSv2Family
+standardDADSv5Family
+standardDASv5Family
+standardEDSv5Family_NOT
+standardFSv2Family
+standardLSv3Family
+standardMSFamily
+standardNCASv3_T4Family
+standardNVSv3Family
+standardHBrsv2Family
+standardDPLSv5Family"
+      [ "${MOCK_FAMILIES:-}" = "short" ] && _fams="standardBSFamily
+standardDSv5Family"
+      [ "${MOCK_FAMILIES:-}" = "empty" ] && _fams=""
+      if [ "$_q" = "names" ]; then printf '%s\n' "$_fams"; return 0; fi
+      # Answer about the family the script ASKED for, not a hardcoded one. The
+      # mock used to reply "standardDSv5Family" whatever the query, so it agreed
+      # with the script even when the script asked for a pool that does not
+      # exist -- and it would have kept agreeing after the default moved off
+      # Dsv5, testing nothing.
+      _fam="$(printf '%s' "$*" | sed -n "s/.*name\.value=='\([A-Za-z0-9]*\)'.*/\1/p" | head -1)"
+      [ -z "$_fam" ] && _fam="standardDSv5Family"
+      # A region does NOT list every family, and az answers an unknown one with
+      # nothing at all. Stocking only the families this lab actually has makes
+      # that case reachable: without it the mock answered for any family ever
+      # asked about, so preflight could be reporting room in a pool that is not
+      # offered here and the suite would call it a pass.
+      case "$_fam" in
+        standardDSv3Family|standardDSv5Family|standardBSFamily) : ;;
+        *) return 0 ;;
+      esac
+      # Reconstruct the multi-word localizedValue az really sends, e.g.
+      # standardDSv3Family -> "Standard DSv3 Family vCPUs".
+      _label="Standard $(printf '%s' "${_fam#standard}" | sed 's/Family$//') Family vCPUs"
       if [ "$scenario" = "no_quota" ]; then _cur=10; _lim=12; else _cur=0; _lim=100; fi
       case "$_q" in
         current) echo "$_cur" ;;
@@ -240,7 +281,16 @@ run "reports rather than fails: no zone 2"   0 no_zones bash "${REPO}/quickstart
 run "reports rather than fails: short quota" 0 no_quota bash "${REPO}/quickstart/preflight-azure.sh" ha
 run "provider registration failure still exits 1" 1 fail_create bash "${REPO}/quickstart/preflight-azure.sh" ha
 run "rejects --vm-size with no value"     2 happy bash "${REPO}/quickstart/preflight-azure.sh" ha --vm-size
-run "rejects an off-ladder --vm-size"     2 happy bash "${REPO}/quickstart/preflight-azure.sh" ha --vm-size Standard_D24s_v5
+# What preflight refuses now that vm_size is validated by shape rather than by
+# membership of an enumerated list. Standard_D24s_v5 used to be refused here
+# for being off the ladder; it is well formed, so it is accepted now and fails
+# later at the VM create with an explicit Azure error naming the size. That
+# trade is deliberate -- the list also refused Standard_B4ms while it was the
+# only family with quota, and every family released after it was written.
+run "rejects a single-vCPU --vm-size"     2 happy bash "${REPO}/quickstart/preflight-azure.sh" ha --vm-size Standard_B1s
+run "rejects a malformed --vm-size"       2 happy bash "${REPO}/quickstart/preflight-azure.sh" ha --vm-size d4s_v5
+# The point of widening: a memory-optimised size the old list refused outright.
+run "accepts a family the old list refused" 0 happy bash "${REPO}/quickstart/preflight-azure.sh" ha --vm-size Standard_E8ds_v5
 run "accepts the 2-vCPU pilot rung"       0 happy bash "${REPO}/quickstart/preflight-azure.sh" ha --vm-size Standard_D2s_v5
 
 # The regional checks earn their place only if they say something specific
@@ -264,15 +314,37 @@ check "a missing zone names the zone and the consequence" \
   "$(grep -c 'zone 2 is not available' <<<"$out")" "1"
 
 out="$(azure_out no_quota)"
-# 8, not 16: the Azure module default is Standard_B4ms (4 vCPU) x 2 nodes.
-# It moved off the 8-vCore Dsv5 floor because the Dsv5 pool is routinely
-# granted a limit of 0 in a fresh subscription, which failed the apply after
-# the network and database were built.
+# Both figures below are DERIVED from the module default rather than typed.
+# They were literals -- "needs 8", "standardDSv5Family" -- and every time the
+# default moved they had to be hand-edited, which is a check that tests the
+# edit rather than the behaviour. What actually has to hold is that preflight
+# asks about the pool the default size draws from, and asks for the vCPUs two
+# of that size need.
+azure_default_size="$(sed -n '/^variable "vm_size"/,/^}/p' \
+  "${REPO}/modules/ha-hot-hot/azure/variables.tf" \
+  | sed -n 's/^  default     = "\(.*\)"$/\1/p' | head -1)"
+if [ -z "$azure_default_size" ]; then
+  printf '  FAIL could not read the Azure module default vm_size\n'; fail=$((fail+1))
+fi
+_body="${azure_default_size#Standard_}"
+_head="$(printf '%s' "$_body" | sed -n 's/^\([A-Za-z]*\)[0-9].*/\1/p')"
+_vcpu="$(printf '%s' "$_body" | sed -n 's/^[A-Za-z]*\([0-9]*\).*/\1/p')"
+_tail="$(printf '%s' "$_body" | sed -n 's/^[A-Za-z]*[0-9]*\([a-z]*\).*/\1/p')"
+_ver="$(printf '%s' "$_body"  | sed -n 's/.*_\(v[0-9]*\)$/\1/p')"
+case "$azure_default_size" in
+  Standard_B*) _fam_expected="standardBSFamily" ;;
+  *) _fam_expected="standard${_head}$(printf '%s' "$_tail" | tr '[:lower:]' '[:upper:]')${_ver}Family" ;;
+esac
+# Two application VMs at the default size. The mock's no_quota scenario offers
+# 2 available (10 used of 12), which is short for any size on the ladder.
+_needed=$(( _vcpu * 2 ))
 check "short quota says how much is needed and how much there is" \
-  "$(grep -c 'NOT ENOUGH. This deployment needs 8 and can get 2' <<<"$out")" "1"
-# And it must read the BS pool, not Dsv5 -- a different pool entirely.
-check "the default reads the B-series quota pool" \
-  "$(grep -c "Standard BS Family" <<<"$out")" "2"
+  "$(grep -c "NOT ENOUGH. This deployment needs ${_needed} and can get 2" <<<"$out")" "1"
+# The quota pool has to follow the FAMILY of the size being deployed, because
+# each pool is granted separately -- reading the wrong one reports room that
+# does not exist.
+check "the default reads its own family's quota pool (${_fam_expected})" \
+  "$(grep -c "$_fam_expected" <<<"$out")" "2"
 
 # The quota figure has to follow the size being deployed. Pinned at the 8-vCore
 # default, a 2 x Standard_D2s_v5 pilot was told it needed 16 vCPUs instead of 4
@@ -285,6 +357,61 @@ check "2-vCPU pair asks for 4 vCPUs, not the default 16" \
   "$(grep -c 'it needs 4 vCPUs' <<<"$out")" "1"
 check "2-vCPU pair names the size in the quota sentence" \
   "$(grep -c 'application VM(s) at Standard_D2s_v5' <<<"$out")" "1"
+
+# An empty quota answer has THREE causes with three different fixes, and the
+# script used to assert one of them ("needs subscription read") without
+# checking. A run against northeurope once reported that Azure "does not list
+# standardBSFamily" while an identical run found it -- there was no way to tell
+# a permission problem from a family the region does not offer from a read that
+# came back short. A spurious "cannot check quota" in front of a customer costs
+# more trust than the check earns, so each cause now has to name itself.
+#
+# None of these may ever read as sufficient: an empty answer that fell through
+# to "Sufficient" would greenlight a deployment into a pool with no grant.
+
+# (a) The family is genuinely not offered here, and the list proves it.
+out="$(sized_out happy Standard_E8ds_v5)"
+check "an unoffered family says so, and does not blame permissions" \
+  "$(grep -c 'is not offered in northeurope' <<<"$out")" "1"
+check "  ...and does not claim the read failed" \
+  "$(grep -c 'Could not read quota' <<<"$out")" "0"
+check "  ...and is NOT reported as sufficient" \
+  "$(grep -c 'Sufficient for the default sizing' <<<"$out")" "0"
+
+# (b) The list came back short. Concluding "not offered here" from a partial
+#     answer is exactly the flake; it has to read as a failed read.
+short_out() { ( export MOCK_SCENARIO=happy MOCK_FAMILIES=short
+                bash "${REPO}/quickstart/preflight-azure.sh" ha --location northeurope \
+                     --vm-size Standard_E8ds_v5 2>&1 ); }
+out="$(short_out)"
+check "a truncated usage list reads as a failed read" \
+  "$(grep -c 'too few to be a' <<<"$out")" "1"
+check "  ...and does not claim the family is unoffered" \
+  "$(grep -c 'is not offered in' <<<"$out")" "0"
+check "  ...and is NOT reported as sufficient" \
+  "$(grep -c 'Sufficient for the default sizing' <<<"$out")" "0"
+
+# (c) Nothing came back at all. That is the one case where "permissions" is the
+#     right thing to say.
+empty_out() { ( export MOCK_SCENARIO=happy MOCK_FAMILIES=empty
+                bash "${REPO}/quickstart/preflight-azure.sh" ha --location northeurope \
+                     --vm-size Standard_E8ds_v5 2>&1 ); }
+out="$(empty_out)"
+check "an empty usage list points at permissions" \
+  "$(grep -c 'permissions or connectivity problem' <<<"$out")" "1"
+check "  ...and is NOT reported as sufficient" \
+  "$(grep -c 'Sufficient for the default sizing' <<<"$out")" "0"
+
+# The by-hand hint must name the family actually being checked. It was
+# hardcoded to "grep -i DSv5", which sends the reader to the wrong pool for
+# every size that is not Dsv5 -- including the current default.
+# The dot stands in for the quote character: nesting single quotes inside the
+# escaped double quotes of a check argument is more trouble than it is worth.
+check "the by-hand command greps for the family being checked" \
+  "$(grep -c 'grep -i .standardEDSv5Family.' <<<"$out")" "1"
+check "  ...and no longer hardcodes DSv5" \
+  "$(grep -c 'grep -i DSv5' <<<"$out")" "0"
+
 
 out="$(sized_out happy Standard_D16s_v5)"
 check "16-vCPU pair asks for 32 vCPUs" \

@@ -139,24 +139,18 @@ variable "asg_desired_capacity" {
 }
 
 variable "instance_type" {
-  description = "EC2 instance type for the HailBytes application node(s). Constrained to the portable m6i ladder; see the validation message. Defaults to the 8-vCore training floor."
+  description = "EC2 instance type for the HailBytes application node(s). Any family at .large or larger is accepted; the default is a general-compute shape. THE ALLOWLIST WAS REMOVED ON PURPOSE. It permitted only the m6i family, a 2021 generation, so m7i and m8i (newer, cheaper per vCPU), the m6a/m7a AMD lines, the Graviton m6g/m7g lines and every compute- or memory-optimised shape were refused despite being available and often a better fit. A hand-maintained list of instance types goes stale faster than anyone updates it. QUOTA IS THE THING TO CHECK, NOT THE NAME: on-demand vCPU quota is per-family-group and per-region, so quickstart/preflight-aws.sh reports it for whatever type is set. Burstable t-family instances throttle once CPU credits are spent, which suits pilots rather than sustained campaign sending. Size from measured load -- see hailbytes-sat/docs/VM_SCALING.md."
   type        = string
   default     = "m6i.2xlarge"
 
   validation {
-    # The portable ladder. Every entry is a stock m6i general-purpose shape at
-    # the same 4 GB-per-vCore ratio as the Azure Dsv5 equivalent, so a
-    # deployment can move between clouds without changing tier.
-    condition = contains([
-      "m6i.large",    # 2 vCPU  - phishing simulation only
-      "m6i.xlarge",   # 4 vCPU  - phishing simulation only
-      "m6i.2xlarge",  # 8 vCPU  - training floor and purchasable entry rung
-      "m6i.4xlarge",  # 16 vCPU
-      "m6i.8xlarge",  # 32 vCPU
-      "m6i.12xlarge", # 48 vCPU
-      "m6i.16xlarge", # 64 vCPU
-    ], var.instance_type)
-    error_message = "instance_type must be a portable HailBytes rung: m6i.large (2 vCPU), m6i.xlarge (4), m6i.2xlarge (8), m6i.4xlarge (16), m6i.8xlarge (32), m6i.12xlarge (48), m6i.16xlarge (64). AWS m6i has NO general-purpose size between 16 and 32 vCPU, so a 24-vCore deployment cannot be delivered as one VM or as a symmetric pair (2 x 12 does not exist either) -- quote 16 or 32. The 2 and 4 vCPU rungs carry measured training capacity as of 2026-08-24 and are supported for pilots and small rosters; 8 remains the default and the published purchasable rung. Size from measured load rather than from the rung -- see hailbytes-sat/docs/VM_SCALING.md."
+    # Shape, not membership. AWS does not put the vCPU count in the name, so
+    # the gate is on the size suffix: .large is the smallest shape that is 2
+    # vCPU across the general-purpose, compute- and memory-optimised families,
+    # and .nano/.micro/.small/.medium are all below it. .metal is allowed
+    # through as an explicit choice.
+    condition     = can(regex("^[a-z0-9-]+\\.(large|[0-9]*xlarge|metal)$", var.instance_type))
+    error_message = "instance_type must be an EC2 type of the form <family>.<size> at .large or larger -- for example m6i.2xlarge, m7i.xlarge, c6a.4xlarge, r6i.large, or a .metal shape. The .nano, .micro, .small and .medium sizes are refused: the application node runs the web tier, the worker and the phishing server together, and those shapes cannot carry them. Any family is allowed -- what is NOT checked here is whether the account has vCPU quota for it. Run quickstart/preflight-aws.sh, or aws service-quotas get-service-quota --service-code ec2 --quota-code L-1216C47A."
   }
 }
 

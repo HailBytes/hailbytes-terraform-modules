@@ -362,6 +362,72 @@ if has "SubnetsHaveNoServiceEndpointsConfigured" \
 fi
 
 # ===========================================================================
+# A VM extension / Run Command failed
+#
+# This is the 2026-09-07 smoke failure, and the most misleading class in this
+# file: the apply goes red at resource 55 of 59, so it reads like a deployment
+# fault, when the deployment is finished and a POST-deployment script is what
+# failed. That distinction decides whether you tear down or not, so it is
+# stated before anything else.
+# ===========================================================================
+if has "VMExtensionProvisioningError" || has "RunCommandHandlerLinux" \
+   || has "failed to execute command"; then
+    hit "A script on the VM failed, after the VM itself was built"
+    does "The infrastructure was created. What failed is a script Azure ran ON"
+    cont "a VM afterwards, so almost nothing here needs rebuilding."
+    printf '\n'
+
+    # exit 127 from a shell is specifically "command not found", so name the
+    # missing binary outright rather than leaving it buried in escaped JSON.
+    MISSING="$(grep -oE '[a-zA-Z0-9_.-]+: command not found' "$LOG" \
+                 | sed 's/: command not found//' | sort -u | tr '\n' ' ')"
+    RCNAME="$(grep -oE 'Run Command Name: "[^"]+"' "$LOG" \
+                | sed 's/.*"\(.*\)"/\1/' | sort -u | tr '\n' ' ')"
+    [ -n "${RCNAME// /}" ] && cont "Run Command: ${RCNAME% }"
+    if [ -n "${MISSING// /}" ]; then
+        printf '%sNOT ON THE IMAGE%s  %s\n' "$C_BLD" "$C_OFF" "${MISSING% }"
+    fi
+    printf '\n'
+
+    case " $MISSING " in
+        *" az "*)
+            who "Us, not you. Nothing you configured caused this."
+            do_ "Read the script output above the error first. If it says"
+            cont "'bundle written', THE BACKUP SUCCEEDED. The script then called"
+            cont "the Azure CLI for an extra server-side snapshot, and the"
+            cont "HailBytes image does not ship one, so it exited 127 with the"
+            cont "real work already done. On a fresh deployment there was"
+            cont "nothing to snapshot yet either."
+            printf '\n'
+            do_ "Confirm the deployment is up, which it very likely is:"
+            cmd "terraform output admin_url"
+            cont "Open that URL. If the console loads, you are deployed. Do NOT"
+            cont "tear down and start over on account of this error."
+            printf '\n'
+            cont "Fixed in the modules on 2026-09-07: the backup now reports the"
+            cont "snapshot step as skipped, and prints the command to run"
+            cont "yourself, instead of failing the apply. If your bundle is"
+            cont "older than that, ask for the current one."
+            ;;
+        *)
+            who "You can tell which in one step, below."
+            do_ "See whether the deployment itself finished:"
+            cmd "terraform output admin_url"
+            cont "If that prints a URL and the console opens, the infrastructure"
+            cont "is up and only the on-VM script failed. Re-running the apply"
+            cont "retries the script and nothing else."
+            printf '\n'
+            do_ "Azure nests the script's own output inside the error as escaped"
+            cont "JSON, which is why it is unreadable. Pull it out with:"
+            cmd "grep -o '\"output[^,]*' $LOG | head -1"
+            ;;
+    esac
+    printf '\n'
+    cont "Azure's troubleshooting page for this extension:"
+    cmd "https://aka.ms/RunCommandManagedLinux"
+fi
+
+# ===========================================================================
 printf '\n'
 if [ "$FOUND" -eq 0 ]; then
     printf '%sNo known failure signature in %s%s\n' "$C_YLW" "$LOG" "$C_OFF"
