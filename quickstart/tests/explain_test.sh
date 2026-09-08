@@ -160,6 +160,52 @@ else printf '  FAIL --help should exit 0, got %s\n' "$rc"; fail=$((fail+1)); fi
 o="$(bash "$EXPLAIN" "$WORK/kv.log" 2>&1 | cat)"
 hasnt "no ANSI escapes when piped" "$(printf '\033')" "$o"
 
+# --- VM extension / Run Command failure -------------------------------------
+#
+# Verbatim from the 2026-09-07 smoke test, which is the run that proved this
+# tool had a gap: before this matcher existed the whole log fell through to
+# "No known failure signature", the one outcome the tool exists to prevent.
+# Kept escaped exactly as Azure emits it, because reading Azure's nested-JSON
+# shape is the matcher's entire job.
+cat > "$WORK/vmext.log" <<'XEOF'
+Error: creating Virtual Machine Run Command (Subscription: "fc60ddfe-280a-4319-90ba-300afa1886b4"
+Resource Group Name: "hb-smoke-09070317"
+Virtual Machine Name: "hbsmoke09070317-01"
+Run Command Name: "RunPrePatchBackup"): polling after CreateOrUpdate: polling failed: the Azure API returned the following error:
+
+Status: "VMExtensionProvisioningError"
+Message: "VM has reported a failure when processing extension 'RunPrePatchBackup' (publisher 'Microsoft.CPlat.Core' and type 'RunCommandHandlerLinux'). Error message: '{\"executionState\":\"Failed\",\"executionMessage\":\"Execution failed: failed to execute command: command terminated with exit status=127\",\"output\":\"[03:28:31] bundle written: /var/backups/hailbytes-sat/hailbytes-sat-pre-patch-20260907T032831Z.tar.gz (4.0K)\n[03:28:31] done.\n\",\"error\":\"/var/lib/waagent/run-command-handler/download/RunPrePatchBackup/0/script.sh: line 47: az: command not found\n\",\"exitCode\":127}'. More information on troubleshooting is available at https://aka.ms/RunCommandManagedLinux"
+XEOF
+o="$(bash "$EXPLAIN" "$WORK/vmext.log" 2>&1)"
+# The most valuable thing it can say: the deployment itself is not broken.
+has "vm extension: separates the VM from the script" "after the VM itself was built" "$o"
+has "vm extension: names the Run Command"            "RunPrePatchBackup" "$o"
+has "vm extension: names the missing binary"         "NOT ON THE IMAGE" "$o"
+has "vm extension: says the backup still succeeded"  "THE BACKUP SUCCEEDED" "$o"
+has "vm extension: tells them not to tear down"      "Do NOT" "$o"
+has "vm extension: gives a one-step confirmation"    "terraform output admin_url" "$o"
+has "vm extension: links Azure's own page"           "aka.ms/RunCommandManagedLinux" "$o"
+# Ours, not theirs. The difference between a customer debugging their
+# subscription for a day and a customer waiting for a new bundle.
+has "vm extension: attributes the fault to us"       "not you" "$o"
+# The regression this fixture exists to catch.
+hasnt "vm extension: no longer falls through"        "No known failure signature" "$o"
+
+# A Run Command failure with no missing binary must take the generic branch
+# rather than claiming the Azure CLI is absent.
+cat > "$WORK/vmext2.log" <<'XEOF'
+Error: creating Virtual Machine Run Command (Subscription: "fc60ddfe-280a-4319-90ba-300afa1886b4"
+Run Command Name: "RunPostPatchVerify"): polling after CreateOrUpdate: polling failed:
+Status: "VMExtensionProvisioningError"
+Message: "VM has reported a failure when processing extension 'RunPostPatchVerify' (type 'RunCommandHandlerLinux'). Error message: '{\"executionState\":\"Failed\",\"error\":\"schema version mismatch between nodes\",\"exitCode\":1}'"
+XEOF
+o="$(bash "$EXPLAIN" "$WORK/vmext2.log" 2>&1)"
+has "vm extension generic: still fires"             "after the VM itself was built" "$o"
+has "vm extension generic: names this command"      "RunPostPatchVerify" "$o"
+hasnt "vm extension generic: invents no missing az" "does not ship one" "$o"
+hasnt "vm extension generic: no false backup claim" "THE BACKUP SUCCEEDED" "$o"
+
+
 # --- NOTHING IS INVENTED ----------------------------------------------------
 # Walk the paths and variables the tool actually emits and confirm each exists
 # here. This is the assertion that keeps the advice honest as the repo moves.

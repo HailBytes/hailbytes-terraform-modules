@@ -73,10 +73,35 @@ locals {
   enable_application_gateway = var.enable_application_gateway
   endpoint_ip                = local.enable_application_gateway ? azurerm_public_ip.appgw[0].ip_address : azurerm_public_ip.lb.ip_address
 
-  # Shared session store: required by every horizontally-scaled SAT/ASM
-  # deployment because every VMSS instance has to read the same session
-  # map and worker-lock heartbeat. Provisioned by default; can be
-  # overridden via var.redis_endpoint_override + var.enable_managed_redis.
+  # Shared session store. Still required ON THIS TIER, but for one of the two
+  # reasons this comment used to give, so read before copying it elsewhere.
+  #
+  #   Worker-lock heartbeat: NO LONGER a reason. The lock is a DB-backed
+  #   `worker_locks` table in the app (hailbytes-sat migration
+  #   20260218000001), not a Redis heartbeat.
+  #
+  #   Session map: STILL a reason here, and only here. securecookie derives
+  #   cookie keys per process, so instances with independently generated keys
+  #   mint mutually undecryptable cookies -- a cookie from one instance is not
+  #   stale on another, it is unreadable, making every hop an unrecoverable
+  #   logout. ha-hot-hot/azure solves this WITHOUT Redis by minting one
+  #   session-keys secret and having both nodes read it (hailbytes-sat#907).
+  #   This tier never received that wiring: there is no
+  #   azurerm_key_vault_secret.session_keys here and custom_data below carries
+  #   no session_keys_secret_name, so Redis is currently the only shared store
+  #   holding sessions together across instances.
+  #
+  # So enable_managed_redis stays default-true here on purpose. Do not flip it
+  # to match ha-hot-hot: that would reintroduce #907 at VMSS scale, where it is
+  # worse, because there are more instances to be bounced between.
+  #
+  # The fix that makes Redis optional on this tier is to port the #907 wiring
+  # across (mint the secret, pass session_keys_secret_name, and the shared
+  # initial admin password from #908, which is also missing below). That is
+  # what removes both a 20-40 minute resource from the critical path and the
+  # Microsoft.Cache provider registration from the required permissions.
+  #
+  # Overridable meanwhile via var.redis_endpoint_override + var.enable_managed_redis.
   provision_managed_redis = var.enable_managed_redis && var.redis_endpoint_override == null
   effective_redis_host    = local.provision_managed_redis ? one(azurerm_redis_cache.main[*].hostname) : var.redis_endpoint_override
   effective_redis_port    = local.provision_managed_redis ? 6380 : var.redis_endpoint_override_port

@@ -72,8 +72,8 @@ run "minimal_inputs_apply" {
   }
 
   assert {
-    condition     = output.redis_endpoint != ""
-    error_message = "redis_endpoint output must be non-empty when managed Redis is enabled (the default)"
+    condition     = output.redis_endpoint == ""
+    error_message = "redis_endpoint must be empty by default - managed Redis is no longer the default, because the shared session-keys secret makes the cookie store work across nodes without it. A non-empty endpoint means a replication group was created unasked, which is 20-40 minutes of apply and an ElastiCache permission nobody asked for."
   }
 
   assert {

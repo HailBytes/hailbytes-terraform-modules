@@ -84,6 +84,12 @@ run "disabled_omits_the_block_entirely" {
     condition     = length(azurerm_linux_virtual_machine.vm) == 2
     error_message = "Disabling DB HA must not change the application topology - both nodes still exist."
   }
+
+  # Required, not incidental: check.database_has_a_standby deliberately fails on
+  # this value, and terraform test fails a run on an unexpected check failure.
+  # Listing it here is what keeps this run green; it also means that if the
+  # warning ever stops firing, this run fails with "Missing expected failure".
+  expect_failures = [check.database_has_a_standby]
 }
 
 run "a_bogus_mode_is_refused_at_plan_time" {
@@ -94,4 +100,48 @@ run "a_bogus_mode_is_refused_at_plan_time" {
   }
 
   expect_failures = [var.db_high_availability_mode]
+}
+
+# Disabled is frequently forced rather than chosen -- a subscription that is not
+# entitled to zone-redundant Postgres has no other option -- and the resulting
+# deployment looks identical from the outside: two app VMs, two zones, one
+# zone-redundant address, and a SINGLE-ZONE database behind them. Nothing said
+# so. The Asiera deployment ran that way while the customer understood they were
+# buying HA.
+#
+# A check block rather than a validation, because it must not block an apply
+# that the entitlement leaves no alternative to. It warns on every plan and
+# every apply instead.
+run "disabled_warns_that_the_database_has_no_standby" {
+  command = plan
+
+  variables {
+    db_high_availability_mode = "Disabled"
+  }
+
+  expect_failures = [check.database_has_a_standby]
+}
+
+# ...and it must be about THIS module's database. db_mode = "external" is the
+# caller's own server, whose standby is not ours to describe -- warning there
+# would be a false alarm on every plan, which is how a warning stops being read.
+run "external_database_is_not_warned_about" {
+  command = plan
+
+  variables {
+    db_mode                   = "external"
+    db_high_availability_mode = "Disabled"
+    external_db_host          = "pg.corp.example.net"
+    external_db_port          = 5432
+    external_db_name          = "hailbytes"
+    external_db_username      = "hailbytes"
+    external_db_password      = "not-a-real-password-mock-only"
+    db_delegated_subnet_id    = null
+    private_dns_zone_id       = null
+  }
+
+  assert {
+    condition     = length(azurerm_postgresql_flexible_server.main) == 0
+    error_message = "db_mode = external must provision no Flexible Server, so there is no standby of ours to warn about."
+  }
 }
