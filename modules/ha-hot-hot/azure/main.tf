@@ -1143,6 +1143,42 @@ resource "azurerm_postgresql_flexible_server" "main" {
     }
   }
 
+  # Zone. Pinned only when there is NO standby.
+  #
+  # With HA on, Azure owns the placement: it chooses the primary and standby
+  # zones and swaps them on failover. `zone` is in ignore_changes below for
+  # exactly that reason, so setting it here would fight the platform for no
+  # benefit.
+  #
+  # With HA off, leaving it unset means Azure picks and nobody records which
+  # zone got it. That makes THREE zones fatal instead of two: lose whichever
+  # zone holds the database and the whole service stops, including the case
+  # where no application VM was in it. /api/health pings the database and
+  # returns 503, so both nodes fail the load-balancer probe and drain, which
+  # makes the console unreachable rather than degraded.
+  #
+  # Pinning the database beside vm[0] concentrates that risk instead of
+  # spreading it. Losing zone 2 then costs one application node and nothing
+  # else, and only zone 1 is fatal. Concentration is the right trade here
+  # precisely BECAUSE there is no standby: with nothing to fail over to, a
+  # second exposed zone buys no availability, only a second way to lose.
+  #
+  # Derived from local.vm_zones rather than written as "1", so the two cannot
+  # drift apart. db_mode = "vm" has always pinned its zone this way; the
+  # Flexible Server was the one database shape left to chance.
+  #
+  # SAFE ON EXISTING DEPLOYMENTS. Changing a Flexible Server's zone REPLACES
+  # the server, and `zone` is in ignore_changes, so a server already sitting in
+  # another zone stays there and no plan proposes moving it. Only new
+  # deployments get the pin. Retrofitting an existing one means a
+  # point-in-time restore into a new server, which is not worth doing for this
+  # alone.
+  #
+  # No new regional requirement: the module already assigns explicit zones to
+  # both application VMs and to zone-redundant public IPs, so it has always
+  # needed a region with availability zones.
+  zone = var.db_high_availability_mode == "Disabled" ? local.vm_zones[0] : null
+
   # CMK (gap B6). Two Microsoft constraints shape this block:
   #
   # 1. "You can configure customer managed key encryption only during creation

@@ -49,6 +49,14 @@ run "default_is_zone_redundant" {
     condition     = one(azurerm_postgresql_flexible_server.main[*].high_availability)[0].mode == "ZoneRedundant"
     error_message = "The default must stay ZoneRedundant - lowering DB durability silently is worse than a failed apply."
   }
+
+  # With a standby, Azure chooses both zones and swaps them on failover, so the
+  # module must NOT pin one. `zone` is in ignore_changes for that reason;
+  # setting it as well would be fighting the platform.
+  assert {
+    condition     = one(azurerm_postgresql_flexible_server.main[*].zone) == null
+    error_message = "With HA enabled the primary zone must be left to Azure, which owns the primary/standby placement and swaps it on failover."
+  }
 }
 
 run "same_zone_is_honoured" {
@@ -61,6 +69,14 @@ run "same_zone_is_honoured" {
   assert {
     condition     = one(azurerm_postgresql_flexible_server.main[*].high_availability)[0].mode == "SameZone"
     error_message = "SameZone must reach the resource - it is the middle option for a subscription without the zone-redundant offer."
+  }
+
+  # SameZone is still a standby, so placement is still Azure's. The pin is
+  # conditional on "Disabled", not on "not ZoneRedundant", and this is what
+  # holds those apart.
+  assert {
+    condition     = one(azurerm_postgresql_flexible_server.main[*].zone) == null
+    error_message = "SameZone has a standby, so the zone must be left unpinned - the pin is only for the no-standby case."
   }
 }
 
@@ -83,6 +99,21 @@ run "disabled_omits_the_block_entirely" {
   assert {
     condition     = length(azurerm_linux_virtual_machine.vm) == 2
     error_message = "Disabling DB HA must not change the application topology - both nodes still exist."
+  }
+
+  # Co-located with vm[0], and asserted against the VM rather than against the
+  # literal "1" -- a test that hardcodes the zone still passes if the two drift
+  # apart, which is the only thing this is here to prevent.
+  #
+  # Why co-locate at all: unpinned, Azure picks and nothing records the choice,
+  # so THREE zones are fatal instead of two. The database's zone stops the
+  # whole service whether or not an application VM shares it, because
+  # /api/health pings the database and the load balancer drains both nodes on
+  # the 503. With no standby to fail over to, spreading across a second zone
+  # buys no availability -- only a second way to lose.
+  assert {
+    condition     = one(azurerm_postgresql_flexible_server.main[*].zone) == azurerm_linux_virtual_machine.vm[0].zone
+    error_message = "With no standby the database must sit in the same zone as vm[0], so that exactly one zone is fatal instead of an unknown one of three."
   }
 
   # Required, not incidental: check.database_has_a_standby deliberately fails on
