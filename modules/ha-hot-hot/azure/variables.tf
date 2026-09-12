@@ -116,6 +116,12 @@ variable "enable_db_delete_lock" {
   default     = false
 }
 
+variable "enable_public_ip_delete_lock" {
+  description = "Place a CanNotDelete management lock on the public IPs this module creates (the load-balancer frontend, and the Application Gateway frontend when enable_application_gateway = true). Azure has no undelete for a public IP -- a deleted address goes back to the pool and DNS has to be re-pointed at a new one, which is how a customer lost the address their hostname resolved to. Same trade-off as enable_db_delete_lock: the lock blocks deletion by ANYONE including terraform destroy, so leave it off for PoCs and turn it on for production, disabling it in a separate apply before a planned teardown. Never applied to a caller-supplied public_ip_id or appgw_public_ip_id -- those resources are yours."
+  type        = bool
+  default     = false
+}
+
 variable "key_vault_name" {
   description = "Override the Key Vault name. Leave null to derive it from name_prefix. Key Vault names are globally unique AND the vault is created with purge_protection_enabled = true and a 30-day soft-delete window, which disk encryption sets require and which cannot be force-purged. So destroying a stack and re-creating it under the same name inside 30 days FAILS, with no way out but waiting or renaming. If you are iterating on a PoC, set a unique name per iteration (e.g. hbsatkv0731a). Max 24 chars, alphanumerics and hyphens."
   type        = string
@@ -125,6 +131,22 @@ variable "key_vault_name" {
     condition     = var.key_vault_name == null || can(regex("^[a-zA-Z][a-zA-Z0-9-]{2,23}$", var.key_vault_name))
     error_message = "key_vault_name must be 3-24 characters, start with a letter, and contain only alphanumerics and hyphens."
   }
+}
+
+variable "key_vault_name_random_suffix" {
+  # OPT-IN, and it has to be: the name is what identifies the vault to Azure,
+  # so switching this on for a deployment that already has one plans a DESTROY
+  # and CREATE of the Key Vault -- taking the database password, the session
+  # keys and the disk encryption key with it, and cascading into a replacement
+  # of the disk encryption set and every disk it encrypts. Defaulting it to true
+  # would do that silently on the next apply of every existing stack.
+  #
+  # New deployments should set it true. Existing ones should set key_vault_name
+  # to the name they already hold, which pins it explicitly instead of leaving
+  # it an accident of name_prefix.
+  description = "Append a 6-character suffix, keyed on resource_group_name and location, to the derived Key Vault name. Set true on NEW deployments: Key Vault names are globally unique, so without it two stacks sharing a name_prefix (including any two callers on module defaults) collide, and destroying a stack or moving it to another resource group makes the next create fail with SoftDeletedVaultDoesNotExist for 30 days. Do NOT turn it on for an existing deployment -- it renames the vault, which destroys it; set key_vault_name to the current name instead. Ignored when key_vault_name is set."
+  type        = bool
+  default     = false
 }
 
 variable "key_vault_network_default_action" {
@@ -281,7 +303,21 @@ variable "db_high_availability_mode" {
   # Disabled -- it is the DATABASE that loses its standby, so a zone loss
   # becomes a restore-from-backup rather than a failover. Acceptable for a
   # pilot, a decision to make deliberately for production.
-  description = "Postgres HA mode. ZoneRedundant gives a standby in another zone (requires the subscription to be entitled to it - see MultiAzHaIsOfferRestricted); SameZone is cheaper with a lower SLA; Disabled omits HA entirely, which is the only option on a subscription without the zone-redundant offer."
+  #
+  # ADDING THE STANDBY LATER is the normal path when the entitlement arrives
+  # after the deployment does, and it does NOT replace the server: switching
+  # Disabled -> ZoneRedundant adds the high_availability block, which Azure
+  # applies in place. `zone` is in the server's ignore_changes precisely so that
+  # the pin this module sets while HA is off (beside vm[0], so the single-zone
+  # database is not in a third zone nobody recorded) does not then fight the
+  # platform for placement once it owns it. Expect a few minutes of failover
+  # activity while Azure builds the standby; the plan itself shows an update,
+  # not a replace. If it shows a replace, stop -- something else changed too.
+  #
+  # SameZone is NOT the cheap option. The standby is a full server in both
+  # modes, so both bill 2x compute and 2x storage; SameZone trades the
+  # zone-loss SLA for lower replication latency.
+  description = "Postgres HA mode. ZoneRedundant gives a standby in another zone (requires the subscription to be entitled to it - see MultiAzHaIsOfferRestricted); SameZone puts the standby in the same zone, which costs the same and trades the zone-loss SLA for lower replication latency; Disabled omits HA entirely, which is the only option on a subscription without the zone-redundant offer. Switching Disabled -> ZoneRedundant later updates the server in place rather than replacing it."
   type        = string
   default     = "ZoneRedundant"
 
@@ -417,9 +453,30 @@ variable "backup_blob_noncurrent_expiration_days" {
 }
 
 variable "enable_pre_patch_run_command" {
-  description = "Install an Azure Run Command named RunPrePatchBackup on the first SAT VM, for customers to fire from the Portal before a patch. NOTE: azurerm_virtual_machine_run_command EXECUTES on create -- it does not merely register the script the way the aws_ssm_document it mirrors does. So a first apply runs one no-op backup against an empty instance, and anything that makes that script exit non-zero fails the whole apply. Keep the script fail-soft."
+  # DEFAULT FLIPPED TO false, and the reason is the create-time execution below
+  # rather than anything wrong with the backup itself.
+  #
+  # azurerm_virtual_machine_run_command EXECUTES on create. It does not merely
+  # register the script the way the aws_ssm_document it mirrors does. So the
+  # FIRST apply runs a pre-patch backup against a brand-new, empty instance --
+  # a backup with nothing in it, taken at the one moment it cannot be useful --
+  # and any non-zero exit from it fails the whole apply. On a customer's run
+  # that is exactly what happened: the script called an Azure CLI the
+  # marketplace image does not ship, exited 127 AFTER writing a valid bundle,
+  # and took the apply red at resource 55 of 59 with every piece of
+  # infrastructure already built and working.
+  #
+  # The script is fail-soft about the missing CLI now, but the shape of the
+  # hazard is unchanged: a Portal convenience document is wired so that its
+  # dry run decides whether a 45-minute deployment succeeds. Off by default
+  # removes that from the first apply and costs nothing else.
+  #
+  # Turning it ON in a LATER apply installs the document and runs it once
+  # against a live instance -- which is a real backup, unlike the one on create.
+  # That is the recommended way to have it.
+  description = "Install an Azure Run Command named RunPrePatchBackup on the first VM, for customers to fire from the Portal before a patch. Default false. NOTE: azurerm_virtual_machine_run_command EXECUTES on create -- so enabling it on a FIRST apply runs a backup against an empty instance and lets that run decide whether the deployment succeeds. Enable it in a later apply instead, where the one execution it triggers happens against a live instance and is worth having."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "enable_post_patch_run_command" {

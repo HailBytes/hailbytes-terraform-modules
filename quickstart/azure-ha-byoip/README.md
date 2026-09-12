@@ -50,13 +50,54 @@ terraform apply
 terraform output dns_target                    # a DIFFERENT address -- move DNS
 ```
 
-## Four things that bite
+## Five things that bite
 
-**The gateway has its own address.** `public_ip_id` fronts the load balancer;
-once the gateway is enabled it is the front door and the load balancer becomes an
-internal hop. `dns_target` changes between phases. Set `appgw_public_ip_id` to a
-second reserved IP if you want that address pinned in advance too — otherwise
-DNS moves on the phase 2 apply.
+**The gateway has its own address, and one address cannot serve both.**
+`public_ip_id` fronts the load balancer; once the gateway is enabled it is the
+front door and the load balancer becomes an internal hop, so `dns_target`
+changes between phases. An Azure public IP attaches to **exactly one**
+resource, so the obvious fix — naming the same reserved address in both
+`public_ip_id` and `appgw_public_ip_id` — is not available. The module now
+refuses that pair at plan time; left to Azure it fails part-way through
+building the gateway with `PublicIPAddressCannotBeUsedBySeveralResources`, on
+the morning of the cutover.
+
+Two ways to keep the hostname where it is. Cheapest first:
+
+*Move the address you already have to the gateway.* Nothing addresses the load
+balancer by name once the gateway is in front of it, so which address it holds
+stops mattering. It takes **two applies**, because the address has to be
+released before it can be re-attached and Terraform cannot order that itself:
+
+In `terraform.tfvars` — not `-var`, which cannot express a null:
+
+```hcl
+# apply 1: release it. The LB moves to an address of its own.
+public_ip_id               = null
+enable_application_gateway = false
+
+# apply 2: hand it to the gateway.
+public_ip_id               = null
+appgw_public_ip_id         = "/subscriptions/.../publicIPAddresses/<your reservation>"
+enable_application_gateway = true
+```
+
+Zero new reservations and no DNS change, at the cost of a few minutes between
+the two applies when the hostname resolves to a load balancer that no longer
+holds it.
+
+*Or reserve a second address* and set `appgw_public_ip_id` to it before phase 2.
+No downtime, at the cost of a second static IP and a second reservation
+request.
+
+**Lock the address you cannot afford to lose.** Azure has **no undelete for a
+public IP** — a deleted one goes back to the pool and someone else can take it.
+An address reserved inside the deployment's own resource group goes with that
+group when a failed attempt is torn down, which is how one deployment lost the
+address its hostname resolved to. Reserve it in a **separate** resource group
+where possible, and set `enable_public_ip_delete_lock = true` for the addresses
+this root creates. The lock blocks deletion by anyone, `terraform destroy`
+included, so disable it in its own apply before a planned teardown.
 
 **Azure refuses a password-less PFX.** Several export paths produce one (an
 Azure App Service Certificate exports with an empty password). Add one:

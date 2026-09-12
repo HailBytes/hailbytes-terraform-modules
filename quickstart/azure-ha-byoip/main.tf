@@ -276,6 +276,20 @@ module "hailbytes_sat" {
 
   key_vault_reader_principal_ids = var.key_vault_reader_principal_ids
 
+  # Key Vault names are GLOBALLY unique, the vault carries purge protection, and
+  # a deleted name is reserved for 30 days with no force-purge. Derived from
+  # name_prefix alone this root would ask Azure for the same name as every other
+  # copy of it, and a rebuild inside 30 days would ask for a name its own
+  # teardown had just spent -- which fails as 400 SoftDeletedVaultDoesNotExist,
+  # an error that names recovery rather than reuse. The suffix is keyed on the
+  # resource group, so a new group always draws a new name.
+  #
+  # ALREADY APPLIED THIS ROOT? Do NOT add this to a live deployment: it renames
+  # the vault, and renaming destroys it along with the database password, the
+  # session keys and the disk encryption key. Set key_vault_name to the name you
+  # already hold instead.
+  key_vault_name_random_suffix = true
+
   public_ip_id       = var.public_ip_id
   appgw_public_ip_id = var.appgw_public_ip_id
 

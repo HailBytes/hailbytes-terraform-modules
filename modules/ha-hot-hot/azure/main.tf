@@ -44,6 +44,47 @@ locals {
 
   name_prefix = coalesce(var.name_prefix, "hailbytes-${var.product}-${var.environment}")
 
+  # ----- Key Vault name -----
+  #
+  # A Key Vault name is GLOBALLY unique across Azure, the vault below is created
+  # with purge_protection_enabled = true (the disk encryption set requires it),
+  # and deleting one reserves the name for 30 days with no force-purge. So the
+  # derived name has to be unique per DEPLOYMENT. It was unique per name_prefix,
+  # which is not the same thing and broke two ways:
+  #
+  #   1. Two customers on module defaults derive the same name -- name_prefix
+  #      falls back to "hailbytes-<product>-<environment>", so every default SAT
+  #      prod apply in the world asks Azure for "hailbytessatprodkv". The first
+  #      one takes it; the rest fail.
+  #   2. The obvious reaction to "resource group already exists" -- change
+  #      resource_group_name and re-run -- plans a destroy of the old group,
+  #      Key Vault included, and a create of a vault with THE SAME NAME. The
+  #      create then fails on a name the destroy just spent:
+  #
+  #        400 SoftDeletedVaultDoesNotExist: A soft deleted vault with the given
+  #        name does not exist.
+  #
+  #      The message is about recovery, so it reads as soft-delete or RBAC. It
+  #      is neither -- the name was spent by the previous apply of this same
+  #      configuration. Hit on a customer deployment on 2026-09-09.
+  #
+  # key_vault_name_random_suffix keys a 6-character suffix on the resource group
+  # and location, so a new group always draws a new name and no two deployments
+  # collide. It is opt-in, not a new default, because turning it on RENAMES the
+  # vault -- and a renamed Key Vault is a destroyed one, taking the database
+  # password, the session keys and the disk encryption key with it, then
+  # reserving the old name for 30 days so the ref cannot simply be rolled back.
+  # New deployments should set it true; an existing one should instead set
+  # key_vault_name to the name it already holds, which pins that name explicitly
+  # rather than leaving it an accident of name_prefix. Both quickstart Azure HA
+  # roots set it.
+  key_vault_base_name = substr(replace("${local.name_prefix}-kv", "-", ""), 0, var.key_vault_name_random_suffix ? 17 : 24)
+  key_vault_derived_name = (
+    length(random_string.kv_suffix) > 0
+    ? "${local.key_vault_base_name}-${random_string.kv_suffix[0].result}"
+    : local.key_vault_base_name
+  )
+
   # Whether vm_subnet_id is a subnet of its own, and so needs its own NSG.
   # Driven by an explicit input, never by comparing the two subnet ID strings:
   # the five resources below branch on this with count/for_each, which Terraform
@@ -191,8 +232,31 @@ resource "azurerm_marketplace_agreement" "hailbytes" {
 
 data "azurerm_client_config" "current" {}
 
+# Only when the name is actually derived: an explicit key_vault_name is the
+# caller pinning a name they already hold, and a suffix has no business
+# rewriting it.
+#
+# keepers, not a bare random_string. Without them the value is drawn once and
+# never redrawn, so a deployment that moves resource group would carry the old
+# group's vault name into the new one -- which is failure (2) above, the one a
+# random suffix is supposed to prevent. Changing resource_group_name or location
+# is a full teardown and rebuild either way, so there is never a live vault
+# whose name is worth keeping across that change.
+resource "random_string" "kv_suffix" {
+  count   = var.key_vault_name == null && var.key_vault_name_random_suffix ? 1 : 0
+  length  = 6
+  special = false
+  upper   = false
+  numeric = true
+
+  keepers = {
+    resource_group = var.resource_group_name
+    location       = var.location
+  }
+}
+
 resource "azurerm_key_vault" "main" {
-  name                       = coalesce(var.key_vault_name, substr(replace("${local.name_prefix}-kv", "-", ""), 0, 24))
+  name                       = coalesce(var.key_vault_name, local.key_vault_derived_name)
   resource_group_name        = var.resource_group_name
   location                   = var.location
   tenant_id                  = data.azurerm_client_config.current.tenant_id
@@ -649,6 +713,30 @@ resource "azurerm_public_ip" "lb" {
   sku                 = "Standard"
   zones               = ["1", "2", "3"]
   tags                = local.common_tags
+}
+
+# Public IPs are the one resource here whose loss is not recoverable by
+# re-running anything: Azure has no undelete for an address, and a released one
+# goes back to the pool. A customer lost the address their hostname resolved to
+# this way -- it was reserved INSIDE the deployment resource group, so
+# `az group delete` on a failed attempt took the address with it and the DNS
+# record had to be re-pointed at a newly reserved one.
+#
+# Same shape and same trade-off as enable_db_delete_lock, so the same default:
+# the lock blocks deletion by anyone, terraform destroy included, which is
+# exactly what protects a production address and exactly what makes a PoC
+# teardown fail part-way. Remove it in a separate apply before a planned
+# teardown.
+#
+# Only ever on addresses this module created. A caller-supplied public_ip_id is
+# the caller's resource, in whatever resource group they reserved it in, and its
+# lifecycle -- locks included -- stays theirs.
+resource "azurerm_management_lock" "lb_pip" {
+  count      = local.create_lb_pip && var.enable_public_ip_delete_lock ? 1 : 0
+  name       = "${local.name_prefix}-lb-pip-no-delete"
+  scope      = azurerm_public_ip.lb[0].id
+  lock_level = "CanNotDelete"
+  notes      = "HailBytes ${var.product} load-balancer address. Azure cannot undelete a public IP; losing it means re-pointing DNS. Remove this lock deliberately before a planned teardown; see enable_public_ip_delete_lock."
 }
 
 resource "azurerm_lb" "main" {
@@ -1792,6 +1880,14 @@ resource "azurerm_public_ip" "appgw" {
   tags                = local.common_tags
 }
 
+resource "azurerm_management_lock" "appgw_pip" {
+  count      = local.enable_application_gateway && var.appgw_public_ip_id == null && var.enable_public_ip_delete_lock ? 1 : 0
+  name       = "${local.name_prefix}-appgw-pip-no-delete"
+  scope      = azurerm_public_ip.appgw[0].id
+  lock_level = "CanNotDelete"
+  notes      = "HailBytes ${var.product} Application Gateway address -- the one DNS points at once the gateway is the front door. Azure cannot undelete a public IP. Remove this lock deliberately before a planned teardown; see enable_public_ip_delete_lock."
+}
+
 resource "azurerm_application_gateway" "main" {
   count               = local.enable_application_gateway ? 1 : 0
   name                = "${local.name_prefix}-appgw"
@@ -1911,6 +2007,50 @@ resource "azurerm_application_gateway" "main" {
       condition     = var.appgw_subnet_id != null
       error_message = "appgw_subnet_id is required when enable_application_gateway = true."
     }
+    # An Azure public IP attaches to exactly ONE resource. Pointing both
+    # frontends at the same reserved address is the obvious thing to want --
+    # it is the only shape in which the hostname never moves -- and Azure
+    # refuses it at apply time, part-way through building the gateway:
+    #
+    #   PublicIPAddressCannotBeUsedBySeveralResources
+    #
+    # Both inputs are plain variables, so the clash is knowable at plan time.
+    # Caught here it costs nothing; caught at apply it leaves a half-built
+    # gateway to unpick, typically on the morning of a cutover.
+    #
+    # coalesce with two different placeholders rather than a null guard ahead of
+    # lower(): Terraform's || evaluates both operands, so `x == null || lower(x)`
+    # still calls lower() on a null and errors. The placeholders can never
+    # collide, so either input being null passes.
+    precondition {
+      condition = (
+        lower(coalesce(var.public_ip_id, "(none: lb)")) !=
+        lower(coalesce(var.appgw_public_ip_id, "(none: appgw)"))
+      )
+      error_message = <<-EOM
+        public_ip_id and appgw_public_ip_id are the same address. An Azure public
+        IP attaches to exactly one resource, so the load balancer and the gateway
+        cannot both hold it -- Azure refuses this part-way through the apply with
+        PublicIPAddressCannotBeUsedBySeveralResources.
+
+        To keep DNS pointing where it already points, hand the address to the
+        gateway and let the load balancer create its own. Nothing addresses the
+        load balancer by name once the gateway is in front of it, so which
+        address it holds stops mattering. It takes TWO applies, because the
+        address has to be released before it can be re-attached and Terraform
+        cannot order that itself:
+
+          1. public_ip_id = null, enable_application_gateway = false
+             -- the LB moves to a module-created address and releases yours.
+          2. appgw_public_ip_id = "<the reserved id>", enable_application_gateway = true
+
+        Between the two the console answers on the new load-balancer address,
+        so allow for a few minutes of downtime on the hostname.
+
+        The alternative is a SECOND reserved address for the gateway, which
+        costs a reservation and no downtime.
+      EOM
+    }
     precondition {
       condition     = var.appgw_tls_pfx_base64 != null && var.appgw_tls_pfx_password != null
       error_message = "appgw_tls_pfx_base64 and appgw_tls_pfx_password are required when enable_application_gateway = true."
@@ -1939,6 +2079,43 @@ resource "azurerm_application_gateway" "main" {
             and use the private VNet hop in clear.
       EOM
     }
+  }
+}
+
+# Reserving the load balancer's address is how a customer gets DNS answering on
+# the first apply. Enabling the gateway then moves the front door, and the
+# gateway takes a DIFFERENT address unless it is given one -- so the A record
+# that was correct an hour ago now points at an internal hop.
+#
+# A check rather than a precondition: this is a legitimate configuration, and
+# for a customer with no reserved address to spare it is the only one. It just
+# must not be discovered from a hostname that has stopped resolving to the
+# console.
+#
+# Silent when the load-balancer frontend is internal: there is then no public
+# load-balancer address for DNS to have been pointing at, and azurerm_lb.main
+# refuses that combination anyway.
+check "gateway_frontend_address_moves_dns" {
+  assert {
+    condition = (
+      !local.enable_application_gateway ||
+      !local.lb_frontend_public ||
+      var.appgw_public_ip_id != null ||
+      var.public_ip_id == null
+    )
+    error_message = join("", [
+      "public_ip_id reserves the LOAD BALANCER's address, but with the App Gateway ",
+      "enabled the gateway is the public front door and appgw_public_ip_id is null, ",
+      "so it is creating an address of its own. Any DNS record pointing at the ",
+      "reserved address will resolve to a load balancer that is no longer the entry ",
+      "point, and has to be re-pointed at the address the load_balancer_public_ip ",
+      "output reports once this apply finishes. ",
+      "To avoid the DNS change: either set appgw_public_ip_id to a second reserved ",
+      "address, or move the existing one to the gateway -- set public_ip_id = null ",
+      "so the load balancer creates its own, apply, then set appgw_public_ip_id to ",
+      "the reserved id and apply again (two applies, because one address cannot ",
+      "serve both frontends at once)."
+    ])
   }
 }
 

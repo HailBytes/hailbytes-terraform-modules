@@ -15,6 +15,7 @@ module "this" {
 
   # Key Vault network ACL + VMSS subnet NSG association
   key_vault_name                   = var.key_vault_name
+  key_vault_name_random_suffix     = var.key_vault_name_random_suffix
   key_vault_network_default_action = var.key_vault_network_default_action
   key_vault_ip_rules               = var.key_vault_ip_rules
   associate_vm_subnet_nsg          = var.associate_vm_subnet_nsg

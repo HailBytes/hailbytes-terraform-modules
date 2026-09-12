@@ -248,3 +248,59 @@ run "phish_allow_list_is_independent_when_set" {
     error_message = "Phishing rules must sit in their own priority band (1000+), clear of the allow-https-* rules at 100+."
   }
 }
+
+# ----- Key Vault name -----
+#
+# A Key Vault name is GLOBALLY unique, the vault carries purge protection, and a
+# deleted name is reserved for 30 days with no force-purge. Derived from
+# name_prefix alone it is unique per name_prefix, not per deployment: two
+# callers on module defaults both ask for "hailbytesasmprodkv", and changing
+# resource_group_name to get past a half-built stack asks Azure for the name the
+# destroy just spent.
+# https://learn.microsoft.com/en-us/azure/key-vault/general/soft-delete-overview
+
+# The default must not move: changing the derived name renames -- and so
+# destroys -- the vault of every deployment that upgrades the module ref.
+run "the_key_vault_suffix_is_off_by_default" {
+  command = plan
+
+  assert {
+    condition     = length(random_string.kv_suffix) == 0
+    error_message = "key_vault_name_random_suffix must default to false, or upgrading the module ref renames the vault of every existing deployment and destroys it with the DB password, session keys and disk encryption key inside."
+  }
+}
+
+run "the_key_vault_suffix_is_keyed_on_the_resource_group" {
+  command = plan
+
+  variables {
+    key_vault_name_random_suffix = true
+  }
+
+  # keepers are the point: without them the suffix is drawn once and never
+  # redrawn, so moving resource group carries the old group's name into the new
+  # one -- the reuse that produces 400 SoftDeletedVaultDoesNotExist.
+  assert {
+    condition     = random_string.kv_suffix[0].keepers["resource_group"] == "rg-hailbytes-test"
+    error_message = "The suffix must be keyed on resource_group_name."
+  }
+
+  assert {
+    condition     = random_string.kv_suffix[0].keepers["location"] == "eastus"
+    error_message = "The suffix must be keyed on location too: a Key Vault name is global, and moving region is a rebuild."
+  }
+}
+
+run "an_explicit_key_vault_name_wins_over_the_suffix" {
+  command = plan
+
+  variables {
+    key_vault_name               = "hbasmkv0912a"
+    key_vault_name_random_suffix = true
+  }
+
+  assert {
+    condition     = azurerm_key_vault.main.name == "hbasmkv0912a"
+    error_message = "key_vault_name is the documented escape hatch out of a soft-delete deadlock; the suffix must not rewrite it."
+  }
+}

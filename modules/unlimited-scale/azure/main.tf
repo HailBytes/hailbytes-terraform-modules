@@ -34,6 +34,29 @@ locals {
 
   name_prefix = coalesce(var.name_prefix, "hailbytes-${var.product}-${var.environment}")
 
+  # ----- Key Vault name -----
+  #
+  # See modules/ha-hot-hot/azure for the failure this mirrors. In short: a Key
+  # Vault name is GLOBALLY unique, this vault carries purge protection, and a
+  # deleted name is reserved for 30 days with no force-purge -- so a name
+  # derived from name_prefix alone is unique per name_prefix, which is not the
+  # same as unique per deployment. Two callers on module defaults both ask for
+  # "hailbytesasmprodkv"; and changing resource_group_name to get past a
+  # half-built stack destroys the old vault and then asks Azure for the name it
+  # just spent, which fails as 400 SoftDeletedVaultDoesNotExist -- an error that
+  # names recovery rather than reuse.
+  #
+  # Opt-in, not a new default: turning it on RENAMES the vault, and a renamed
+  # Key Vault is a destroyed one, taking the database password, the session keys
+  # and the disk encryption key with it. New deployments should set it true;
+  # existing ones should set key_vault_name to the name they already hold.
+  key_vault_base_name = substr(replace("${local.name_prefix}-kv", "-", ""), 0, var.key_vault_name_random_suffix ? 17 : 24)
+  key_vault_derived_name = (
+    length(random_string.kv_suffix) > 0
+    ? "${local.key_vault_base_name}-${random_string.kv_suffix[0].result}"
+    : local.key_vault_base_name
+  )
+
   # Listing slugs from the published Azure Marketplace offers:
   #   ASM: lcmcon1687976613543.hardened_ubuntu_with_rengine
   #   SAT: lcmcon1687976613543.gophish-phishing-simulator
@@ -130,8 +153,26 @@ resource "azurerm_marketplace_agreement" "hailbytes" {
 
 # ----- Key Vault -----
 
+# keepers, not a bare random_string: without them the value is drawn once and
+# never redrawn, so a deployment that moves resource group would carry the old
+# group's vault name into the new one -- the exact reuse the suffix exists to
+# prevent. Changing resource_group_name or location is a teardown and rebuild
+# either way, so no live vault's name is lost to the redraw.
+resource "random_string" "kv_suffix" {
+  count   = var.key_vault_name == null && var.key_vault_name_random_suffix ? 1 : 0
+  length  = 6
+  special = false
+  upper   = false
+  numeric = true
+
+  keepers = {
+    resource_group = var.resource_group_name
+    location       = var.location
+  }
+}
+
 resource "azurerm_key_vault" "main" {
-  name                       = coalesce(var.key_vault_name, substr(replace("${local.name_prefix}-kv", "-", ""), 0, 24))
+  name                       = coalesce(var.key_vault_name, local.key_vault_derived_name)
   resource_group_name        = var.resource_group_name
   location                   = var.location
   tenant_id                  = data.azurerm_client_config.current.tenant_id

@@ -32,6 +32,12 @@ variable "admin_username" { type = string }
 
 variable "ssh_public_key" { type = string }
 
+variable "key_vault_name_random_suffix" {
+  description = "Append a 6-character suffix, keyed on resource_group_name and location, to the derived Key Vault name. Set true on NEW deployments: Key Vault names are globally unique, so without it two stacks sharing a name_prefix (including any two callers on module defaults) collide, and destroying a stack or moving it to another resource group makes the next create fail with SoftDeletedVaultDoesNotExist for 30 days. Do NOT turn it on for an existing deployment -- it renames the vault, which destroys it; set key_vault_name to the current name instead. Ignored when key_vault_name is set."
+  type        = bool
+  default     = false
+}
+
 variable "key_vault_name" {
   description = "Override the Key Vault name. Leave null to derive it from name_prefix. Key Vault names are globally unique AND the vault is created with purge_protection_enabled = true and a 30-day soft-delete window, which disk encryption sets require and which cannot be force-purged. So destroying a stack and re-creating it under the same name inside 30 days FAILS, with no way out but waiting or renaming. If you are iterating on a PoC, set a unique name per iteration (e.g. hbsatkv0731a). Max 24 chars, alphanumerics and hyphens."
   type        = string
