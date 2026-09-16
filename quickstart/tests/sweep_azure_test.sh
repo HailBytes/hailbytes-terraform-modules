@@ -53,6 +53,46 @@ az() {
                 *"--query id"*) echo "${MOCK_SUB_ID:-00000000-1111-2222-3333-444444444444}" ;;
                 *)              echo "${MOCK_SUB_NAME:-HailBytes Test Lab}" ;;
             esac ;;
+        # ----- resources `imports` enumerates ------------------------------
+        # These sit ABOVE `group list` deliberately: "monitor action-group
+        # list" CONTAINS "group list", so the loose pattern would answer it
+        # with the resource-group names and the script would emit an action
+        # group import per resource group. That is exactly the class of bug
+        # the ordering comment at the top of this mock is about.
+        *"monitor action-group list"*)  printf '%b' "${MOCK_ACTION_GROUPS-}" ;;
+        *"monitor metrics alert list"*) printf '%b' "${MOCK_ALERTS-}" ;;
+        *"monitor log-analytics workspace list"*) printf '%b' "${MOCK_LAW-}" ;;
+        *"network vnet subnet list"*)   printf '%b' "${MOCK_SUBNETS-}" ;;
+        *"network vnet subnet show"*"networkSecurityGroup.id"*) printf '%b' "${MOCK_SUBNET_NSG-}" ;;
+        *"network vnet subnet show"*"natGateway.id"*) printf '%b' "${MOCK_SUBNET_NATGW-}" ;;
+        *"network nsg rule list"*)      printf '%b' "${MOCK_NSG_RULES-}" ;;
+        *"network nsg list"*)           printf '%b' "${MOCK_NSGS-}" ;;
+        *"network public-ip list"*"[].name"*) printf '%b' "${MOCK_PIP_NAMES-}" ;;
+        *"network nat gateway list"*)   printf '%b' "${MOCK_NATGWS-}" ;;
+        *"network nat gateway show"*)   printf '%b' "${MOCK_NATGW_PIPS-}" ;;
+        *"network application-gateway list"*) printf '%b' "${MOCK_APPGWS-}" ;;
+        *"vm extension list"*)          printf '%b' "${MOCK_VM_EXTENSIONS-}" ;;
+        *"vm show"*"dataDisks"*)        printf '%b' "${MOCK_VM_DATADISKS-}" ;;
+        *"vm show"*"identity.principalId"*) printf '%b' "${MOCK_VM_PRINCIPALS-}" ;;
+        *"vm list"*)                    printf '%b' "${MOCK_VMS-}" ;;
+        *"disk-encryption-set list"*)   printf '%b' "${MOCK_DES-}" ;;
+        *"disk list"*)                  printf '%b' "${MOCK_DISKS-}" ;;
+        *"network nic show"*"loadBalancerBackendAddressPools"*) printf '%b' "${MOCK_NIC_POOLS-}" ;;
+        *"network nic show"*"networkSecurityGroup.id"*) printf '%b' "${MOCK_NIC_NSG-}" ;;
+        *"network nic list"*)           printf '%b' "${MOCK_NICS-}" ;;
+        *"postgres flexible-server list"*) printf '%b' "${MOCK_PGS-}" ;;
+        *"redis list"*)                 printf '%b' "${MOCK_REDIS-}" ;;
+        *"network private-endpoint list"*) printf '%b' "${MOCK_PES-}" ;;
+        *"network private-dns zone list"*) printf '%b' "${MOCK_DNS_ZONES-}" ;;
+        *"network private-dns link vnet list"*) printf '%b' "${MOCK_DNS_LINKS-}" ;;
+        *"keyvault secret list"*)       printf '%b' "${MOCK_KV_SECRETS-}" ;;
+        *"keyvault secret show"*)       printf '%b' "${MOCK_KV_SECRET_ID-}" ;;
+        *"keyvault key list"*)          printf '%b' "${MOCK_KV_KEYS-}" ;;
+        *"keyvault key show"*)          printf '%b' "${MOCK_KV_KEY_ID-}" ;;
+        *"identity list"*)              printf '%b' "${MOCK_IDENTITIES-}" ;;
+        *"storage container list"*)     printf '%b' "${MOCK_CONTAINERS-}" ;;
+        *"role assignment list"*)       printf '%b' "${MOCK_ROLE_ASSIGNMENTS-}" ;;
+        *"lock list"*"[].name"*)        printf '%b' "${MOCK_DB_LOCKS-}" ;;
         *"group list"*)
             [ "${MOCK_SUB_FAIL:-0}" = "1" ] && { echo "ERROR: (SubscriptionNotFound)" >&2; return 1; }
             printf '%b' "${MOCK_GROUPS-hbtest-rg-01\nhbtest-rg-02\nhbtest-net-rg\nNetworkWatcherRG\n}" ;;
@@ -71,12 +111,14 @@ az() {
         *"lock list"*"[].[name,level]"*) [ -n "${MOCK_LOCK-}" ] && printf '%b' "$MOCK_LOCK" ;;
         *"public-ip list"*"length(@)"*) printf '%b' "${MOCK_PIPS-}" | grep -c . ;;
         *"public-ip list"*"[].[ipAddress,name,ipConfiguration.id]"*) printf '%b' "${MOCK_PIPS-}" ;;
+        *"storage account list"*"[].id"*) printf '%b' "${MOCK_STORAGE_IDS-}" ;;
         *"storage account list"*)       printf '%b' "${MOCK_STORAGE-}" ;;
         *"network lb list"*)            printf '%b' "${MOCK_LBS-}" ;;
         *"network lb address-pool list"*) printf '%b' "${MOCK_POOLS-}" ;;
         *"network lb probe list"*)      printf '%b' "${MOCK_PROBES-}" ;;
         *"network lb rule list"*)       printf '%b' "${MOCK_RULES-}" ;;
         *"diagnostic-settings list"*)   printf '%b' "${MOCK_DIAG-}" ;;
+        *"keyvault list"*"[].id"*)      printf '%b' "${MOCK_KV_IDS-}" ;;
         *"keyvault list"*)              printf '%b' "${MOCK_KV-}" ;;
         *"network vnet list"*)          printf '%b' "${MOCK_VNETS-}" ;;
         # An unhandled call must NOT look like a successful empty result: that
@@ -197,6 +239,74 @@ if [ "$n" -eq 2 ]; then
 else
     printf '  FAIL expected 2 import commands for a childless lb, got %s\n' "$n"; fail=$((fail+1))
 fi
+
+# --- imports: the resources beyond the load balancer -------------------------
+# `imports` covers the whole tier module, not just the lb. These pin the parts
+# where the ADDRESS is derived rather than fixed -- an index or a for_each key
+# read off an Azure name. Get one of those wrong and the import silently adopts
+# a resource under another one's address; nothing complains until a later apply
+# proposes to change or destroy the wrong thing.
+
+o="$(MOCK_VMS='hb-vm-1\nhb-vm-2\nhb-db-vm\n' bash "$SWEEP" imports hbtest-rg-01 2>&1)"
+has  "app VMs are indexed in name order"  "azurerm_linux_virtual_machine.vm[0]' \\" "$o"
+has  "and the second lands on [1]"        "azurerm_linux_virtual_machine.vm[1]' \\" "$o"
+has  "the db VM has its own address"      "azurerm_linux_virtual_machine.db_vm[0]" "$o"
+has  "and the index is flagged for review" "CHECK the order" "$o"
+
+o="$(MOCK_NSGS='hb-vm-nsg\n' MOCK_NSG_RULES='allow-admin-0\nallow-admin-1\nallow-phish-0\nallow-lb-probe\n' \
+     bash "$SWEEP" imports hbtest-rg-01 2>&1)"
+has  "NSG rule for_each key comes off the name" 'azurerm_network_security_rule.vm_admin_in["1"]' "$o"
+has  "the phish rule on a vm NSG is vm_phish_in" 'azurerm_network_security_rule.vm_phish_in["0"]' "$o"
+hasnt "and not the lb one"                 'lb_phish_in' "$o"
+has  "the probe rule is a count, not for_each" 'azurerm_network_security_rule.vm_probe_in[0]' "$o"
+# The mock returns one rule list for every NSG, which is what surfaced this:
+# an allow-https-* is only ever on the lb NSG, so seeing one elsewhere means
+# the rule is not this module's and must not be adopted under its address.
+hasnt "a 443 rule off the lb NSG is not adopted" 'lb_https_in' "$o"
+o="$(MOCK_NSGS='hb-lb-nsg\n' MOCK_NSG_RULES='allow-https-0\n' bash "$SWEEP" imports hbtest-rg-01 2>&1)"
+has  "and on the lb NSG it is"             'lb_https_in["0"]' "$o"
+
+# A public IP the customer supplied via public_ip_id is NOT module-managed.
+# Importing it would put a reserved address under Terraform's control and a
+# later destroy would delete it -- and Azure has no undelete for a public IP.
+o="$(MOCK_PIP_NAMES='customer-reserved-ip\n' bash "$SWEEP" imports hbtest-rg-01 2>&1)"
+has  "a supplied public IP is refused"    "must not be imported" "$o"
+hasnt "and no address is invented for it" "azurerm_public_ip" "$o"
+
+o="$(MOCK_KV='hb-kv\n' MOCK_KV_SECRETS='hailbytes-db-password\nhailbytes-session-keys\nhailbytes-admin-initial-password\n' \
+     MOCK_KV_SECRET_ID='https://hb-kv.vault.azure.net/secrets/s/abc123\n' \
+     bash "$SWEEP" imports hbtest-rg-01 2>&1)"
+has  "a secret imports by versioned URI"  "https://hb-kv.vault.azure.net/secrets/s/abc123" "$o"
+has  "and maps to the right address"      "azurerm_key_vault_secret.session_keys" "$o"
+has  "the generated values are recovered" "random_password.db" "$o"
+has  "including both session keys"        "random_id.session_enc_key" "$o"
+has  "and the plan caveat is stated"      "CHECK THE PLAN" "$o"
+has  "values are substituted, not printed" '$(az keyvault secret show' "$o"
+
+o="$(MOCK_KV_IDS='/subscriptions/S/resourceGroups/RG/providers/Microsoft.KeyVault/vaults/hb-kv\n' \
+     MOCK_VMS='hb-vm-1\n' MOCK_VM_PRINCIPALS='p-vm-1\n' \
+     MOCK_ROLE_ASSIGNMENTS='Key Vault Secrets User\tguid-1\tp-vm-1\n' \
+     bash "$SWEEP" imports hbtest-rg-01 2>&1)"
+has  "a VM-identity role assignment is placed" "azurerm_role_assignment.vm_kv_secrets_user[0]" "$o"
+has  "under the roleAssignments id form"  "/providers/Microsoft.Authorization/roleAssignments/guid-1" "$o"
+
+o="$(MOCK_KV_IDS='/subscriptions/S/resourceGroups/RG/providers/Microsoft.KeyVault/vaults/hb-kv\n' \
+     MOCK_ROLE_ASSIGNMENTS='Key Vault Secrets User\tguid-9\tsomeone-else\n' \
+     bash "$SWEEP" imports hbtest-rg-01 2>&1)"
+has  "an unplaceable principal is flagged, not guessed" "is not a VM identity" "$o"
+
+o="$(MOCK_VNETS='hb-vnet\n' MOCK_SUBNETS='hb-workload\n' \
+     MOCK_SUBNET_NSG='/subscriptions/S/../nsg\n' bash "$SWEEP" imports hbtest-rg-01 2>&1)"
+has  "a subnet association imports under the SUBNET id" \
+     "azurerm_subnet_network_security_group_association.vm[0]' \\" "$o"
+
+# --- regression: a loose mock pattern must not answer a specific call --------
+# "monitor action-group list" CONTAINS "group list". When the mock answered it
+# with the resource-GROUP names, `imports` emitted an action group import per
+# resource group in the subscription -- four fabricated commands that named
+# real-looking ids. The bug was in the mock, and it made the script look wrong.
+o="$(MOCK_ACTION_GROUPS='' bash "$SWEEP" imports hbtest-rg-01 2>&1)"
+hasnt "no action group is invented from the group list" "actionGroups/hbtest-rg-01" "$o"
 
 # --- static: the tsv column-order rule --------------------------------------
 # Cheap and durable: the behavioural assertions above pass for the wrong reason

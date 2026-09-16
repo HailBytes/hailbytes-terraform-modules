@@ -90,6 +90,26 @@ pre-existing key vault makes the **next** apply stop partway through with
 `already exists - to be managed via Terraform this resource needs to be
 imported`, after other resources have already been created.
 
+## Terraform state
+
+`terraform init` with no backend keeps state in the working directory. In Azure
+Cloud Shell that directory only survives if the session has a storage account
+mounted, so an ephemeral session takes the state with it and leaves a running
+deployment nothing describes.
+
+[`bootstrap-state-azure.sh`](bootstrap-state-azure.sh) creates the blob storage
+Terraform keeps state in and writes the matching `backend.tf`. Run it **before**
+the first apply:
+
+```bash
+./quickstart/bootstrap-state-azure.sh --out ~/hailbytes-deploy
+```
+
+`deploy.sh` offers to run it for you, and `azure-ha/cloudshell.sh` runs it
+unless `HB_SKIP_REMOTE_STATE` is set. Already lost a state file?
+[`docs/AZURE_STATE_RECOVERY.md`](../docs/AZURE_STATE_RECOVERY.md) is the
+recovery, and `sweep-azure.sh imports` prints the commands it needs.
+
 [`sweep-azure.sh`](sweep-azure.sh) finds that debris:
 
 ```bash

@@ -231,8 +231,14 @@ This prints commands rather than running them, by design: an import writes
 ownership into state, and an import of something whose settings do not match
 your configuration means the next apply mutates it.
 
-The script does not yet cover every resource the tier module creates. For the
-remainder:
+It covers the whole tier module and the network module beside it, including the
+Key Vault imports in [B2](#b2-import-the-generated-values-from-key-vault). Two
+things it deliberately will not do: invent an address for a resource it does not
+recognise (it warns instead), and emit an import for a public IP you supplied
+through `public_ip_id` or `appgw_public_ip_id` — that address is yours, and
+adopting it would put a later `terraform destroy` in a position to delete it.
+
+Anything it warns about, enumerate by hand:
 
 ```bash
 az resource list -g <rg> --query '[].[type,name,id]' -o tsv
@@ -245,7 +251,8 @@ as an inventory to remap, not as configuration to adopt.
 ### B2. Import the generated values from Key Vault
 
 Do this **before** the first apply. Skip it and Terraform generates fresh
-values and rotates them on apply.
+values and rotates them on apply. `sweep-azure.sh imports` emits this block for
+you, with the values substituted at run time rather than printed.
 
 ```bash
 KV=<vault-name>
@@ -316,8 +323,10 @@ None of these touch campaign, target or result data.
 ## Preventing a repeat
 
 1. **Never run a production apply from Cloud Shell without a remote backend.**
-   The quickstart should configure one before the first apply; until it does,
-   do step [A2](#a2-stand-up-remote-state-before-the-first-apply) by hand.
+   [`quickstart/bootstrap-state-azure.sh`](../quickstart/bootstrap-state-azure.sh)
+   creates one and writes the `backend.tf`, in one command, before the first
+   apply. `deploy.sh` offers to run it; `azure-ha/cloudshell.sh` runs it unless
+   `HB_SKIP_REMOTE_STATE` is set.
 2. **Commit the root module and its `.tfvars`** (secrets excluded) somewhere
    durable. `deploy.sh` writes a `.gitignore` covering `secrets.auto.tfvars`,
    `.terraform/` and `*.tfstate*` precisely so the rest can be committed.
