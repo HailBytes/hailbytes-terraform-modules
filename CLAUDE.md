@@ -64,6 +64,7 @@ GovCloud (AWS) and Azure Government are out of scope for v1.
 - [SECURITY-DEFAULTS.md](SECURITY-DEFAULTS.md) — security controls baked into all modules
 - [docs/PATCHING_AND_MIGRATION.md](docs/PATCHING_AND_MIGRATION.md) — pre-patch backups, rolling-replace, auto-rollback (AWS)
 - [docs/AZURE_PATCHING_AND_MIGRATION.md](docs/AZURE_PATCHING_AND_MIGRATION.md) — the Azure procedure, incl. Postgres advisory-lock migration serialisation
+- [docs/AZURE_STATE_RECOVERY.md](docs/AZURE_STATE_RECOVERY.md) — lost-state recovery: rebuild vs import, the Key Vault secrets that make a no-rotation import possible, remote backend bootstrap
 - [docs/DEPLOY_FROM_GALLERY.md](docs/DEPLOY_FROM_GALLERY.md) — test-only: booting a self-built Compute Gallery image, and why such a deployment is not marketplace-metered
 - [docs/AZURE_HA_PARITY_AUDIT.md](docs/AZURE_HA_PARITY_AUDIT.md) — Azure-vs-AWS HA gap table with effort estimates
 - [docs/MARKETPLACE_IMAGE_ACCESS_AUDIT.md](docs/MARKETPLACE_IMAGE_ACCESS_AUDIT.md) — no-retained-access claims, verified per claim

@@ -45,18 +45,48 @@ The VMs have no public IP and the NSG opens no SSH, so `az vm run-command` via
 the Azure agent is the route in. Put that certificate in
 `appgw_backend_root_cert_pem`, set the PFX values, flip the flag, apply.
 
+> [!IMPORTANT]
+> **Phase 2 is a separate session, so the state has to outlive the first one.**
+> Configure a remote backend before phase 1, with
+> [`../bootstrap-state-azure.sh`](../bootstrap-state-azure.sh) or by hand. Local
+> state in an Azure Cloud Shell home directory does **not** survive a session
+> that ends between the two phases, and the deployment then carries on running
+> with nothing describing it. Recovering from that is
+> [`docs/AZURE_STATE_RECOVERY.md`](../../docs/AZURE_STATE_RECOVERY.md); not
+> needing to is one command up front.
+
 ```bash
 terraform apply
 terraform output dns_target                    # a DIFFERENT address -- move DNS
 ```
 
-## Four things that bite
+## Five things that bite
 
-**The gateway has its own address.** `public_ip_id` fronts the load balancer;
-once the gateway is enabled it is the front door and the load balancer becomes an
-internal hop. `dns_target` changes between phases. Set `appgw_public_ip_id` to a
-second reserved IP if you want that address pinned in advance too — otherwise
-DNS moves on the phase 2 apply.
+**The gateway has its own address, and on SAT you need both.** `public_ip_id`
+fronts the load balancer; `appgw_public_ip_id` fronts the gateway. The gateway
+does **not** sit in front of the load balancer — they are parallel entry points.
+The gateway carries one listener on 443 to the admin console; the load balancer
+carries `443 -> admin_port` **and** `80 -> phish_port` on a single frontend.
+
+So on SAT the load-balancer frontend has to stay public, because it is the only
+route to the phishing landing pages. `lb_frontend_public = false` fails a
+precondition for `product = "sat"` for exactly this reason. **Budget two
+reserved addresses and two hostnames**: one on the gateway for the console, one
+on the load balancer for the landing pages. Bound each with `allowed_cidrs` and
+`phish_allowed_cidrs` respectively.
+
+`dns_target` reports the gateway frontend once the gateway is enabled, so it
+changes between phases and DNS has to follow it. Pin `appgw_public_ip_id` to a
+reserved address in advance if you would rather it did not move.
+
+**Do not free up the load balancer's address for the gateway.** Detaching it
+takes the console offline immediately and does not give the gateway anything it
+could not have had from a second reservation. Reattaching is one command:
+
+```bash
+az network lb frontend-ip update -g <rg> --lb-name <name-prefix>-lb \
+  --name frontend --public-ip-address <public-ip-id>
+```
 
 **Azure refuses a password-less PFX.** Several export paths produce one (an
 Azure App Service Certificate exports with an empty password). Add one:

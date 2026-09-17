@@ -41,6 +41,28 @@ declare -A AWS_LISTING=(
 # The per-vCPU Marketplace meter. Used only to show the operator what their
 # choices cost; billing itself is the cloud's, not ours.
 RAW_BASE="https://raw.githubusercontent.com/hailbytes/hailbytes-terraform-modules/main"
+
+# This script is normally run as `bash <(curl ...)`, so BASH_SOURCE is a pipe
+# and there are no sibling files to call. resolve_helper echoes a runnable path
+# for one of them: the local copy when the repo was cloned, otherwise a fetched
+# temporary. Returns non-zero if neither is available, so a caller can degrade
+# rather than die.
+resolve_helper() {  # resolve_helper <name.sh> -> echoes a path
+  local name="$1" here tmp
+  here="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+  if [ -n "$here" ] && [ -f "${here}/${name}" ]; then
+    printf '%s\n' "${here}/${name}"
+    return 0
+  fi
+  tmp="$(mktemp -t "hb-${name%.sh}.XXXXXX")" || return 1
+  if curl -fsSL "${RAW_BASE}/quickstart/${name}" -o "$tmp" 2>/dev/null && [ -s "$tmp" ]; then
+    chmod +x "$tmp"
+    printf '%s\n' "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
 METER_PER_VCPU_HOUR="0.24"
 
 # ---------------------------------------------------------------------------
@@ -676,6 +698,40 @@ pick_key_vault_name() {
   fi
 }
 
+# Where Terraform keeps its state. Asked, not assumed, because the answer
+# creates billable resources in the customer's subscription -- but the default
+# is yes, and the wording says why.
+#
+# This exists because the wizard's own default was the failure: init with no
+# backend leaves state in $HOME, and an ephemeral Cloud Shell session discards
+# it. The deployment then runs with nothing describing it, and re-adopting it
+# means importing every resource by hand (docs/AZURE_STATE_RECOVERY.md).
+pick_state_backend() {
+  STATE_BACKEND=false
+  [ "$CLOUD" = azure ] || return 0
+
+  say ""
+  head2 "Terraform state"
+  warn "Terraform records what it built in a state file. Without it, a later run"
+  warn "cannot change or destroy this deployment -- it proposes to build a second one."
+  note "Kept locally, that file lives in ${WORKDIR}. In Azure Cloud Shell that"
+  note "directory only survives if your session has a storage account mounted;"
+  note "an ephemeral session discards it when the session ends."
+  note ""
+  note "A remote backend puts the state in Azure Blob Storage instead: it survives"
+  note "the session, it locks so two applies cannot collide, and versioning gives"
+  note "you a rollback. Storage costs a few cents a month."
+
+  if confirm "Store Terraform state remotely in Azure Blob Storage? (recommended)"; then
+    STATE_BACKEND=true
+    STATE_RG="$(ask "Resource group for the state account" "tfstate-rg")"
+    ok "State will be created in ${STATE_RG} before the first apply."
+  else
+    warn "State will stay in ${WORKDIR}. Back it up before you close this session:"
+    note "  cp ${WORKDIR}/terraform.tfstate ~/clouddrive/   # or off this machine entirely"
+  fi
+}
+
 # The cache this deploys is a service Microsoft has dated. Say so at deploy time,
 # not after the customer has built a three-year plan on it.
 warn_about_redis_retirement() {
@@ -742,14 +798,38 @@ output "endpoint" {
 }
 EOF
 
+  # Unconditional: main.tf and backend.tf are meant to be committed, and the
+  # things beside them are not. This used to be written only in the external-db
+  # branch, so every other deployment got a directory with no .gitignore at all.
+  printf 'secrets.auto.tfvars\n.terraform/\n*.tfstate*\n*.tfplan\n' > "${WORKDIR}/.gitignore"
+
   if [ "${DB_MODE:-}" = external ]; then
     cat > "${WORKDIR}/secrets.auto.tfvars" <<EOF
 # Contains a database password. Do NOT commit this file.
 external_db_password = "${EXT_DB_PASS}"
 EOF
     chmod 600 "${WORKDIR}/secrets.auto.tfvars"
-    printf 'secrets.auto.tfvars\n.terraform/\n*.tfstate*\n' > "${WORKDIR}/.gitignore"
     warn "Database password written to ${WORKDIR}/secrets.auto.tfvars (mode 600, gitignored)."
+  fi
+
+  # Before init, so the first init already targets the backend rather than
+  # migrating to it afterwards.
+  if [ "${STATE_BACKEND:-false}" = true ]; then
+    say ""
+    head2 "Creating the Terraform state backend"
+    local bootstrap
+    if bootstrap="$(resolve_helper bootstrap-state-azure.sh)" && "$bootstrap" \
+        --out "$WORKDIR" \
+        --resource-group "${STATE_RG:-tfstate-rg}" \
+        --location "$REGION" \
+        --key "hailbytes-${PRODUCT}-${TIER}.tfstate"; then
+      ok "Remote state configured."
+    else
+      warn "State backend bootstrap failed. The deployment can still proceed with"
+      warn "local state, but back ${WORKDIR}/terraform.tfstate up before this"
+      warn "session ends. Re-run quickstart/bootstrap-state-azure.sh to retry."
+      confirm "Continue with local state?" || exit 1
+    fi
   fi
 
   ok "Wrote ${WORKDIR}/main.tf"
@@ -853,6 +933,7 @@ main() {
   pick_frontend
   pick_node_size
   pick_key_vault_name
+  pick_state_backend
   warn_about_egress
   warn_about_redis_retirement
 

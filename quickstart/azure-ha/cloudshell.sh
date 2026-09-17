@@ -77,6 +77,28 @@ else
   echo "    SECURITY-DEFAULTS.md, \"Subscription prerequisites\"."
 fi
 
+# Remote state, before init rather than after. Cloud Shell's home directory
+# does not survive an ephemeral session, and a deployment whose state went with
+# the session has to be re-adopted a resource at a time
+# (docs/AZURE_STATE_RECOVERY.md). Set HB_SKIP_REMOTE_STATE=1 to opt out.
+BOOTSTRAP="$(dirname "$0")/../bootstrap-state-azure.sh"
+if [[ -n "${HB_SKIP_REMOTE_STATE:-}" ]]; then
+  echo "==> WARNING: skipping the remote state backend (HB_SKIP_REMOTE_STATE set)."
+  echo "    State stays in this directory. Copy terraform.tfstate somewhere durable"
+  echo "    before this session ends."
+elif [[ -x "$BOOTSTRAP" ]]; then
+  echo "==> Terraform state backend"
+  "$BOOTSTRAP" --out . --location "$LOCATION" --key "hailbytes-sat-ha.tfstate" || {
+    echo "State bootstrap failed. Re-run ../bootstrap-state-azure.sh, or set" >&2
+    echo "HB_SKIP_REMOTE_STATE=1 to continue with local state at your own risk." >&2
+    exit 1
+  }
+else
+  echo "==> WARNING: bootstrap-state-azure.sh not found next to this script."
+  echo "    State will stay in this directory and will NOT survive an ephemeral"
+  echo "    Cloud Shell session. Copy terraform.tfstate somewhere durable."
+fi
+
 echo "==> terraform init"
 terraform init -input=false
 
