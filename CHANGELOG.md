@@ -6,6 +6,17 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Terraform state that survives the session that created it: `quickstart/bootstrap-state-azure.sh`.** The quickstart ran `terraform init` with no backend, so state landed in `$HOME`. In Azure Cloud Shell that directory only survives if the session has a storage account mounted — an ephemeral session discards it, and the deployment carries on running with nothing describing it. A customer hit exactly this between phase 1 and phase 2 of an App Gateway rollout, and could not proceed.
+
+  The new script creates the state storage and writes the `backend.tf`, in one command, before the first apply. The account it creates is configured for that job specifically: blob versioning, so a bad state write can be rolled back; **shared keys disabled**, because the access key is a bearer credential for all of your infrastructure state, with `use_azuread_auth` and a `Storage Blob Data Contributor` grant to the running identity in its place — a subscription Owner is *not* a data-plane reader, and without the grant `init` fails with a 403 that names the container and not the cause; no public blob access; and a `CanNotDelete` lock on the state resource group. Role assignments are eventually consistent, so container creation retries rather than failing.
+
+  `deploy.sh` now asks, defaulting to yes, and runs it before `init`; a bootstrap failure is survivable rather than fatal. `azure-ha/cloudshell.sh` runs it unless `HB_SKIP_REMOTE_STATE` is set. Both degrade to a loud warning and a backup instruction rather than silently reverting to the old behaviour.
+
+- **`docs/AZURE_STATE_RECOVERY.md`: recovering a deployment whose state is gone.** Restoring service first and separately — a detached load-balancer public IP is one `az` command, and no Terraform decision should hold it up — then rebuild vs import, with rebuild as the default recommendation. It also states the three things that make the situation less dangerous than it reads: every generated secret is already in Key Vault, the database carries a `CanNotDelete` lock, and the VMs set `ignore_changes` on `source_image_reference` and `custom_data`.
+
+  The Key Vault detail is the useful one. `hailbytes-db-password`, `hailbytes-session-keys` and `hailbytes-admin-initial-password` are the only surviving copies of what `random_password` / `random_id` generated, so importing those resources from the vault is what makes a recovery rotate nothing. The page is honest that the `random` provider's importers do not reconstruct every argument, so a replacement diff is still possible, and says what each rotation actually costs.
+
+
 - **`quickstart/explain.sh`: turn a failed deployment into the next thing to do.** A failed apply prints what the cloud said, which is often not what to do about it — and sometimes not even what went wrong. Three real examples, all of which cost a customer round trip to diagnose:
 
   | The cloud says | The cause actually is |
@@ -21,6 +32,9 @@ All notable changes to this project are documented here. Format follows [Keep a 
   `quickstart/tests/explain_test.sh` (42 assertions) uses real error text rather than paraphrases — the tool matches provider strings, so a paraphrased fixture tests the paraphrase. It also asserts that **nothing is invented**: every script path, module variable and marketplace identifier the tool emits is checked against this repository. Advice that does not work costs a round trip *and* the reader's confidence in everything else printed. Neuter-checked by pointing the tool at a nonexistent script and a non-existent variable; both fail the suite.
 
 ### Fixed
+
+- **`quickstart/deploy.sh` writes a `.gitignore` for every deployment.** It was written only on the external-database path, so every other deployment got a working directory holding state and `.terraform/` with nothing excluding them.
+
 
 - **Azure quickstarts and examples set `recover_soft_deleted_key_vaults = false`.** It defaults to `true`, and on `true` the provider will not create a Key Vault until it has checked whether a soft-deleted one already holds the name. That check is a **subscription-scoped** read:
 
@@ -40,6 +54,15 @@ All notable changes to this project are documented here. Format follows [Keep a 
   Fixed in `quickstart/azure-ha`, `quickstart/azure-single`, `quickstart/azure-ha-byoip` and the `single-vm` / `ha-hot-hot` / `unlimited-scale` Azure examples. The `network/azure` example is unchanged — it creates no vault. This lives in the caller's provider block, not in the modules, so anyone with their own root configuration should add it there too; `explain.sh` says so if they hit it.
 
 ### Changed
+
+- **`sweep-azure.sh imports` covers the whole deployment, not just the load balancer.** It previously emitted the resource group, the load balancer and its children, one diagnostic setting, the Key Vault and the vnet — roughly a tenth of what a tier module creates, which is not enough to reach a clean plan. It now also covers subnets and their NSG/NAT associations, NSGs and their rules, public IPs, NICs and their pool and NSG associations, VMs, extensions, disks and disk attachments, Redis with its private endpoint and DNS zones, Postgres with its configurations, database and lock, storage with its policy and containers, the App Gateway, the monitor stack, role assignments, and the `random_*` imports read back from Key Vault.
+
+  Two refusals are deliberate. It never invents an address for a resource it does not recognise — it warns instead, because an import under the wrong address stays silent until a later apply proposes to change the wrong thing. And it never emits an import for a public IP supplied through `public_ip_id` or `appgw_public_ip_id`: that address belongs to the customer, and adopting it would let a later `terraform destroy` delete it, which Azure cannot undo.
+
+  Addresses carrying an index or a `for_each` key are derived from the Azure resource name, and flagged where the derivation is not certain — VM ordering under a custom `vm_names`, and the `-lb-nsg` name that both the tier and network modules use.
+
+- **`quickstart/azure-ha-byoip/README.md` corrects what the App Gateway does to the load balancer.** It said the load balancer "becomes an internal hop" once the gateway is enabled. On SAT that is wrong and expensive: the gateway carries one listener on 443 to the admin console and has no port-80 path to the phishing server, so the load-balancer frontend has to stay public or the landing pages leave the internet. The page now says SAT needs **two** reserved addresses and two hostnames, and that freeing up the load balancer's address for the gateway takes the console down for nothing.
+
 
 - **Azure `vm_size` now defaults to `Standard_B4ms` (4 vCPU, burstable), not `Standard_D8s_v5`.** All three Azure tier modules and all six Azure product wrappers. AWS `instance_type` is unchanged on `m6i.2xlarge`, so the two clouds no longer default to the same rung.
 
