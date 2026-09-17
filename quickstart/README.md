@@ -205,6 +205,26 @@ marketplace identifier the tool tells a reader to use is checked against this
 repository. Advice that does not work costs a round trip *and* the reader's
 confidence in the rest of the output.
 
+`tests/azure_live_drill.sh` is the part the mocked suites cannot do: it runs
+against a real subscription and proves Azure *accepts* what the scripts emit.
+
+```bash
+./quickstart/tests/azure_live_drill.sh backend    # ~5 min,  ~$0
+./quickstart/tests/azure_live_drill.sh recovery   # ~45 min, a few dollars
+./quickstart/tests/azure_live_drill.sh cleanup    # remove what drills left
+```
+
+`backend` deploys one empty resource group through the new remote backend, then
+**deletes the working directory** and requires `terraform plan` to come back
+with no changes — the incident, reproduced and then survived. `recovery` does
+the whole runbook end to end: deploy the HA tier, destroy the state, rebuild it
+from `sweep-azure.sh imports`, and require a clean plan plus every baseline
+resource back in state. Anything missing is a gap in the import coverage, and
+the drill names it.
+
+Everything a drill creates is named `hbdrill-*` with a UTC timestamp, and
+nothing is deleted unless its name carries that prefix.
+
 `sweep_azure_test.sh` covers `sweep-azure.sh` against a mocked `az`. Its two
 targets are the failure modes that are silent rather than loud: reporting
 "nothing to clean up" when the lookup merely **failed** (an expired login
