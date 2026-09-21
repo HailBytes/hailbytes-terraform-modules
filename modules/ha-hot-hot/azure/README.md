@@ -122,6 +122,87 @@ meter and tier sizing are aligned.
 > Source: [retirement
 > FAQ](https://learn.microsoft.com/en-us/azure/azure-cache-for-redis/retirement-faq).
 
+## Names and addresses that cannot be re-taken
+
+Two resources here are not idempotent in the way the rest of the stack is: once
+spent, the identifier does not come back on the next apply. Both cost a customer
+deployment time in September 2026.
+
+### The Key Vault name
+
+Key Vault names are **globally unique**, this module sets
+`purge_protection_enabled = true` (the disk encryption set requires it), and a
+deleted vault reserves its name for **30 days** with no force-purge. The derived
+name is `<name_prefix>kv`, which is unique per `name_prefix` — not per
+deployment. Two consequences:
+
+- Two stacks sharing a `name_prefix` cannot coexist. On module defaults
+  `name_prefix` falls back to `hailbytes-<product>-<environment>`, so every
+  default `sat`/`prod` caller asks Azure for `hailbytessatprodkv`.
+- The standard reaction to a half-built stack — change `resource_group_name` and
+  re-run — plans a destroy of the old group, vault included, and a create of a
+  vault with **the same name**. The create then fails on a name its own destroy
+  just spent:
+
+  ```
+  400 SoftDeletedVaultDoesNotExist: A soft deleted vault with the given name
+  does not exist.
+  ```
+
+  The message is about recovery, so it reads as soft delete or RBAC. It is
+  neither.
+
+`key_vault_name_random_suffix = true` appends a 6-character suffix keyed on
+`resource_group_name` and `location`, so a new resource group always draws a new
+name. **Set it on new deployments only.** On a deployment that already has a
+vault it renames one — and a renamed Key Vault is a destroyed one, taking the
+database password, the session keys and the disk encryption key with it, then
+reserving the old name for 30 days so the module ref cannot simply be rolled
+back. For an existing deployment set `key_vault_name` to the name you already
+hold, which pins it explicitly instead of leaving it an accident of
+`name_prefix`.
+
+### The public IP
+
+Azure has **no undelete for a public IP**: a deleted address returns to the pool.
+An address reserved inside the deployment's own resource group goes with that
+group when a failed attempt is torn down, which is how one deployment lost the
+address its hostname resolved to.
+
+- Reserve addresses in a **separate** resource group and pass them as
+  `public_ip_id` / `appgw_public_ip_id`. Their lifecycle stays yours, so they
+  survive a `terraform destroy` and DNS stays valid across a rebuild.
+- For addresses this module creates, `enable_public_ip_delete_lock = true` puts a
+  `CanNotDelete` lock on them. Same trade-off as `enable_db_delete_lock`: it
+  blocks deletion by anyone, `terraform destroy` included, so disable it in its
+  own apply before a planned teardown.
+
+A public IP also attaches to **exactly one** resource, so `public_ip_id` and
+`appgw_public_ip_id` cannot name the same address — the module refuses that pair
+at plan time rather than letting Azure fail part-way through building the
+gateway with `PublicIPAddressCannotBeUsedBySeveralResources`.
+
+What to do about it **differs by product, and getting it wrong caused an
+outage**:
+
+- **SAT: reserve two addresses.** The two frontends are not interchangeable.
+  The gateway carries one listener on 443 to the admin console and has no
+  port-80 path; the load balancer carries `443 -> admin_port` **and**
+  `80 -> phish_port` on a single frontend. Freeing the load balancer's address
+  for the gateway takes the phishing landing pages off the internet. Budget two
+  reserved addresses and two hostnames — console on the gateway, landing pages
+  on the load balancer.
+- **ASM: either works.** The load balancer carries only the admin port, so
+  nothing addresses it once the gateway is up. Reserve a second address, or move
+  the existing one across in two applies (`public_ip_id = null`, apply; then set
+  `appgw_public_ip_id`, apply) — the address must be released before it can be
+  re-attached and Terraform cannot order that itself. `lb_frontend_public =
+  false` in the second apply is tidier still: the load balancer then needs no
+  public address at all.
+
+See [`quickstart/azure-ha-byoip`](../../../quickstart/azure-ha-byoip) for the
+worked version.
+
 ## Usage
 
 > No `v1.0.0` tag exists yet ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)); pin to a commit SHA instead of `?ref=v1.0.0` until a tagged release ships.

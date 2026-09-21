@@ -16,6 +16,29 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
   The Key Vault detail is the useful one. `hailbytes-db-password`, `hailbytes-session-keys` and `hailbytes-admin-initial-password` are the only surviving copies of what `random_password` / `random_id` generated, so importing those resources from the vault is what makes a recovery rotate nothing. The page is honest that the `random` provider's importers do not reconstruct every argument, so a replacement diff is still possible, and says what each rotation actually costs.
 
+- **`key_vault_name_random_suffix` on the Azure HA and autoscale tiers, and their four product wrappers.** Appends a 6-character suffix, keyed on `resource_group_name` and `location`, to the derived Key Vault name.
+
+  The derived name was `<name_prefix>kv` — unique per `name_prefix`, which is not the same as unique per deployment. Key Vault names are **globally unique**, the modules set `purge_protection_enabled = true` (the disk encryption set requires it), and a deleted vault reserves its name for **30 days** with no force-purge. So:
+
+  - Two stacks sharing a `name_prefix` cannot coexist. On module defaults `name_prefix` falls back to `hailbytes-<product>-<environment>`, so every default `sat`/`prod` caller in the world asks Azure for `hailbytessatprodkv`.
+  - Changing `resource_group_name` to get past a half-built stack — the obvious reaction to "resource group already exists" — plans a destroy of the old group, vault included, then a create of a vault with **the same name**, which fails on the name its own destroy just spent:
+
+    ```
+    400 SoftDeletedVaultDoesNotExist: A soft deleted vault with the given name
+    does not exist.
+    ```
+
+    The message is about recovery, so it reads as soft delete or RBAC. It is neither. This is the 2026-09-09 customer failure, and `recover_soft_deleted_key_vaults = false` does not prevent it — that run had the flag set.
+
+  The suffix carries `keepers` on the resource group and location rather than being a bare `random_string`: without them the value is drawn once and never redrawn, so a deployment that moves resource group would carry the old group's vault name into the new one — the exact reuse the suffix exists to prevent.
+
+  **Opt-in, default `false`, and it has to stay that way.** Turning it on for a deployment that already has a vault renames one, and a renamed Key Vault is a destroyed one — taking the database password, the session keys and the disk encryption key with it, cascading into a replacement of the disk encryption set and every disk it encrypts, and then reserving the old name for 30 days so the module ref cannot simply be rolled back. New deployments should set it true; both Azure HA quickstart roots now do. An existing deployment should instead set `key_vault_name` to the name it already holds, which pins that name explicitly rather than leaving it an accident of `name_prefix`.
+
+- **`enable_public_ip_delete_lock` on the Azure HA tier and its two product wrappers.** Places a `CanNotDelete` management lock on the public IPs the module creates — the load-balancer frontend, and the Application Gateway frontend when `enable_application_gateway = true`.
+
+  Azure has **no undelete for a public IP**: a deleted address goes back to the pool and someone else can take it. A customer's reserved address was created inside the deployment's own resource group and went with it when a failed attempt was torn down; the A record had to be re-pointed at a newly reserved address, and the old one was gone for good.
+
+  Same shape and same trade-off as `enable_db_delete_lock`, so the same default (`false`): the lock blocks deletion by anyone, `terraform destroy` included, which is what protects a production address and what makes a PoC teardown fail part-way. Never applied to a caller-supplied `public_ip_id` or `appgw_public_ip_id` — those are the caller's resources, in whatever resource group they reserved them in.
 
 - **`quickstart/explain.sh`: turn a failed deployment into the next thing to do.** A failed apply prints what the cloud said, which is often not what to do about it — and sometimes not even what went wrong. Three real examples, all of which cost a customer round trip to diagnose:
 
@@ -35,6 +58,19 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 - **`quickstart/deploy.sh` writes a `.gitignore` for every deployment.** It was written only on the external-database path, so every other deployment got a working directory holding state and `.terraform/` with nothing excluding them.
 
+- **`public_ip_id` and `appgw_public_ip_id` naming the same address is now refused at plan time.** An Azure public IP attaches to exactly **one** resource, so the load balancer and the Application Gateway cannot share the reserved address DNS already points at — even though that is the only shape in which the hostname never moves, and therefore the first thing an operator tries. Azure refuses it part-way through building the gateway:
+
+  ```
+  PublicIPAddressCannotBeUsedBySeveralResources
+  ```
+
+  Both inputs are plain variables, so the clash is knowable at plan time. Caught there it costs nothing; caught at apply it leaves a half-built gateway to unpick, typically on the morning of a cutover.
+
+  **The message is product-aware, because the answer is.** On SAT the two frontends are not interchangeable: the gateway carries one listener on 443 to the admin console and has no port-80 path, while the load balancer carries `443 -> admin_port` **and** `80 -> phish_port` on a single frontend — so freeing the load balancer's address for the gateway takes the phishing landing pages off the internet. SAT gets told to reserve a second address. ASM, where the load balancer carries only the admin port, gets both routes including the two-apply handover. This is the same correction `azure-ha-byoip/README.md` received in #107, applied to the module's own error text so it cannot be read in isolation and get it wrong.
+
+- **A plan that will move DNS now says so.** New `check "gateway_frontend_address_moves_dns"` on the Azure HA tier: with `enable_application_gateway = true`, a caller-supplied `public_ip_id` and no `appgw_public_ip_id`, the gateway becomes the front door and creates an address of its own — so a record registered against the reserved address no longer reaches the console. That is a legitimate configuration, and on SAT it is the *correct* one, so this warns rather than blocking. It stays silent when the load-balancer frontend is internal, where no public load-balancer address existed to point at.
+
+  Product-aware for the same reason as above: SAT is told this is two hostnames rather than one moved record — the console on the gateway, the landing pages staying on the load balancer's address — and told explicitly not to free that address up. ASM is told to reserve an address for the gateway.
 
 - **Azure quickstarts and examples set `recover_soft_deleted_key_vaults = false`.** It defaults to `true`, and on `true` the provider will not create a Key Vault until it has checked whether a soft-deleted one already holds the name. That check is a **subscription-scoped** read:
 
@@ -63,6 +99,17 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 - **`quickstart/azure-ha-byoip/README.md` corrects what the App Gateway does to the load balancer.** It said the load balancer "becomes an internal hop" once the gateway is enabled. On SAT that is wrong and expensive: the gateway carries one listener on 443 to the admin console and has no port-80 path to the phishing server, so the load-balancer frontend has to stay public or the landing pages leave the internet. The page now says SAT needs **two** reserved addresses and two hostnames, and that freeing up the load balancer's address for the gateway takes the console down for nothing.
 
+- **`asm-azure-ha` and `sat-azure-ha` stop overriding three core defaults.** The wrappers are the public API, so a wrapper default silently beats the core's for every caller. `enable_pre_patch_run_command` was still `true` in both, which would have re-enabled the create-time hazard below for exactly the people the change is for. `db_delegated_subnet_id` and `private_dns_zone_id` were required on `asm-azure-ha` while the core declares them optional (`null`); adding the default only widens what the wrapper accepts, so no existing caller breaks. Caught by the wrapper-drift job, which had been red on `main` for these.
+
+- **`enable_pre_patch_run_command` now defaults to `false` on the Azure HA tier.** `azurerm_virtual_machine_run_command` **executes on create** — it does not merely register the script the way the `aws_ssm_document` it mirrors does. So a first apply ran a pre-patch backup against a brand-new, empty instance, at the one moment such a backup cannot be useful, and let any non-zero exit from it fail the whole deployment. On a customer's 2026-09-07 run that is exactly what happened: the script called an Azure CLI the marketplace image does not ship, exited 127 *after* writing a valid backup bundle, and took the apply red at resource 55 of 59 with every piece of infrastructure already built and working.
+
+  The script is fail-soft about the missing CLI now, but the shape of the hazard was unchanged: a Portal convenience document was wired so that its dry run decided whether a 45-minute deployment succeeded. Turning it **on in a later apply** installs the document and runs it once against a live instance, which is a real backup — that is the recommended way to have it. `enable_post_patch_run_command` stays `true`: executing on create is useful there, because it fails an apply whose nodes are not serving.
+
+  The `unlimited-scale/azure` equivalent is a VMSS extension with empty `settings`, so it does not auto-run and is unaffected.
+
+- **`db_high_availability_mode` documents how to add the standby later, and no longer calls `SameZone` cheaper.** Switching `Disabled` → `ZoneRedundant` once a subscription's zone-redundant Postgres entitlement is granted updates the server **in place** rather than replacing it — `zone` is already in the server's `ignore_changes`, so the pin the module sets while HA is off does not fight the platform for placement once Azure owns it. Worth stating, because the common shape is a deployment that shipped `Disabled` after `MultiAzHaIsOfferRestricted` and adds the standby weeks later, and "will this rebuild my database?" is the question that stalls it.
+
+  The description also claimed `SameZone` "is cheaper with a lower SLA". It is not cheaper: the standby is a full server in both modes, so both bill 2x compute and 2x storage. `SameZone` trades the zone-loss SLA for lower replication latency.
 
 - **Azure `vm_size` now defaults to `Standard_B4ms` (4 vCPU, burstable), not `Standard_D8s_v5`.** All three Azure tier modules and all six Azure product wrappers. AWS `instance_type` is unchanged on `m6i.2xlarge`, so the two clouds no longer default to the same rung.
 
