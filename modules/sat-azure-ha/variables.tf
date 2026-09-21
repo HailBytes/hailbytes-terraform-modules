@@ -341,9 +341,9 @@ variable "backup_blob_noncurrent_expiration_days" {
 }
 
 variable "enable_pre_patch_run_command" {
-  description = "Install an Azure Run Command document named RunPrePatchBackup on the first SAT VM. Customers fire it from the Portal."
+  description = "Install an Azure Run Command named RunPrePatchBackup on the first VM, for customers to fire from the Portal before a patch. Default false. NOTE: azurerm_virtual_machine_run_command EXECUTES on create -- so enabling it on a FIRST apply runs a backup against an empty instance and lets that run decide whether the deployment succeeds. Enable it in a later apply instead, where the one execution it triggers happens against a live instance and is worth having."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "enable_application_gateway" {
