@@ -92,6 +92,24 @@ Every tier now lands on a purchasable rung at its defaults: single-vm on
 the smallest thing a customer could buy was 8 vCPU, and the largest thing this
 repo deployed by default was 6 vCores.
 
+### Revised 2026-09-21: `asm-azure-ha` stopped overriding the core
+
+The tier rows below describe the **core** modules. `asm-azure-ha` -- a wrapper,
+and therefore the public API -- kept its own `vm_size` default of
+`Standard_D4s_v5` after #104 moved `ha-hot-hot/azure` to `Standard_D2s_v3`.
+Because a wrapper forwards its own value, **#104's quota fix never reached ASM
+HA callers**: they kept drawing `standardDSv5Family`, the pool Azure commonly
+grants a limit of 0.
+
+It now matches the core at `Standard_D2s_v3`. Two consequences worth stating:
+
+- ASM HA metered vCores drop from 8 to **4**, which matches no purchasable SKU
+  (the smallest, `HB-ESS`, is 8). This is gap 1 below, and `sat-azure-ha`
+  already had it -- ASM now shares it rather than introducing it.
+- An existing ASM HA deployment that does not pin `vm_size` will see both nodes
+  **replaced** on the next apply after taking the ref, and drop from 4 vCPU to
+  2. Pin `vm_size = "Standard_D4s_v5"` to stay put.
+
 ### Revised 2026-09-07: the Azure default moved off Dsv5
 
 The Azure rows above are superseded. `vm_size` now defaults to
@@ -143,9 +161,14 @@ Consequences, in order of how much they cost us:
    is linked from the repo README and from `hailbytes.com/deploy`, and prints a
    `COST IMPACT` block with "real figures". Those figures describe a 2-vCore
    deployment nobody can purchase.
-2. **For ASM it is below the product's own documented minimum.**
-   `hailbytes-asm/docs/HARDENING_GUIDE.md` sets a 4 vCPU minimum and names
-   8 vCPU "Production (recommended)". A 2-vCPU default ships under the minimum.
+2. ~~**For ASM it is below the product's own documented minimum.**~~
+   **Superseded 2026-09-21.** `hailbytes-asm/docs/HARDENING_GUIDE.md` set a
+   4 vCPU minimum and named 8 vCPU "Production (recommended)", so a 2-vCPU
+   default shipped ASM under its own floor. ASM performance work has since
+   brought the minimum down to 2 vCPU, which is what allowed `asm-azure-ha` to
+   stop overriding the core default (#109). **The HARDENING_GUIDE still says
+   4 and needs updating to match** -- until it does, the repo and the product
+   docs disagree about ASM's floor.
 3. **First-run experience is a slow instance.** The most likely first impression
    of both products is one taken at a quarter of the recommended production size.
 4. **PoC-to-production is a forced replacement.** Changing `instance_type` or

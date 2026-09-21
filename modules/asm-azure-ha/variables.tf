@@ -160,9 +160,38 @@ variable "db_vm_name" {
 }
 
 variable "vm_size" {
-  description = "Azure VM SKU for the HailBytes application node(s). Any Standard_* size with 2 or more vCPU is accepted; the default is a general-compute shape. THE ALLOWLIST WAS REMOVED ON PURPOSE. It was an enumerated list of nine Dsv5 rungs plus two B-series, and it blocked two real deployments: Standard_B4ms was rejected while it was the only family with quota in the target subscription, and every newer family (Dsv6, the as/ps AMD and ARM variants, the memory and compute-optimised lines) was rejected for having been released after the list was written. A hand-maintained list of SKUs goes stale faster than anyone updates it, and the failure mode is refusing a size the customer can actually get. QUOTA IS THE THING TO CHECK, NOT THE NAME. Every Dsv5 rung draws one pool, standardDSv5Family, which is frequently granted a limit of 0 in a subscription that has never asked for it -- so a Dsv5 size can be perfectly valid and still fail the apply. quickstart/preflight-azure.sh and the deployment bundles check the pool for whatever size is set, before anything is built. Confirm with: az vm list-usage --location <region> -o table. B-series is BURSTABLE: it banks CPU credits while idle and throttles to a fraction of a core once they are spent, which suits pilots and steady low load, not sustained campaign sending. Size from measured load rather than from a rung -- see hailbytes-sat/docs/VM_SCALING.md."
+  # Matches the ha-hot-hot/azure core default exactly, as every wrapper default
+  # should: the wrapper forwards its own value, so a divergence here silently
+  # overrides the core for every caller of the public API.
+  #
+  # It did diverge, on Standard_D4s_v5, and that was costing ASM deployments.
+  # Every Dsv5 rung -- D2s_v5 through D64s_v5 -- draws one quota pool,
+  # standardDSv5Family, which Azure routinely grants a limit of 0 to a
+  # subscription that has never asked for it:
+  #
+  #   409 OperationNotAllowed: exceeding approved standardDSv5Family Cores
+  #   quota. Location: northeurope, Current Limit: 0
+  #
+  # The VMs are created after the network, load balancer, Key Vault and
+  # database, so it lands about twelve minutes into an apply and leaves a
+  # part-built stack to tear down; clearing it needs a support request. #104
+  # moved the core off that pool and this wrapper kept overriding it, so the
+  # fix never reached ASM HA callers at all.
+  #
+  # 2 vCPU IS NOW ENOUGH FOR ASM. It previously was not -- the 4 vCPU floor in
+  # hailbytes-asm/docs/HARDENING_GUIDE.md is why this wrapper carried a larger
+  # default in the first place -- and ASM performance work has since brought the
+  # minimum down to match SAT. That is what makes aligning with the core correct
+  # here rather than merely tidy.
+  #
+  # EXISTING DEPLOYMENTS: changing vm_size REPLACES the VM. An ASM HA deployment
+  # that does not pin vm_size will see both nodes replaced on the next apply
+  # after taking this ref, and drop from 4 vCPU to 2. Pin
+  # vm_size = "Standard_D4s_v5" to stay exactly where you are, or set an
+  # explicit size from measured load.
+  description = "Azure VM SKU for the HailBytes ASM application nodes. Default Standard_D2s_v3, matching the ha-hot-hot/azure core: 2 vCPU on standardDSv3Family, the family Azure grants a non-zero quota to on most subscriptions. It previously defaulted to Standard_D4s_v5, which draws standardDSv5Family -- commonly a limit of 0 -- so an ASM HA apply could fail twelve minutes in with the stack part-built. Any Standard_* size with 2 or more vCPU is accepted. Changing this on a live deployment REPLACES the VMs. THE ALLOWLIST WAS REMOVED ON PURPOSE. It was an enumerated list of nine Dsv5 rungs plus two B-series, and it blocked two real deployments: Standard_B4ms was rejected while it was the only family with quota in the target subscription, and every newer family (Dsv6, the as/ps AMD and ARM variants, the memory and compute-optimised lines) was rejected for having been released after the list was written. A hand-maintained list of SKUs goes stale faster than anyone updates it, and the failure mode is refusing a size the customer can actually get. QUOTA IS THE THING TO CHECK, NOT THE NAME. Every Dsv5 rung draws one pool, standardDSv5Family, which is frequently granted a limit of 0 in a subscription that has never asked for it -- so a Dsv5 size can be perfectly valid and still fail the apply. quickstart/preflight-azure.sh and the deployment bundles check the pool for whatever size is set, before anything is built. Confirm with: az vm list-usage --location <region> -o table. B-series is BURSTABLE: it banks CPU credits while idle and throttles to a fraction of a core once they are spent, which suits pilots and steady low load, not sustained campaign sending. Size from measured load rather than from a rung -- see hailbytes-sat/docs/VM_SCALING.md."
   type        = string
-  default     = "Standard_D4s_v5"
+  default     = "Standard_D2s_v3"
 
   validation {
     # Shape, not membership. The vCPU count is the first run of digits after
