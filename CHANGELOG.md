@@ -4,6 +4,26 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Changed
+
+- **`asm-azure-ha` stops overriding the core `vm_size` default; ASM HA now defaults to `Standard_D2s_v3` (2 vCPU), not `Standard_D4s_v5`.** The wrapper is the public API and forwards its own value, so while it carried a default of its own, **#104's quota fix never reached ASM HA callers at all** — they kept drawing `standardDSv5Family`, the pool Azure routinely grants a limit of `0` to a subscription that has never asked for it:
+
+  ```
+  409 OperationNotAllowed: exceeding approved standardDSv5Family Cores quota.
+  Location: northeurope, Current Limit: 0
+  ```
+
+  The VMs are created after the network, load balancer, Key Vault and database, so that lands about twelve minutes into an apply and leaves a part-built stack to tear down; clearing it needs a support request.
+
+  The override existed for a real reason — `hailbytes-asm/docs/HARDENING_GUIDE.md` set a 4 vCPU minimum, and the core's 2 vCPU would have shipped ASM under its own floor. ASM performance work has since brought that minimum down to 2 vCPU, which is what makes aligning correct here rather than merely tidy. **The HARDENING_GUIDE still documents 4 and needs updating to match.**
+
+  Two consequences, both stated in `docs/SKU_DEPLOYMENT_MATRIX.md`:
+
+  - **BREAKING for existing ASM HA deployments that do not pin `vm_size`.** Changing `vm_size` replaces the VM, so both nodes are replaced on the next apply after taking this ref, dropping from 4 vCPU to 2. Pin `vm_size = "Standard_D4s_v5"` to stay where you are, or set a size from measured load.
+  - ASM HA metered vCores drop from 8 to 4, which matches no purchasable SKU — the smallest, `HB-ESS`, is 8. `sat-azure-ha` already had this gap; ASM now shares it rather than introducing it.
+
+  This clears the last error from the wrapper-drift job, which had been failing on `main` since the check was tightened. It is now 0 errors.
+
 ### Added
 
 - **Terraform state that survives the session that created it: `quickstart/bootstrap-state-azure.sh`.** The quickstart ran `terraform init` with no backend, so state landed in `$HOME`. In Azure Cloud Shell that directory only survives if the session has a storage account mounted — an ephemeral session discards it, and the deployment carries on running with nothing describing it. A customer hit exactly this between phase 1 and phase 2 of an App Gateway rollout, and could not proceed.
