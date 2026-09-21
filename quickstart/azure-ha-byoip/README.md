@@ -45,59 +45,66 @@ The VMs have no public IP and the NSG opens no SSH, so `az vm run-command` via
 the Azure agent is the route in. Put that certificate in
 `appgw_backend_root_cert_pem`, set the PFX values, flip the flag, apply.
 
+> [!IMPORTANT]
+> **Phase 2 is a separate session, so the state has to outlive the first one.**
+> Configure a remote backend before phase 1, with
+> [`../bootstrap-state-azure.sh`](../bootstrap-state-azure.sh) or by hand. Local
+> state in an Azure Cloud Shell home directory does **not** survive a session
+> that ends between the two phases, and the deployment then carries on running
+> with nothing describing it. Recovering from that is
+> [`docs/AZURE_STATE_RECOVERY.md`](../../docs/AZURE_STATE_RECOVERY.md); not
+> needing to is one command up front.
+
 ```bash
 terraform apply
 terraform output dns_target                    # a DIFFERENT address -- move DNS
 ```
 
-## Five things that bite
+## Seven things that bite
 
-**The gateway has its own address, and one address cannot serve both.**
-`public_ip_id` fronts the load balancer; once the gateway is enabled it is the
-front door and the load balancer becomes an internal hop, so `dns_target`
-changes between phases. An Azure public IP attaches to **exactly one**
-resource, so the obvious fix — naming the same reserved address in both
-`public_ip_id` and `appgw_public_ip_id` — is not available. The module now
-refuses that pair at plan time; left to Azure it fails part-way through
-building the gateway with `PublicIPAddressCannotBeUsedBySeveralResources`, on
-the morning of the cutover.
+**The gateway has its own address, and on SAT you need both.** `public_ip_id`
+fronts the load balancer; `appgw_public_ip_id` fronts the gateway. The gateway
+does **not** sit in front of the load balancer — they are parallel entry points.
+The gateway carries one listener on 443 to the admin console; the load balancer
+carries `443 -> admin_port` **and** `80 -> phish_port` on a single frontend.
 
-Two ways to keep the hostname where it is. Cheapest first:
+So on SAT the load-balancer frontend has to stay public, because it is the only
+route to the phishing landing pages. `lb_frontend_public = false` fails a
+precondition for `product = "sat"` for exactly this reason. **Budget two
+reserved addresses and two hostnames**: one on the gateway for the console, one
+on the load balancer for the landing pages. Bound each with `allowed_cidrs` and
+`phish_allowed_cidrs` respectively.
 
-*Move the address you already have to the gateway.* Nothing addresses the load
-balancer by name once the gateway is in front of it, so which address it holds
-stops mattering. It takes **two applies**, because the address has to be
-released before it can be re-attached and Terraform cannot order that itself:
+`dns_target` reports the gateway frontend once the gateway is enabled, so it
+changes between phases and DNS has to follow it. Pin `appgw_public_ip_id` to a
+reserved address in advance if you would rather it did not move.
 
-In `terraform.tfvars` — not `-var`, which cannot express a null:
+**Do not free up the load balancer's address for the gateway.** Detaching it
+takes the console offline immediately and does not give the gateway anything it
+could not have had from a second reservation. Reattaching is one command:
 
-```hcl
-# apply 1: release it. The LB moves to an address of its own.
-public_ip_id               = null
-enable_application_gateway = false
-
-# apply 2: hand it to the gateway.
-public_ip_id               = null
-appgw_public_ip_id         = "/subscriptions/.../publicIPAddresses/<your reservation>"
-enable_application_gateway = true
+```bash
+az network lb frontend-ip update -g <rg> --lb-name <name-prefix>-lb \
+  --name frontend --public-ip-address <public-ip-id>
 ```
 
-Zero new reservations and no DNS change, at the cost of a few minutes between
-the two applies when the hostname resolves to a load balancer that no longer
-holds it.
-
-*Or reserve a second address* and set `appgw_public_ip_id` to it before phase 2.
-No downtime, at the cost of a second static IP and a second reservation
-request.
+**Naming one address in both is now refused at plan time.** An Azure public IP
+attaches to **exactly one** resource, so `public_ip_id` and `appgw_public_ip_id`
+cannot be the same id. It is a tempting thing to try precisely because it looks
+like the way to keep one hostname — and Azure refuses it part-way through
+building the gateway, with `PublicIPAddressCannotBeUsedBySeveralResources`, on
+the morning of the cutover. The tier module now refuses the pair during
+`terraform plan` instead. On SAT the answer is the two addresses above, not a
+handover.
 
 **Lock the address you cannot afford to lose.** Azure has **no undelete for a
 public IP** — a deleted one goes back to the pool and someone else can take it.
 An address reserved inside the deployment's own resource group goes with that
 group when a failed attempt is torn down, which is how one deployment lost the
-address its hostname resolved to. Reserve it in a **separate** resource group
-where possible, and set `enable_public_ip_delete_lock = true` for the addresses
-this root creates. The lock blocks deletion by anyone, `terraform destroy`
-included, so disable it in its own apply before a planned teardown.
+address its hostname resolved to. Reserve addresses in a **separate** resource
+group, and for the ones this root creates set `enable_public_ip_delete_lock =
+true`. The lock blocks deletion by anyone, `terraform destroy` included, so
+disable it in its own apply before a planned teardown.
 
 **Azure refuses a password-less PFX.** Several export paths produce one (an
 Azure App Service Certificate exports with an empty password). Add one:

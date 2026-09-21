@@ -122,7 +122,7 @@ check_contains "main.tf points at the secrets file instead" "$src" "comes from s
 printf '\nKey Vault naming avoids the 30-day purge-protection trap\n'
 # The vault name is what bites a PoC operator: purge protection plus a 30-day
 # soft-delete window means a same-named rebuild inside 30 days simply fails.
-kv_body="$(sed -n '/^pick_key_vault_name() {/,/^warn_about_redis_retirement() {/p' <<<"$src")"
+kv_body="$(sed -n '/^pick_key_vault_name() {/,/^pick_state_backend() {/p' <<<"$src")"
 check_contains "the wizard explains why the name matters" "$kv_body" "purge protection"
 check_contains "it offers a unique name for PoCs" "$kv_body" "KEY_VAULT_NAME="
 check_contains "it warns that changing it later replaces the vault" "$kv_body" "REPLACES the vault"
@@ -247,6 +247,56 @@ fi
 check_contains "admin CIDR lookup forces IPv4" "$src" "curl -4 -fsS"
 check_contains "warn_about_redis_retirement runs" "$main_body" "warn_about_redis_retirement"
 check_contains "key_vault_name reaches the generated config" "$src" "key_vault_name = "
+
+printf '\nTerraform state survives the session that created it\n'
+# The wizard used to run `terraform init` with no backend, leaving state in
+# $HOME. An ephemeral Azure Cloud Shell session discards that directory, and
+# the deployment then runs with nothing describing it -- recoverable only by
+# importing every resource by hand (docs/AZURE_STATE_RECOVERY.md).
+sb_body="$(sed -n '/^pick_state_backend() {/,/^# The cache this deploys/p' <<<"$src")"
+check_contains "the wizard offers a remote backend"   "$sb_body" "Store Terraform state remotely"
+check_contains "and says why the local default bites" "$sb_body" "ephemeral session discards it"
+check_contains "declining still gets a backup instruction" "$sb_body" "terraform.tfstate"
+check_contains "the wizard asks before the apply"     "$main_body" "pick_state_backend"
+
+# Order matters: the backend has to exist before init, or the first state write
+# lands locally and has to be migrated afterwards.
+check_contains "bootstrap runs from write_config, before init" "$wc_body" "bootstrap-state-azure.sh"
+check_contains "and a failure is survivable, not fatal"        "$wc_body" "Continue with local state?"
+
+# .gitignore used to be written ONLY in the external-db branch, so every other
+# deployment got a directory with state and .terraform and no .gitignore at all.
+gitignore_line="$(grep -n "printf 'secrets.auto.tfvars" <<<"$src" | head -1)"
+if [[ -n "$gitignore_line" ]] && [[ "$wc_body" == *"Unconditional:"* ]]; then
+  printf '  ok   .gitignore is written for every deployment, not just external-db\n'; pass=$((pass+1))
+else
+  printf '  FAIL .gitignore is still conditional on the database mode\n'; fail=$((fail+1))
+fi
+
+printf '\nThe state bootstrap script itself\n'
+BOOTSTRAP="${REPO}/quickstart/bootstrap-state-azure.sh"
+if [[ -x "$BOOTSTRAP" ]]; then
+  printf '  ok   bootstrap-state-azure.sh is executable\n'; pass=$((pass+1))
+else
+  printf '  FAIL bootstrap-state-azure.sh is missing or not executable\n'; fail=$((fail+1))
+fi
+# --print-only creates nothing, so this needs no Azure and no credentials.
+bt="$("$BOOTSTRAP" --print-only --account hbtfstatetest --key demo.tfstate 2>&1)"
+check_contains "it emits an azurerm backend block" "$bt" 'backend "azurerm"'
+check_contains "with the account it was given"     "$bt" 'storage_account_name = "hbtfstatetest"'
+check_contains "and the state key it was given"    "$bt" 'key                  = "demo.tfstate"'
+# Shared keys are disabled on the account it creates, so Entra auth is not
+# optional -- a backend block without it fails init with a 403 that names the
+# container rather than the cause.
+check_contains "and Entra auth, since shared keys are off" "$bt" "use_azuread_auth = true"
+bs="$(cat "$BOOTSTRAP")"
+check_contains "the account disables shared keys"  "$bs" "--allow-shared-key-access false"
+check_contains "and blocks public blob access"     "$bs" "--allow-blob-public-access false"
+check_contains "versioning is enabled for rollback" "$bs" "--enable-versioning true"
+check_contains "the state group gets a delete lock" "$bs" "CanNotDelete"
+# An Owner of the subscription is NOT a data-plane reader on a storage account.
+check_contains "the running identity is granted the data role" "$bs" "Storage Blob Data Contributor"
+check_contains "and propagation delay is retried, not failed" "$bs" "propagate"
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

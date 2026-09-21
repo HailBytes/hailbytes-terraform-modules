@@ -6,6 +6,16 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Terraform state that survives the session that created it: `quickstart/bootstrap-state-azure.sh`.** The quickstart ran `terraform init` with no backend, so state landed in `$HOME`. In Azure Cloud Shell that directory only survives if the session has a storage account mounted — an ephemeral session discards it, and the deployment carries on running with nothing describing it. A customer hit exactly this between phase 1 and phase 2 of an App Gateway rollout, and could not proceed.
+
+  The new script creates the state storage and writes the `backend.tf`, in one command, before the first apply. The account it creates is configured for that job specifically: blob versioning, so a bad state write can be rolled back; **shared keys disabled**, because the access key is a bearer credential for all of your infrastructure state, with `use_azuread_auth` and a `Storage Blob Data Contributor` grant to the running identity in its place — a subscription Owner is *not* a data-plane reader, and without the grant `init` fails with a 403 that names the container and not the cause; no public blob access; and a `CanNotDelete` lock on the state resource group. Role assignments are eventually consistent, so container creation retries rather than failing.
+
+  `deploy.sh` now asks, defaulting to yes, and runs it before `init`; a bootstrap failure is survivable rather than fatal. `azure-ha/cloudshell.sh` runs it unless `HB_SKIP_REMOTE_STATE` is set. Both degrade to a loud warning and a backup instruction rather than silently reverting to the old behaviour.
+
+- **`docs/AZURE_STATE_RECOVERY.md`: recovering a deployment whose state is gone.** Restoring service first and separately — a detached load-balancer public IP is one `az` command, and no Terraform decision should hold it up — then rebuild vs import, with rebuild as the default recommendation. It also states the three things that make the situation less dangerous than it reads: every generated secret is already in Key Vault, the database carries a `CanNotDelete` lock, and the VMs set `ignore_changes` on `source_image_reference` and `custom_data`.
+
+  The Key Vault detail is the useful one. `hailbytes-db-password`, `hailbytes-session-keys` and `hailbytes-admin-initial-password` are the only surviving copies of what `random_password` / `random_id` generated, so importing those resources from the vault is what makes a recovery rotate nothing. The page is honest that the `random` provider's importers do not reconstruct every argument, so a replacement diff is still possible, and says what each rotation actually costs.
+
 - **`key_vault_name_random_suffix` on the Azure HA and autoscale tiers, and their four product wrappers.** Appends a 6-character suffix, keyed on `resource_group_name` and `location`, to the derived Key Vault name.
 
   The derived name was `<name_prefix>kv` — unique per `name_prefix`, which is not the same as unique per deployment. Key Vault names are **globally unique**, the modules set `purge_protection_enabled = true` (the disk encryption set requires it), and a deleted vault reserves its name for **30 days** with no force-purge. So:
@@ -46,15 +56,21 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+- **`quickstart/deploy.sh` writes a `.gitignore` for every deployment.** It was written only on the external-database path, so every other deployment got a working directory holding state and `.terraform/` with nothing excluding them.
+
 - **`public_ip_id` and `appgw_public_ip_id` naming the same address is now refused at plan time.** An Azure public IP attaches to exactly **one** resource, so the load balancer and the Application Gateway cannot share the reserved address DNS already points at — even though that is the only shape in which the hostname never moves, and therefore the first thing an operator tries. Azure refuses it part-way through building the gateway:
 
   ```
   PublicIPAddressCannotBeUsedBySeveralResources
   ```
 
-  Both inputs are plain variables, so the clash is knowable at plan time. Caught there it costs nothing; caught at apply it leaves a half-built gateway to unpick, typically on the morning of a cutover. The precondition names both routes out: a second reserved address (no downtime, one more reservation), or moving the existing address to the gateway over two applies (no new reservation, no DNS change, a few minutes of downtime in between) — the address has to be released before it can be re-attached, and Terraform cannot order that itself.
+  Both inputs are plain variables, so the clash is knowable at plan time. Caught there it costs nothing; caught at apply it leaves a half-built gateway to unpick, typically on the morning of a cutover.
 
-- **A plan that will move DNS now says so.** New `check "gateway_frontend_address_moves_dns"` on the Azure HA tier: with `enable_application_gateway = true`, a caller-supplied `public_ip_id` and no `appgw_public_ip_id`, the gateway becomes the front door and creates an address of its own — so the A record registered against the reserved address now points at an internal hop. That is a legitimate configuration, and for a customer with no spare reservation it is the only one, so this warns rather than blocking. It stays silent when the load-balancer frontend is internal, where no public load-balancer address existed to point at.
+  **The message is product-aware, because the answer is.** On SAT the two frontends are not interchangeable: the gateway carries one listener on 443 to the admin console and has no port-80 path, while the load balancer carries `443 -> admin_port` **and** `80 -> phish_port` on a single frontend — so freeing the load balancer's address for the gateway takes the phishing landing pages off the internet. SAT gets told to reserve a second address. ASM, where the load balancer carries only the admin port, gets both routes including the two-apply handover. This is the same correction `azure-ha-byoip/README.md` received in #107, applied to the module's own error text so it cannot be read in isolation and get it wrong.
+
+- **A plan that will move DNS now says so.** New `check "gateway_frontend_address_moves_dns"` on the Azure HA tier: with `enable_application_gateway = true`, a caller-supplied `public_ip_id` and no `appgw_public_ip_id`, the gateway becomes the front door and creates an address of its own — so a record registered against the reserved address no longer reaches the console. That is a legitimate configuration, and on SAT it is the *correct* one, so this warns rather than blocking. It stays silent when the load-balancer frontend is internal, where no public load-balancer address existed to point at.
+
+  Product-aware for the same reason as above: SAT is told this is two hostnames rather than one moved record — the console on the gateway, the landing pages staying on the load balancer's address — and told explicitly not to free that address up. ASM is told to reserve an address for the gateway.
 
 - **Azure quickstarts and examples set `recover_soft_deleted_key_vaults = false`.** It defaults to `true`, and on `true` the provider will not create a Key Vault until it has checked whether a soft-deleted one already holds the name. That check is a **subscription-scoped** read:
 
@@ -74,6 +90,14 @@ All notable changes to this project are documented here. Format follows [Keep a 
   Fixed in `quickstart/azure-ha`, `quickstart/azure-single`, `quickstart/azure-ha-byoip` and the `single-vm` / `ha-hot-hot` / `unlimited-scale` Azure examples. The `network/azure` example is unchanged — it creates no vault. This lives in the caller's provider block, not in the modules, so anyone with their own root configuration should add it there too; `explain.sh` says so if they hit it.
 
 ### Changed
+
+- **`sweep-azure.sh imports` covers the whole deployment, not just the load balancer.** It previously emitted the resource group, the load balancer and its children, one diagnostic setting, the Key Vault and the vnet — roughly a tenth of what a tier module creates, which is not enough to reach a clean plan. It now also covers subnets and their NSG/NAT associations, NSGs and their rules, public IPs, NICs and their pool and NSG associations, VMs, extensions, disks and disk attachments, Redis with its private endpoint and DNS zones, Postgres with its configurations, database and lock, storage with its policy and containers, the App Gateway, the monitor stack, role assignments, and the `random_*` imports read back from Key Vault.
+
+  Two refusals are deliberate. It never invents an address for a resource it does not recognise — it warns instead, because an import under the wrong address stays silent until a later apply proposes to change the wrong thing. And it never emits an import for a public IP supplied through `public_ip_id` or `appgw_public_ip_id`: that address belongs to the customer, and adopting it would let a later `terraform destroy` delete it, which Azure cannot undo.
+
+  Addresses carrying an index or a `for_each` key are derived from the Azure resource name, and flagged where the derivation is not certain — VM ordering under a custom `vm_names`, and the `-lb-nsg` name that both the tier and network modules use.
+
+- **`quickstart/azure-ha-byoip/README.md` corrects what the App Gateway does to the load balancer.** It said the load balancer "becomes an internal hop" once the gateway is enabled. On SAT that is wrong and expensive: the gateway carries one listener on 443 to the admin console and has no port-80 path to the phishing server, so the load-balancer frontend has to stay public or the landing pages leave the internet. The page now says SAT needs **two** reserved addresses and two hostnames, and that freeing up the load balancer's address for the gateway takes the console down for nothing.
 
 - **`enable_pre_patch_run_command` now defaults to `false` on the Azure HA tier.** `azurerm_virtual_machine_run_command` **executes on create** — it does not merely register the script the way the `aws_ssm_document` it mirrors does. So a first apply ran a pre-patch backup against a brand-new, empty instance, at the one moment such a backup cannot be useful, and let any non-zero exit from it fail the whole deployment. On a customer's 2026-09-07 run that is exactly what happened: the script called an Azure CLI the marketplace image does not ship, exited 127 *after* writing a valid backup bundle, and took the apply red at resource 55 of 59 with every piece of infrastructure already built and working.
 

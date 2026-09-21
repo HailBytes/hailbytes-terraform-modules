@@ -619,10 +619,17 @@ variable "lb_frontend_public" {
 
 variable "appgw_public_ip_id" {
   # var.public_ip_id fronts the LOAD BALANCER. When the App Gateway is enabled
-  # the gateway is the front door and the LB becomes an internal hop, so a
-  # customer who brought their own IP found the console answering on a
-  # module-created address instead -- and DNS they had registered in advance
-  # pointed at the wrong place. This is the gateway's equivalent.
+  # the gateway is the front door for the ADMIN CONSOLE, so a customer who
+  # brought their own IP found the console answering on a module-created address
+  # instead -- and DNS they had registered in advance pointed at the wrong
+  # place. This is the gateway's equivalent.
+  #
+  # The load balancer does NOT become an internal hop. The two are PARALLEL
+  # entry points: the gateway has one listener on 443 to the admin console, and
+  # on SAT the load balancer still carries 80 -> phish_port for the landing
+  # pages on the same frontend it always had. Reading it as a hop is what led an
+  # operator to free up the load balancer's address for the gateway and take the
+  # phishing surface off the internet. On SAT, reserve TWO addresses.
   #
   # Same contract as public_ip_id: Static, Standard SKU, lifecycle stays the
   # caller's, so the address survives a terraform destroy and the DNS record

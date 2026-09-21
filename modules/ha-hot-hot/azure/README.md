@@ -180,11 +180,26 @@ address its hostname resolved to.
 A public IP also attaches to **exactly one** resource, so `public_ip_id` and
 `appgw_public_ip_id` cannot name the same address — the module refuses that pair
 at plan time rather than letting Azure fail part-way through building the
-gateway with `PublicIPAddressCannotBeUsedBySeveralResources`. To keep DNS
-pointing where it already points, hand the reserved address to the gateway and
-let the load balancer create its own: set `public_ip_id = null` and apply, then
-set `appgw_public_ip_id` and apply again. Two applies, because the address must
-be released before it can be re-attached and Terraform cannot order that itself.
+gateway with `PublicIPAddressCannotBeUsedBySeveralResources`.
+
+What to do about it **differs by product, and getting it wrong caused an
+outage**:
+
+- **SAT: reserve two addresses.** The two frontends are not interchangeable.
+  The gateway carries one listener on 443 to the admin console and has no
+  port-80 path; the load balancer carries `443 -> admin_port` **and**
+  `80 -> phish_port` on a single frontend. Freeing the load balancer's address
+  for the gateway takes the phishing landing pages off the internet. Budget two
+  reserved addresses and two hostnames — console on the gateway, landing pages
+  on the load balancer.
+- **ASM: either works.** The load balancer carries only the admin port, so
+  nothing addresses it once the gateway is up. Reserve a second address, or move
+  the existing one across in two applies (`public_ip_id = null`, apply; then set
+  `appgw_public_ip_id`, apply) — the address must be released before it can be
+  re-attached and Terraform cannot order that itself. `lb_frontend_public =
+  false` in the second apply is tidier still: the load balancer then needs no
+  public address at all.
+
 See [`quickstart/azure-ha-byoip`](../../../quickstart/azure-ha-byoip) for the
 worked version.
 

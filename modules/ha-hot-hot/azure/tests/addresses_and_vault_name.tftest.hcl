@@ -144,6 +144,72 @@ run "the_same_address_on_both_frontends_is_refused_at_plan_time" {
   expect_failures = [azurerm_application_gateway.main]
 }
 
+# The same clash on ASM, where the load balancer carries only the admin port.
+# Refused there too -- one address is still one resource -- but the advice that
+# comes with it differs, which is what the next run pins.
+run "the_same_address_is_refused_on_asm_as_well" {
+  command = plan
+
+  variables {
+    product                    = "asm"
+    enable_application_gateway = true
+    appgw_tls_pfx_base64       = "TU9DSw=="
+    appgw_tls_pfx_password     = "mock"
+    public_ip_id               = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-reserved-addresses/providers/Microsoft.Network/publicIPAddresses/reservation"
+    appgw_public_ip_id         = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-reserved-addresses/providers/Microsoft.Network/publicIPAddresses/reservation"
+  }
+
+  expect_failures = [azurerm_application_gateway.main]
+}
+
+# The advice attached to both of the above is product-aware, and that is not
+# cosmetic. Telling a SAT operator to free up the load balancer's address for
+# the gateway takes the phishing landing pages off the internet: the gateway has
+# one listener on 443 for the console and no port-80 path, while the load
+# balancer carries 443 -> admin_port AND 80 -> phish_port on one frontend.
+# Reading the load balancer as an "internal hop" once the gateway is up is
+# exactly the misconception that caused an outage, so assert the two messages
+# are actually different text rather than trusting they were written once.
+# https://learn.microsoft.com/en-us/azure/application-gateway/configuration-listeners
+run "the_clash_advice_differs_between_sat_and_asm" {
+  command = plan
+
+  variables {
+    product = "sat"
+  }
+
+  assert {
+    condition = strcontains(
+      local.appgw_address_clash_advice,
+      "RESERVE A SECOND ADDRESS"
+    )
+    error_message = "SAT must be told to reserve a second address, never to hand the load balancer's address to the gateway -- that takes the phishing landing pages off the internet."
+  }
+
+  assert {
+    condition     = !strcontains(local.appgw_address_clash_advice, "lb_frontend_public = false")
+    error_message = "The ASM-only handover advice must not reach a SAT operator: lb_frontend_public = false is refused for product = \"sat\" precisely because it takes the phishing surface internal."
+  }
+}
+
+run "asm_is_offered_the_handover_sat_is_not" {
+  command = plan
+
+  variables {
+    product = "asm"
+  }
+
+  assert {
+    condition     = strcontains(local.appgw_address_clash_advice, "lb_frontend_public = false")
+    error_message = "On ASM the load balancer carries only the admin port, so the handover is a legitimate route and should be offered."
+  }
+
+  assert {
+    condition     = !strcontains(local.appgw_address_clash_advice, "RESERVE A SECOND ADDRESS")
+    error_message = "ASM should not be pushed at a second reservation it does not need."
+  }
+}
+
 # Two distinct reserved addresses is the configuration that costs no DNS change
 # on the day, so it must plan clean.
 run "two_distinct_reserved_addresses_plan_clean" {

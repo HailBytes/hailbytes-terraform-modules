@@ -206,6 +206,7 @@ with the runbook in
 - [SECURITY.md](SECURITY.md) — responsible disclosure
 - [SECURITY-DEFAULTS.md](SECURITY-DEFAULTS.md) — encryption / IMDSv2 / IAM / NSG defaults baked into modules
 - [docs/PATCHING_AND_MIGRATION.md](docs/PATCHING_AND_MIGRATION.md) — pre-patch backups, rolling-replace, auto-rollback, DB mode toggle
+- [docs/AZURE_STATE_RECOVERY.md](docs/AZURE_STATE_RECOVERY.md) — recovering a deployment whose Terraform state was lost, and the remote backend that prevents it
 - [CHANGELOG.md](CHANGELOG.md) — release history
 
 ---

@@ -139,6 +139,42 @@ locals {
     var.tags,
   )
 
+  # What to tell an operator who has one reserved address and two frontends that
+  # both want it. Product-aware, and that is load-bearing rather than cosmetic:
+  # on SAT the gateway carries one listener on 443 for the admin console and has
+  # NO port-80 path, while the load balancer carries 443 -> admin_port AND
+  # 80 -> phish_port on a single frontend. So the load balancer does not become
+  # an internal hop when the gateway comes up, and freeing its address for the
+  # gateway takes the phishing landing pages off the internet. Reading it as a
+  # hop is what caused an outage; see quickstart/azure-ha-byoip/README.md.
+  appgw_address_clash_advice = (
+    var.product == "sat" ?
+    join("", [
+      "RESERVE A SECOND ADDRESS. On SAT the two frontends are not ",
+      "interchangeable and the load balancer's cannot be freed up: the gateway ",
+      "carries one listener on 443 to the admin console and has NO port-80 ",
+      "path, while the load balancer carries both 443 -> admin_port and ",
+      "80 -> phish_port on a single frontend. Hand its address to the gateway ",
+      "and the phishing landing pages leave the internet with it. SAT needs two ",
+      "reserved addresses and two hostnames: one on the gateway for the console ",
+      "(bounded by allowed_cidrs), one on the load balancer for the landing ",
+      "pages (bounded by phish_allowed_cidrs). See ",
+      "quickstart/azure-ha-byoip/README.md."
+    ]) :
+    join("", [
+      "On ASM the load balancer carries only the admin port, so either route ",
+      "works. Reserve a second address for the gateway (no downtime, one more ",
+      "reservation); or move this one to the gateway, which takes TWO applies ",
+      "because the address must be released before it can be re-attached and ",
+      "Terraform cannot order that itself: first apply with public_ip_id = null ",
+      "and enable_application_gateway = false, then apply with ",
+      "appgw_public_ip_id set to the reserved id and the gateway enabled. The ",
+      "console is unreachable on the hostname in between. Setting ",
+      "lb_frontend_public = false in the second apply is tidier still: the load ",
+      "balancer then needs no public address at all."
+    ])
+  )
+
   vm_count = 2
   vm_zones = ["1", "2"]
 
@@ -2027,29 +2063,13 @@ resource "azurerm_application_gateway" "main" {
         lower(coalesce(var.public_ip_id, "(none: lb)")) !=
         lower(coalesce(var.appgw_public_ip_id, "(none: appgw)"))
       )
-      error_message = <<-EOM
-        public_ip_id and appgw_public_ip_id are the same address. An Azure public
-        IP attaches to exactly one resource, so the load balancer and the gateway
-        cannot both hold it -- Azure refuses this part-way through the apply with
-        PublicIPAddressCannotBeUsedBySeveralResources.
-
-        To keep DNS pointing where it already points, hand the address to the
-        gateway and let the load balancer create its own. Nothing addresses the
-        load balancer by name once the gateway is in front of it, so which
-        address it holds stops mattering. It takes TWO applies, because the
-        address has to be released before it can be re-attached and Terraform
-        cannot order that itself:
-
-          1. public_ip_id = null, enable_application_gateway = false
-             -- the LB moves to a module-created address and releases yours.
-          2. appgw_public_ip_id = "<the reserved id>", enable_application_gateway = true
-
-        Between the two the console answers on the new load-balancer address,
-        so allow for a few minutes of downtime on the hostname.
-
-        The alternative is a SECOND reserved address for the gateway, which
-        costs a reservation and no downtime.
-      EOM
+      error_message = join("", [
+        "public_ip_id and appgw_public_ip_id are the same address. An Azure ",
+        "public IP attaches to exactly one resource, so the load balancer and ",
+        "the gateway cannot both hold it -- Azure refuses this part-way through ",
+        "the apply with PublicIPAddressCannotBeUsedBySeveralResources. ",
+        local.appgw_address_clash_advice
+      ])
     }
     precondition {
       condition     = var.appgw_tls_pfx_base64 != null && var.appgw_tls_pfx_password != null
@@ -2110,11 +2130,22 @@ check "gateway_frontend_address_moves_dns" {
       "reserved address will resolve to a load balancer that is no longer the entry ",
       "point, and has to be re-pointed at the address the load_balancer_public_ip ",
       "output reports once this apply finishes. ",
-      "To avoid the DNS change: either set appgw_public_ip_id to a second reserved ",
-      "address, or move the existing one to the gateway -- set public_ip_id = null ",
-      "so the load balancer creates its own, apply, then set appgw_public_ip_id to ",
-      "the reserved id and apply again (two applies, because one address cannot ",
-      "serve both frontends at once)."
+      var.product == "sat" ?
+      join("", [
+        "On SAT that is two hostnames, not one moved record: the load balancer ",
+        "keeps this address and stays public because it is the only route to the ",
+        "phishing landing pages on port 80, which the gateway has no listener ",
+        "for. Point the console hostname at the gateway and leave the phishing ",
+        "hostname on this address. Reserve an address for the gateway and set ",
+        "appgw_public_ip_id if you would rather the console record did not move ",
+        "on the day. Do NOT free this address up for the gateway -- that takes ",
+        "the landing pages off the internet."
+      ]) :
+      join("", [
+        "On ASM the load balancer carries only the admin port, so set ",
+        "appgw_public_ip_id to a reserved address to avoid the change -- either ",
+        "a second reservation, or this one released by a prior apply."
+      ])
     ])
   }
 }
