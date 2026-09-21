@@ -48,6 +48,17 @@ variable "key_vault_name" {
   }
 }
 
+variable "key_vault_name_random_suffix" {
+  # OPT-IN. Switching it on for a deployment that already has a vault plans a
+  # DESTROY and CREATE of it -- taking the database password, the session keys
+  # and the disk encryption key with it, and reserving the old name for 30 days
+  # so the module ref cannot simply be rolled back. New deployments should set
+  # it true; existing ones should set key_vault_name to the name they hold.
+  description = "Append a 6-character suffix, keyed on resource_group_name and location, to the derived Key Vault name. Set true on NEW deployments: Key Vault names are globally unique, so without it two stacks sharing a name_prefix (including any two callers on module defaults) collide, and destroying a stack or moving it to another resource group makes the next create fail with SoftDeletedVaultDoesNotExist for 30 days. Do NOT turn it on for an existing deployment -- it renames the vault, which destroys it; set key_vault_name to the current name instead. Ignored when key_vault_name is set."
+  type        = bool
+  default     = false
+}
+
 variable "key_vault_network_default_action" {
   description = "Default action for the Key Vault network ACL. 'Allow' preserves the pre-network-ACL behavior (public endpoint open, RBAC-gated); set 'Deny' once you've added the operator IP to key_vault_ip_rules and the Microsoft.KeyVault service endpoint on vm_subnet_id. AzureServices bypass is always on so the VMSS managed identity can read secrets either way."
   type        = string

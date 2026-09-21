@@ -18,11 +18,13 @@ variable "vm_subnet_id" {
 variable "db_delegated_subnet_id" {
   description = "Subnet delegated to Microsoft.DBforPostgreSQL/flexibleServers (vnet-integrated Postgres)."
   type        = string
+  default     = null
 }
 
 variable "private_dns_zone_id" {
   description = "Private DNS zone ID for postgres.database.azure.com (linked to the vnet)."
   type        = string
+  default     = null
 }
 
 variable "lb_subnet_id" {
@@ -61,6 +63,18 @@ variable "db_log_min_duration_ms" {
 
 variable "enable_db_delete_lock" {
   description = "Place a CanNotDelete management lock on the Flexible Server. Azure has no deletion_protection argument the way RDS does; this is the equivalent. It blocks deletion by ANYONE including terraform destroy, so leave it off for PoCs (a locked server makes destroy fail partway and leave a half-destroyed stack) and turn it on for production. Disable it in a separate apply before a planned teardown."
+  type        = bool
+  default     = false
+}
+
+variable "key_vault_name_random_suffix" {
+  description = "Append a 6-character suffix, keyed on resource_group_name and location, to the derived Key Vault name. Set true on NEW deployments: Key Vault names are globally unique, so without it two stacks sharing a name_prefix (including any two callers on module defaults) collide, and destroying a stack or moving it to another resource group makes the next create fail with SoftDeletedVaultDoesNotExist for 30 days. Do NOT turn it on for an existing deployment -- it renames the vault, which destroys it; set key_vault_name to the current name instead. Ignored when key_vault_name is set."
+  type        = bool
+  default     = false
+}
+
+variable "enable_public_ip_delete_lock" {
+  description = "Place a CanNotDelete management lock on the public IPs this module creates (the load-balancer frontend, and the Application Gateway frontend when enable_application_gateway = true). Azure has no undelete for a public IP -- a deleted address goes back to the pool and DNS has to be re-pointed at a new one. Same trade-off as enable_db_delete_lock: the lock blocks deletion by ANYONE including terraform destroy, so leave it off for PoCs and turn it on for production, disabling it in a separate apply before a planned teardown. Never applied to a caller-supplied public_ip_id or appgw_public_ip_id."
   type        = bool
   default     = false
 }
@@ -312,9 +326,9 @@ variable "backup_blob_noncurrent_expiration_days" {
 }
 
 variable "enable_pre_patch_run_command" {
-  description = "Install an Azure Run Command document named RunPrePatchBackup on the first SAT VM. Customers fire it from the Portal."
+  description = "Install an Azure Run Command named RunPrePatchBackup on the first VM, for customers to fire from the Portal before a patch. Default false. NOTE: azurerm_virtual_machine_run_command EXECUTES on create -- so enabling it on a FIRST apply runs a backup against an empty instance and lets that run decide whether the deployment succeeds. Enable it in a later apply instead, where the one execution it triggers happens against a live instance and is worth having."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "enable_application_gateway" {

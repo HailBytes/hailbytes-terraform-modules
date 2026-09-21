@@ -60,7 +60,7 @@ terraform apply
 terraform output dns_target                    # a DIFFERENT address -- move DNS
 ```
 
-## Five things that bite
+## Seven things that bite
 
 **The gateway has its own address, and on SAT you need both.** `public_ip_id`
 fronts the load balancer; `appgw_public_ip_id` fronts the gateway. The gateway
@@ -87,6 +87,24 @@ could not have had from a second reservation. Reattaching is one command:
 az network lb frontend-ip update -g <rg> --lb-name <name-prefix>-lb \
   --name frontend --public-ip-address <public-ip-id>
 ```
+
+**Naming one address in both is now refused at plan time.** An Azure public IP
+attaches to **exactly one** resource, so `public_ip_id` and `appgw_public_ip_id`
+cannot be the same id. It is a tempting thing to try precisely because it looks
+like the way to keep one hostname — and Azure refuses it part-way through
+building the gateway, with `PublicIPAddressCannotBeUsedBySeveralResources`, on
+the morning of the cutover. The tier module now refuses the pair during
+`terraform plan` instead. On SAT the answer is the two addresses above, not a
+handover.
+
+**Lock the address you cannot afford to lose.** Azure has **no undelete for a
+public IP** — a deleted one goes back to the pool and someone else can take it.
+An address reserved inside the deployment's own resource group goes with that
+group when a failed attempt is torn down, which is how one deployment lost the
+address its hostname resolved to. Reserve addresses in a **separate** resource
+group, and for the ones this root creates set `enable_public_ip_delete_lock =
+true`. The lock blocks deletion by anyone, `terraform destroy` included, so
+disable it in its own apply before a planned teardown.
 
 **Azure refuses a password-less PFX.** Several export paths produce one (an
 Azure App Service Certificate exports with an empty password). Add one:

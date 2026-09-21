@@ -18,7 +18,9 @@ module "this" {
   # Key Vault network ACL
   db_log_min_duration_ms           = var.db_log_min_duration_ms
   enable_db_delete_lock            = var.enable_db_delete_lock
+  enable_public_ip_delete_lock     = var.enable_public_ip_delete_lock
   key_vault_name                   = var.key_vault_name
+  key_vault_name_random_suffix     = var.key_vault_name_random_suffix
   key_vault_network_default_action = var.key_vault_network_default_action
   key_vault_ip_rules               = var.key_vault_ip_rules
   associate_vm_subnet_nsg          = var.associate_vm_subnet_nsg

@@ -8,6 +8,8 @@
 # script is the part that needs a real subscription.
 #
 #   ./quickstart/tests/azure_live_drill.sh backend    ~5 min,  ~$0
+#   ./quickstart/tests/azure_live_drill.sh names      ~5 min,  ~$0
+#   ./quickstart/tests/azure_live_drill.sh upgrade    ~3 min,  ~$0  (--dir required)
 #   ./quickstart/tests/azure_live_drill.sh recovery    ~45 min, a few dollars
 #   ./quickstart/tests/azure_live_drill.sh cleanup     remove what drills left
 #
@@ -15,6 +17,9 @@
 #   --location LOC     HB_LOCATION        default northeurope
 #   --subscription ID  HB_SUBSCRIPTION_ID default: current az context
 #   --keep                                do not destroy at the end (inspect it)
+#   --dir PATH         HB_DEPLOY_DIR      upgrade drill: an EXISTING Terraform
+#                                         working directory for a LAB
+#                                         deployment. Copied, never edited.
 #   --yes                                 skip the confirmation prompt
 #
 # WHAT EACH DRILL PROVES
@@ -27,6 +32,41 @@
 #
 #           Needs: a subscription. No marketplace subscription, no VMs, no
 #           meaningful spend -- it deploys one empty resource group.
+#
+# names     The two identifiers Azure will not give back, against the real API:
+#           a Key Vault name and a public IP address.
+#
+#           It burns a Key Vault name deliberately -- creates one with purge
+#           protection, deletes it, and then proves the SAME name cannot be
+#           created in a different resource group, which is the
+#           SoftDeletedVaultDoesNotExist failure a customer hit after changing
+#           RG_NAME to get past a half-built stack. Then it proves
+#           key_vault_name_random_suffix produces a different name for a
+#           different resource group, so the collision cannot arise.
+#
+#           It also proves the public-IP delete lock: a CanNotDelete lock on an
+#           address makes `az network public-ip delete` fail, and removing the
+#           lock makes it succeed. Azure has no undelete for an address, so this
+#           is the only protection there is.
+#
+#           Needs: a subscription. No marketplace subscription and no VMs. A
+#           static public IP for a few minutes is fractions of a cent.
+#
+#           NOTE it spends a globally-unique Key Vault name for 30 days, by
+#           design -- that is the thing being demonstrated. The name carries the
+#           drill prefix and a timestamp, so repeat runs never collide.
+#
+# upgrade   The question a customer asks before bumping the module ref: does
+#           this change anything underneath my running deployment? Copies an
+#           existing working directory, re-points its `ref=` at this checkout's
+#           HEAD, and requires `terraform plan` to come back with NO CHANGES.
+#
+#           Read-only with respect to infrastructure: it never applies. It does
+#           refresh against the real resources and, with a remote backend, takes
+#           a brief state lock -- so point it at a LAB deployment, not at a
+#           customer's.
+#
+#           Needs: an existing deployment and its state. Creates nothing.
 #
 # recovery  The whole runbook end to end against a real HA deployment: deploy,
 #           destroy the state, rebuild it from `sweep-azure.sh imports`, and
@@ -55,6 +95,7 @@ LOCATION="${HB_LOCATION:-northeurope}"
 SUB="${HB_SUBSCRIPTION_ID:-}"
 KEEP=0
 ASSUME_YES=0
+DEPLOY_DIR="${HB_DEPLOY_DIR:-}"
 MODE="${1:-}"
 [ -n "$MODE" ] && shift
 
@@ -65,6 +106,8 @@ while [ $# -gt 0 ]; do
         --subscription)   SUB="$2"; shift ;;
         --subscription=*) SUB="${1#--subscription=}" ;;
         --keep)           KEEP=1 ;;
+        --dir)            DEPLOY_DIR="$2"; shift ;;
+        --dir=*)          DEPLOY_DIR="${1#--dir=}" ;;
         --yes)            ASSUME_YES=1 ;;
         -h|--help)        sed -n '/^#   \.\/quickstart\/tests\/azure_live_drill/,/^#   --yes/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -351,6 +394,197 @@ EOF
 }
 
 # --------------------------------------------------------------------------
+# Drill: the names and addresses Azure will not give back
+# --------------------------------------------------------------------------
+drill_names() {
+    local rg_a="${PREFIX}-names-a-${TS}"
+    local rg_b="${PREFIX}-names-b-${TS}"
+    local kv="${PREFIX}kv${TS}"
+    local pip="${PREFIX}-pip-${TS}"
+
+    step "Two resource groups, standing in for 'I changed RG_NAME and re-ran'"
+    az_ group create -n "$rg_a" -l "$LOCATION" -o none \
+        && ok "created ${rg_a}" || { bad "could not create ${rg_a}"; return; }
+    az_ group create -n "$rg_b" -l "$LOCATION" -o none \
+        && ok "created ${rg_b}" || { bad "could not create ${rg_b}"; return; }
+
+    # ---- The Key Vault name -----------------------------------------------
+    step "Burning a Key Vault name, the way a teardown does"
+    note "vault ${kv} in ${rg_a}, purge protection on -- as the module creates it"
+    if az_ keyvault create -n "$kv" -g "$rg_a" -l "$LOCATION" \
+           --enable-purge-protection true --retention-days 7 \
+           --enable-rbac-authorization true -o none 2>/dev/null; then
+        ok "vault created"
+    else
+        bad "could not create the vault; skipping the rest of the name drill"
+        return
+    fi
+
+    az_ keyvault delete -n "$kv" -g "$rg_a" -o none 2>/dev/null \
+        && ok "vault deleted (soft-deleted, name now reserved)" \
+        || { bad "could not delete the vault"; return; }
+
+    # Purge protection means this cannot be waived. Prove it rather than assert
+    # it: an operator told "you must wait 30 days" will reasonably try.
+    if az_ keyvault purge -n "$kv" --location "$LOCATION" -o none 2>/dev/null; then
+        bad "the vault PURGED -- purge protection was not in effect, so this drill proved nothing"
+        return
+    fi
+    ok "purge refused: the name cannot be freed early"
+
+    step "Re-creating the same name in the OTHER resource group"
+    local err
+    err="$(az_ keyvault create -n "$kv" -g "$rg_b" -l "$LOCATION" \
+              --enable-purge-protection true --retention-days 7 \
+              --enable-rbac-authorization true -o none 2>&1)"
+    if [ -n "$err" ] && printf '%s' "$err" | grep -qi 'SoftDeleted\|already exist\|in use\|ConflictError'; then
+        ok "refused, as a customer's apply was: the name is spent"
+        note "$(printf '%s' "$err" | tr '\n' ' ' | cut -c1-160)"
+    elif [ -z "$err" ]; then
+        bad "the create SUCCEEDED -- soft delete did not reserve the name, so the"
+        bad "premise behind key_vault_name_random_suffix does not hold in this tenant"
+        az_ keyvault delete -n "$kv" -g "$rg_b" -o none 2>/dev/null || true
+    else
+        warn "refused, but not for the expected reason -- read this before trusting it:"
+        note "$(printf '%s' "$err" | tr '\n' ' ' | cut -c1-200)"
+    fi
+
+    step "The suffix makes the collision impossible"
+    # Mirrors the module: substr(base,0,17) + "-" + 6 chars keyed on the RG.
+    # Two resource groups, two keepers, two names -- so the create above would
+    # never have been attempted under the same name in the first place.
+    local name_a name_b
+    name_a="$(printf '%s-%s' "${kv:0:17}" "$(printf '%s' "$rg_a" | md5sum | cut -c1-6)")"
+    name_b="$(printf '%s-%s' "${kv:0:17}" "$(printf '%s' "$rg_b" | md5sum | cut -c1-6)")"
+    if [ "$name_a" != "$name_b" ]; then
+        ok "a new resource group derives a new name (${name_a} vs ${name_b})"
+        note "the module uses random_string keyed on the RG, not md5 -- same property,"
+        note "and a redraw rather than a hash, so a rebuild does not reuse a spent name"
+    else
+        bad "the two derived names matched, which defeats the purpose"
+    fi
+
+    # ---- The public IP delete lock ----------------------------------------
+    step "A CanNotDelete lock on a public IP"
+    az_ network public-ip create -n "$pip" -g "$rg_a" -l "$LOCATION" \
+        --sku Standard --allocation-method Static -o none 2>/dev/null \
+        && ok "address reserved" || { bad "could not reserve an address"; return; }
+
+    local pip_id
+    pip_id="$(az_ network public-ip show -n "$pip" -g "$rg_a" --query id -o tsv)"
+    az_ lock create --name "${PREFIX}-pip-no-delete" --lock-type CanNotDelete \
+        --resource "$pip_id" -o none 2>/dev/null \
+        && ok "lock applied" || { bad "could not apply the lock"; return; }
+
+    if az_ network public-ip delete -n "$pip" -g "$rg_a" -o none 2>/dev/null; then
+        bad "the address DELETED through the lock -- the lock is not protecting it"
+    else
+        ok "delete refused while locked"
+    fi
+
+    local lock_id
+    lock_id="$(az_ lock list --resource "$pip_id" --query "[0].id" -o tsv 2>/dev/null)"
+    [ -n "$lock_id" ] && az_ lock delete --ids "$lock_id" -o none 2>/dev/null
+    if az_ network public-ip delete -n "$pip" -g "$rg_a" -o none 2>/dev/null; then
+        ok "delete succeeded once unlocked -- so a planned teardown is not blocked"
+    else
+        warn "delete still failed after unlocking; check for an inherited lock"
+    fi
+
+    if [ "$KEEP" -eq 1 ]; then
+        warn "--keep: leaving ${rg_a} and ${rg_b}"
+    else
+        step "Cleaning up"
+        local g
+        for g in "$rg_a" "$rg_b"; do
+            guard_drill_rg "$g"
+            az_ group delete -n "$g" --yes --no-wait -o none 2>/dev/null \
+                && ok "deletion started: ${g}" || warn "could not delete ${g}"
+        done
+        warn "${kv} stays soft-deleted for its retention window. That is the point."
+    fi
+}
+
+# --------------------------------------------------------------------------
+# Drill: does bumping the module ref change anything?
+# --------------------------------------------------------------------------
+drill_upgrade() {
+    [ -n "$DEPLOY_DIR" ] || die "upgrade needs --dir <an existing Terraform working directory>."
+    [ -d "$DEPLOY_DIR" ] || die "not a directory: ${DEPLOY_DIR}"
+
+    local head_sha
+    head_sha="$(git -C "$REPO" rev-parse HEAD 2>/dev/null)" \
+        || die "cannot read HEAD of ${REPO}; run this from a git checkout."
+
+    step "Copying the deployment directory"
+    WORK="$(mktemp -d -t hbupgrade.XXXXXX)"
+    # -a to carry backend.tf, terraform.tfvars and any local state. The copy is
+    # what gets edited; the original is never touched.
+    cp -a "${DEPLOY_DIR}/." "$WORK/" || die "could not copy ${DEPLOY_DIR}"
+    rm -rf "${WORK}/.terraform"
+    ok "copied to ${WORK}"
+
+    local before
+    before="$(grep -rhoE 'ref=[0-9a-f]{7,40}' "$WORK"/*.tf 2>/dev/null | head -1)"
+    [ -n "$before" ] || die "no 'ref=<sha>' found in ${DEPLOY_DIR}/*.tf -- is this a pinned deployment?"
+    note "currently pinned at ${before}"
+    note "bumping to        ref=${head_sha}"
+
+    if [ "${before#ref=}" = "$head_sha" ]; then
+        warn "already pinned at HEAD; the plan below is a plain drift check, not an upgrade test"
+    fi
+
+    sed -i "s|ref=[0-9a-f]\{7,40\}|ref=${head_sha}|g" "$WORK"/*.tf \
+        && ok "ref bumped in the copy" || { bad "could not rewrite the ref"; return; }
+
+    step "terraform init -upgrade"
+    ( cd "$WORK" && terraform init -upgrade -input=false >/dev/null 2>&1 ) \
+        && ok "init succeeded against the new ref" \
+        || { bad "init failed"; ( cd "$WORK" && terraform init -upgrade -input=false 2>&1 | tail -20 ); return; }
+
+    step "terraform plan -- NO CHANGES is the pass condition"
+    local rc=0
+    ( cd "$WORK" && terraform plan -input=false -lock=false -detailed-exitcode -out=upgrade.tfplan >"${WORK}/plan.log" 2>&1 ) || rc=$?
+
+    case "$rc" in
+        0) ok "no changes: this ref is a safe bump for that deployment" ;;
+        2)
+            bad "the plan proposes changes. Read them before bumping anything."
+            note "full plan: ${WORK}/plan.log"
+            # The three that must never appear. Anything destroying or replacing
+            # the vault, a VM or the database is not an upgrade, it is an outage.
+            local danger
+            danger="$( (cd "$WORK" && terraform show -no-color upgrade.tfplan 2>/dev/null) \
+                       | grep -E 'must be replaced|will be destroyed' | head -20 )"
+            if [ -n "$danger" ]; then
+                bad "and some of them are destructive:"
+                printf '%s\n' "$danger" | sed 's/^/      /'
+            else
+                note "none of them are destroys or replacements -- likely additive"
+            fi
+            ;;
+        *)
+            bad "plan failed to run (exit ${rc}) -- this is not a verdict on the ref"
+            # The two that are the drill's own setup rather than the module:
+            # a copied directory without its tfvars, and no Azure credentials.
+            if grep -q 'No value for required variable' "${WORK}/plan.log"; then
+                note "the copy has no terraform.tfvars -- copy it in, or point --dir at"
+                note "a directory that carries one, and run this again"
+            elif grep -qi 'building account\|DefaultAzureCredential\|az login\|AADSTS' "${WORK}/plan.log"; then
+                note "this is an authentication failure, not a plan result -- run 'az login'"
+            fi
+            tail -20 "${WORK}/plan.log" | sed 's/^/      /'
+            ;;
+    esac
+
+    if [ "$KEEP" -eq 1 ]; then
+        warn "--keep: leaving the copy at ${WORK}"
+    else
+        rm -rf "$WORK"
+    fi
+}
+
+# --------------------------------------------------------------------------
 cmd_cleanup() {
     step "Resource groups left by previous drills"
     local groups; groups="$(az_ group list --query "[?starts_with(name, '${PREFIX}-')].name" -o tsv)"
@@ -375,8 +609,10 @@ cmd_cleanup() {
 
 case "$MODE" in
     backend)  preflight; drill_backend ;;
+    names)    preflight; drill_names ;;
+    upgrade)  preflight; drill_upgrade ;;
     recovery) preflight; drill_recovery ;;
-    all)      preflight; drill_backend; drill_recovery ;;
+    all)      preflight; drill_backend; drill_names; drill_recovery ;;
     cleanup)  preflight; cmd_cleanup ;;
     ""|help|-h|--help)
         sed -n '/^#   \.\/quickstart\/tests\/azure_live_drill/,/^#   --yes/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'

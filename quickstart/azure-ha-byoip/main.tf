@@ -140,7 +140,7 @@ variable "key_vault_reader_principal_ids" {
 # ----- Bring your own address -----
 
 variable "public_ip_id" {
-  description = "Resource ID of an existing Static, Standard-SKU public IP for the LOAD BALANCER frontend. Leave null and the module creates one. Its lifecycle stays yours, so the address survives a terraform destroy and the DNS record stays valid across a rebuild. NOTE: when enable_application_gateway = true the gateway is the front door and this becomes an internal hop -- point DNS at appgw_public_ip_id instead."
+  description = "Resource ID of an existing Static, Standard-SKU public IP for the LOAD BALANCER frontend. Leave null and the module creates one. Its lifecycle stays yours, so the address survives a terraform destroy and the DNS record stays valid across a rebuild. NOTE: when enable_application_gateway = true the gateway becomes the front door for the ADMIN CONSOLE -- point the console hostname at appgw_public_ip_id. This address is NOT freed up by that: on SAT the load balancer keeps carrying 80 -> phish_port for the landing pages, so it stays public and keeps this address. Reserve two addresses and use two hostnames; see README.md."
   type        = string
   default     = null
 }
@@ -275,6 +275,20 @@ module "hailbytes_sat" {
   marketplace_image_version = var.marketplace_image_version
 
   key_vault_reader_principal_ids = var.key_vault_reader_principal_ids
+
+  # Key Vault names are GLOBALLY unique, the vault carries purge protection, and
+  # a deleted name is reserved for 30 days with no force-purge. Derived from
+  # name_prefix alone this root would ask Azure for the same name as every other
+  # copy of it, and a rebuild inside 30 days would ask for a name its own
+  # teardown had just spent -- which fails as 400 SoftDeletedVaultDoesNotExist,
+  # an error that names recovery rather than reuse. The suffix is keyed on the
+  # resource group, so a new group always draws a new name.
+  #
+  # ALREADY APPLIED THIS ROOT? Do NOT add this to a live deployment: it renames
+  # the vault, and renaming destroys it along with the database password, the
+  # session keys and the disk encryption key. Set key_vault_name to the name you
+  # already hold instead.
+  key_vault_name_random_suffix = true
 
   public_ip_id       = var.public_ip_id
   appgw_public_ip_id = var.appgw_public_ip_id
