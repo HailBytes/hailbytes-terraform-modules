@@ -4,6 +4,14 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Documentation
+
+- **`MultiAzHaIsOfferRestricted` is not purely a subscription entitlement, and changing region can help.** The module, `explain.sh` and the quickstart README said the region always supports zone-redundant Postgres and only the subscription was missing a grant. Microsoft's answer to a North Europe request (September 2026) was that the region is capacity-restricted for new zone-redundant Flexible Server deployments. Azure grants it per subscription and per region, only where there is capacity. The `database_has_a_standby` check message, variable comments and the explainer's forwardable text now say that, and the forwarded request is filed as a quota request instead of arguing the premise.
+
+  New [docs/AZURE_POSTGRES_ZONE_REDUNDANT_HA.md](docs/AZURE_POSTGRES_ZONE_REDUNDANT_HA.md): how to file the request, the reply to send when Microsoft offers to keep it open (keep it open until fulfilled, ask which regions have capacity, escalate through the account team), the data-residency question to settle before anyone proposes moving region, and adding the standby later in place.
+
+- **`asm-azure-ha` / `sat-azure-ha`: `db_high_availability_mode` no longer describes `SameZone` as cheaper.** It bills the same as `ZoneRedundant`; the core module already said so.
+
 ### Security
 
 - **The Application Gateway subnet now gets an NSG, bounded by `allowed_cidrs`. Without it, enabling the gateway put the admin console on the internet.** Found on a live customer deployment: they ran phase 2, and the console became reachable from outside their allow-list.
