@@ -56,6 +56,7 @@ module "this" {
   enable_application_gateway             = var.enable_application_gateway
   public_ip_id                           = var.public_ip_id
   appgw_public_ip_id                     = var.appgw_public_ip_id
+  associate_appgw_subnet_nsg             = var.associate_appgw_subnet_nsg
   lb_frontend_public                     = var.lb_frontend_public
   key_vault_reader_principal_ids         = var.key_vault_reader_principal_ids
   appgw_subnet_id                        = var.appgw_subnet_id

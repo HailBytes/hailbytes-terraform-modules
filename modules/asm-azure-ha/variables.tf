@@ -384,6 +384,12 @@ variable "lb_frontend_public" {
   default     = true
 }
 
+variable "associate_appgw_subnet_nsg" {
+  description = "Create an NSG for the Application Gateway subnet, bounding inbound 443 to allowed_cidrs, and associate it with appgw_subnet_id. Default true. Without it the gateway is open to the internet on 443 even though allowed_cidrs bounds every other ingress -- and because the gateway subnet has to be in allowed_cidrs to reach the backends, that is a complete bypass of the allow-list. The NSG also carries the inbound GatewayManager rule on TCP 65200-65535 that Application Gateway v2 requires. Set false if your own tooling manages that subnet's ingress."
+  type        = bool
+  default     = true
+}
+
 variable "appgw_public_ip_id" {
   description = "Resource ID of an existing Static, Standard-SKU public IP for the Application Gateway frontend. Leave null and the module creates one. Ignored unless enable_application_gateway = true. public_ip_id fronts the load balancer; when the gateway is enabled it is the front door, so this is the one DNS points at."
   type        = string
