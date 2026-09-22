@@ -215,6 +215,11 @@ locals {
   backup_container_name       = "hailbytes-${var.product}-bundles"
 
   enable_application_gateway = var.enable_application_gateway
+
+  # Only when there is a gateway AND a subnet to attach to. appgw_subnet_id is
+  # null whenever the gateway is off, and a caller can opt out entirely when
+  # their landing zone owns subnet ingress.
+  manage_appgw_nsg = local.enable_application_gateway && var.associate_appgw_subnet_nsg && var.appgw_subnet_id != null
   # Customer-supplied gateway IP wins, same as the LB frontend above. Both are
   # behind counts, so index rather than attribute-access them.
   appgw_public_ip_id = (
@@ -1922,6 +1927,90 @@ resource "azurerm_management_lock" "appgw_pip" {
   scope      = azurerm_public_ip.appgw[0].id
   lock_level = "CanNotDelete"
   notes      = "HailBytes ${var.product} Application Gateway address -- the one DNS points at once the gateway is the front door. Azure cannot undelete a public IP. Remove this lock deliberately before a planned teardown; see enable_public_ip_delete_lock."
+}
+
+# ----- Application Gateway subnet NSG -----
+#
+# WITHOUT THIS, ENABLING THE GATEWAY PUTS THE ADMIN CONSOLE ON THE INTERNET, and
+# it does so silently. Found on a live customer deployment: they enabled the
+# gateway, and the console became reachable from outside their allow-list.
+#
+# The mechanism. allowed_cidrs is enforced by NSGs on the VM and load-balancer
+# subnets. The gateway lives in its own subnet, and until now nothing attached
+# an NSG to it -- so the gateway itself was open on 443 to the whole internet.
+# Worse, a caller wiring this up correctly has to ADD the gateway subnet to
+# allowed_cidrs, because the gateway reaches the backends from its own subnet
+# IPs and the AzureLoadBalancer service tag does not cover them. So the full
+# path was:
+#
+#   internet -> gateway (nothing filtering it) -> a subnet IP that IS on the
+#   VM allow-list -> VM admin_port
+#
+# Every input was doing its job; the composition was the hole.
+#
+# THE GATEWAYMANAGER RULE IS NOT OPTIONAL. Attaching any NSG brings the default
+# DenyAllInBound into play, and Application Gateway v2 requires inbound
+# GatewayManager on TCP 65200-65535 or Azure cannot report backend health and
+# the gateway goes Unknown. A bare deny-all here breaks the gateway, which is
+# why this creates the rule rather than leaving it to the caller.
+# https://learn.microsoft.com/en-us/azure/application-gateway/configuration-infrastructure
+#
+# AzureLoadBalancer inbound and outbound-to-internet are left to the NSG
+# defaults, which already permit them. Microsoft is explicit that neither
+# should be overridden with a Deny.
+resource "azurerm_network_security_group" "appgw" {
+  count = local.manage_appgw_nsg ? 1 : 0
+
+  name                = "${local.name_prefix}-appgw-nsg"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  tags                = local.common_tags
+}
+
+# Client traffic, bounded by the same list that bounds every other ingress.
+#
+# Note for callers that follow the documented composition: allowed_cidrs will
+# already contain the gateway's own subnet prefix, so one of these rules permits
+# the gateway subnet to reach the gateway. That is a no-op, not a hole.
+resource "azurerm_network_security_rule" "appgw_client_in" {
+  for_each = local.manage_appgw_nsg ? { for i, c in var.allowed_cidrs : tostring(i) => c } : {}
+
+  name                        = "allow-appgw-client-${each.key}"
+  priority                    = 100 + tonumber(each.key)
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "443"
+  source_address_prefix       = each.value
+  destination_address_prefix  = "*"
+  resource_group_name         = var.resource_group_name
+  network_security_group_name = azurerm_network_security_group.appgw[0].name
+}
+
+# Required by Azure. Priority is deliberately above the client block so that a
+# long allowed_cidrs list cannot collide with it.
+resource "azurerm_network_security_rule" "appgw_gatewaymanager_in" {
+  count = local.manage_appgw_nsg ? 1 : 0
+
+  name                        = "allow-gatewaymanager"
+  priority                    = 500
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "65200-65535"
+  source_address_prefix       = "GatewayManager"
+  destination_address_prefix  = "*"
+  resource_group_name         = var.resource_group_name
+  network_security_group_name = azurerm_network_security_group.appgw[0].name
+}
+
+resource "azurerm_subnet_network_security_group_association" "appgw" {
+  count = local.manage_appgw_nsg ? 1 : 0
+
+  subnet_id                 = var.appgw_subnet_id
+  network_security_group_id = azurerm_network_security_group.appgw[0].id
 }
 
 resource "azurerm_application_gateway" "main" {
