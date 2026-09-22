@@ -656,6 +656,22 @@ variable "key_vault_reader_principal_ids" {
   default     = []
 }
 
+variable "associate_appgw_subnet_nsg" {
+  # Default true, and it is a BREAKING change for any deployment that already
+  # runs the gateway: until now that subnet had no NSG at all, so the gateway
+  # answered the whole internet on 443 regardless of allowed_cidrs. Turning this
+  # on bounds it. A deployment that was (knowingly or not) relying on open
+  # access will stop serving clients outside allowed_cidrs on the next apply --
+  # which is the point.
+  #
+  # Set false only when your landing zone attaches its own NSG to that subnet.
+  # If you do, that NSG MUST allow inbound GatewayManager on TCP 65200-65535 or
+  # Azure cannot report backend health and the gateway goes Unknown.
+  description = "Create an NSG for the Application Gateway subnet, bounding inbound 443 to allowed_cidrs, and associate it with appgw_subnet_id. Default true. Without it the gateway is open to the internet on 443 even though allowed_cidrs bounds every other ingress -- and because the gateway subnet has to be in allowed_cidrs to reach the backends, that is a complete bypass of the allow-list. The NSG also carries the inbound GatewayManager rule on TCP 65200-65535 that Application Gateway v2 requires. Set false if your own tooling manages that subnet's ingress."
+  type        = bool
+  default     = true
+}
+
 variable "appgw_subnet_id" {
   # /24 is Microsoft's RECOMMENDATION, not a requirement. Their words: "Although
   # a /24 subnet isn't required per Application Gateway v2 SKU deployment, we

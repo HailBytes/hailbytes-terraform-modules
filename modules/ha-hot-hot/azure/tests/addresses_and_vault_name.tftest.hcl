@@ -298,3 +298,89 @@ run "the_pre_patch_backup_does_not_run_during_a_first_apply" {
     error_message = "The post-patch verifier stays on by default -- executing on create is useful there, because it fails an apply whose nodes are not serving."
   }
 }
+
+# ----- The App Gateway subnet is not a hole in allowed_cidrs -----
+#
+# Enabling the gateway used to put the admin console on the internet. allowed_cidrs
+# is enforced by NSGs on the VM and load-balancer subnets; the gateway sits in its
+# own subnet and nothing attached an NSG to it, so it answered 443 from anywhere.
+# And because the gateway reaches the backends from its own subnet IPs, a correct
+# caller has to put that subnet IN allowed_cidrs -- so the path
+# internet -> gateway -> allow-listed subnet IP -> VM was wide open. Found on a
+# live customer deployment.
+# https://learn.microsoft.com/en-us/azure/application-gateway/configuration-infrastructure
+run "no_gateway_nsg_when_there_is_no_gateway" {
+  command = plan
+
+  assert {
+    condition     = length(azurerm_network_security_group.appgw) == 0
+    error_message = "An Application Gateway NSG appeared with no gateway to protect."
+  }
+}
+
+run "the_gateway_subnet_is_bounded_by_allowed_cidrs" {
+  command = plan
+
+  variables {
+    enable_application_gateway = true
+    appgw_tls_pfx_base64       = "TU9DSw=="
+    appgw_tls_pfx_password     = "mock"
+    allowed_cidrs              = ["87.44.47.0/24", "10.30.11.0/24"]
+  }
+
+  assert {
+    condition     = length(azurerm_subnet_network_security_group_association.appgw) == 1
+    error_message = "The gateway subnet must get an NSG, or allowed_cidrs is bypassable through the gateway."
+  }
+
+  # One 443 rule per entry, sourced from the allow-list and nothing wider.
+  assert {
+    condition     = length(azurerm_network_security_rule.appgw_client_in) == 2
+    error_message = "Expected one inbound 443 rule per allowed_cidrs entry."
+  }
+  assert {
+    condition = alltrue([
+      for k, r in azurerm_network_security_rule.appgw_client_in :
+      r.source_address_prefix != "*" && r.source_address_prefix != "Internet" && r.destination_port_range == "443"
+    ])
+    error_message = "A gateway client rule is open to the internet -- that is the bug this exists to prevent."
+  }
+
+  # Attaching any NSG brings DenyAllInBound into play, and App Gateway v2 needs
+  # GatewayManager on 65200-65535 or Azure marks the backend health Unknown.
+  # Without this rule the fix would break the gateway it is protecting.
+  assert {
+    condition = (
+      azurerm_network_security_rule.appgw_gatewaymanager_in[0].source_address_prefix == "GatewayManager" &&
+      azurerm_network_security_rule.appgw_gatewaymanager_in[0].destination_port_range == "65200-65535" &&
+      azurerm_network_security_rule.appgw_gatewaymanager_in[0].access == "Allow"
+    )
+    error_message = "The GatewayManager rule is required by Azure; without it the gateway goes unhealthy."
+  }
+
+  # Its priority must sit clear of the client block so a long allow-list cannot
+  # collide with it.
+  assert {
+    condition = alltrue([
+      for k, r in azurerm_network_security_rule.appgw_client_in :
+      r.priority < azurerm_network_security_rule.appgw_gatewaymanager_in[0].priority
+    ])
+    error_message = "A client rule collides with the GatewayManager rule's priority."
+  }
+}
+
+run "a_caller_can_own_the_gateway_subnet_ingress" {
+  command = plan
+
+  variables {
+    enable_application_gateway = true
+    appgw_tls_pfx_base64       = "TU9DSw=="
+    appgw_tls_pfx_password     = "mock"
+    associate_appgw_subnet_nsg = false
+  }
+
+  assert {
+    condition     = length(azurerm_network_security_group.appgw) == 0 && length(azurerm_subnet_network_security_group_association.appgw) == 0
+    error_message = "associate_appgw_subnet_nsg = false must leave the subnet alone for landing-zone tooling."
+  }
+}

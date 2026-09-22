@@ -4,6 +4,23 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Security
+
+- **The Application Gateway subnet now gets an NSG, bounded by `allowed_cidrs`. Without it, enabling the gateway put the admin console on the internet.** Found on a live customer deployment: they ran phase 2, and the console became reachable from outside their allow-list.
+
+  Every input was doing its job; the composition was the hole. `allowed_cidrs` is enforced by NSGs on the **VM** and **load-balancer** subnets. The Application Gateway sits in its own subnet and nothing attached an NSG to it, so it answered 443 from anywhere. And because the gateway reaches the backends from its own subnet IPs — which the `AzureLoadBalancer` service tag does not cover — a caller wiring this up correctly has to put the gateway subnet **into** `allowed_cidrs`. So the full path was:
+
+  ```
+  internet -> gateway (nothing filtering it) -> a subnet IP that IS on the
+  VM allow-list -> VM admin_port
+  ```
+
+  New `associate_appgw_subnet_nsg` (default `true`) creates the NSG, allows inbound 443 from each `allowed_cidrs` entry, and associates it with `appgw_subnet_id`. Also plumbed through `asm-azure-ha` and `sat-azure-ha`.
+
+  **The GatewayManager rule is part of the fix, not a detail.** Attaching any NSG brings the default `DenyAllInBound` into play, and Application Gateway v2 requires inbound `GatewayManager` on TCP 65200-65535 or Azure cannot report backend health and the gateway goes `Unknown`. A bare deny-all would have broken the gateway it was protecting, so the module creates that rule itself rather than leaving it to the caller. `AzureLoadBalancer` inbound and outbound-to-internet are left to the NSG defaults, which Microsoft is explicit should not be overridden with a `Deny`. ([infrastructure configuration](https://learn.microsoft.com/en-us/azure/application-gateway/configuration-infrastructure))
+
+  **BREAKING for any deployment already running the gateway.** That subnet had no NSG, so the gateway served the whole internet on 443 regardless of `allowed_cidrs`. After this, it serves `allowed_cidrs` only — which is the point, but it will cut off anyone outside that list on the next apply. Set `associate_appgw_subnet_nsg = false` if your landing zone owns that subnet's ingress; if you do, that NSG must carry the GatewayManager rule itself.
+
 ### Changed
 
 - **`asm-azure-ha` stops overriding the core `vm_size` default; ASM HA now defaults to `Standard_D2s_v3` (2 vCPU), not `Standard_D4s_v5`.** The wrapper is the public API and forwards its own value, so while it carried a default of its own, **#104's quota fix never reached ASM HA callers at all** — they kept drawing `standardDSv5Family`, the pool Azure routinely grants a limit of `0` to a subscription that has never asked for it:
