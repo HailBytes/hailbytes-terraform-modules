@@ -1,7 +1,8 @@
 # Postgres HA mode, and the one value that has no azurerm representation.
 #
-# Zone-redundant Postgres is an OFFER ENTITLEMENT, not a regional capability. A
-# subscription without it fails roughly fifteen minutes into the create:
+# Zone-redundant Postgres is granted per subscription and per region, only
+# where the region has capacity. Without it the create fails roughly fifteen
+# minutes in:
 #
 #   Status: "MultiAzHaIsOfferRestricted"
 #   Multi-Zone HA is not supported in this region.

@@ -871,7 +871,7 @@ run_plan_and_apply() {
     # failure has to end with what to do about it, not with what the cloud
     # said. Several of these errors name the wrong cause outright: a Key
     # Vault error that is really RBAC scope, a "not supported in this region"
-    # that is really a subscription entitlement.
+    # that is really a per-subscription, per-region capacity grant.
     explain_or_tell apply.log
     note "Your configuration and log are in ${WORKDIR}."
     exit 1

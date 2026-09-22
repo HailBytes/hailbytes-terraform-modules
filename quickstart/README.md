@@ -164,7 +164,7 @@ That last part matters because some of these errors name the wrong cause:
 | The cloud says | The cause actually is |
 |---|---|
 | `SoftDeletedVaultDoesNotExist` on a Key Vault | RBAC scope — the provider's pre-create lookup is a subscription-scoped read that resource-group-scoped access cannot perform |
-| `Multi-Zone HA is not supported in this region` | A per-subscription offer entitlement. The region supports it; changing region does not help |
+| `Multi-Zone HA is not supported in this region` | Granted per subscription and per region, and only where the region has zonal capacity for Postgres. Having availability zones is not the same thing. See [AZURE_POSTGRES_ZONE_REDUNDANT_HA.md](../docs/AZURE_POSTGRES_ZONE_REDUNDANT_HA.md) |
 | `exceeding approved standardDSv5Family Cores quota` | Every Dsv5 size draws that one pool, so no Dsv5 size will work regardless of vCPU count |
 
 Each of those cost a customer round trip to diagnose before this existed.

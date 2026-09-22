@@ -227,7 +227,7 @@ variable "db_backup_retention_days" {
 }
 
 variable "db_high_availability_mode" {
-  description = "ZoneRedundant gives HA across availability zones; SameZone is cheaper but lower SLA."
+  description = "ZoneRedundant gives HA across availability zones; SameZone keeps the standby in the primary's zone (same cost, no zone-loss protection); Disabled has no standby."
   type        = string
   default     = "ZoneRedundant"
 }

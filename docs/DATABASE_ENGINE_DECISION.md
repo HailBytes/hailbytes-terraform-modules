@@ -110,7 +110,7 @@ number.
 
 **Azure has no equivalent worth chasing.** Flexible Server is the correct
 managed Postgres there, and Cosmos DB for PostgreSQL is the Citus case above.
-The Azure-side database work that pays off is the entitlement for
+The Azure-side database work that pays off is the grant for
 zone-redundant HA, not a different service.
 
 ---

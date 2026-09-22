@@ -291,10 +291,11 @@ variable "db_high_availability_mode" {
   # "Disabled" omits the high_availability block entirely -- azurerm has no
   # off switch for it, so the block is dynamic on this value.
   #
-  # Zone-redundant Postgres is an offer entitlement, not a regional capability.
+  # Zone-redundant Postgres is granted per subscription and per region, and
+  # only where the region has zonal capacity (docs/AZURE_POSTGRES_ZONE_REDUNDANT_HA.md).
   # A subscription without it fails ~15 minutes into the create with
-  # MultiAzHaIsOfferRestricted, and nothing in a plan can predict it. Check
-  # before deploying, per region:
+  # MultiAzHaIsOfferRestricted, and nothing in a plan can predict it. The
+  # catalogue is a first check, not a guarantee:
   #
   #   az postgres flexible-server list-skus -l <region> \
   #     --query "[?name=='<sku>'].capabilities" -o json
@@ -304,7 +305,7 @@ variable "db_high_availability_mode" {
   # becomes a restore-from-backup rather than a failover. Acceptable for a
   # pilot, a decision to make deliberately for production.
   #
-  # ADDING THE STANDBY LATER is the normal path when the entitlement arrives
+  # ADDING THE STANDBY LATER is the normal path when the grant arrives
   # after the deployment does, and it does NOT replace the server: switching
   # Disabled -> ZoneRedundant adds the high_availability block, which Azure
   # applies in place. `zone` is in the server's ignore_changes precisely so that
@@ -317,7 +318,7 @@ variable "db_high_availability_mode" {
   # SameZone is NOT the cheap option. The standby is a full server in both
   # modes, so both bill 2x compute and 2x storage; SameZone trades the
   # zone-loss SLA for lower replication latency.
-  description = "Postgres HA mode. ZoneRedundant gives a standby in another zone (requires the subscription to be entitled to it - see MultiAzHaIsOfferRestricted); SameZone puts the standby in the same zone, which costs the same and trades the zone-loss SLA for lower replication latency; Disabled omits HA entirely, which is the only option on a subscription without the zone-redundant offer. Switching Disabled -> ZoneRedundant later updates the server in place rather than replacing it."
+  description = "Postgres HA mode. ZoneRedundant gives a standby in another zone (requires Azure to grant it for this subscription and region - see MultiAzHaIsOfferRestricted); SameZone puts the standby in the same zone, which costs the same and trades the zone-loss SLA for lower replication latency; Disabled omits HA entirely, which is the only option until that grant arrives. Switching Disabled -> ZoneRedundant later updates the server in place rather than replacing it."
   type        = string
   default     = "ZoneRedundant"
 

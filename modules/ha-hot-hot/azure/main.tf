@@ -609,7 +609,7 @@ check "vm_subnet_is_lb_subnet_matches_ids" {
 # hears as "HA".
 #
 # db_high_availability_mode = "Disabled" is frequently not a choice: a
-# subscription that is not entitled to zone-redundant Postgres fails the create
+# subscription without zone-redundant Postgres in its region fails the create
 # about fifteen minutes in with MultiAzHaIsOfferRestricted, and the only way
 # past it today is to turn the standby off. That is a reasonable thing to do and
 # a terrible thing to do QUIETLY -- the resulting deployment is two app VMs
@@ -632,12 +632,12 @@ check "database_has_a_standby" {
       "tier is unaffected -- it is still hot-hot across zones 1 and 2 behind a ",
       "zone-redundant address -- but if this deployment was sold as HA, the ",
       "database is the part that is not. ",
-      "This is often forced rather than chosen: zone-redundant Postgres is a ",
-      "per-SUBSCRIPTION offer entitlement, and without it the create fails ~15 ",
-      "minutes in with MultiAzHaIsOfferRestricted, whose message blames the ",
-      "region rather than the subscription. Changing region does not help and ",
-      "no plan can detect it. ",
-      "To fix it properly, request the entitlement for this subscription, then ",
+      "This is often forced rather than chosen: Azure grants zone-redundant ",
+      "Postgres per subscription and per region, only where the region has ",
+      "capacity, and without it the create fails ~15 minutes in with ",
+      "MultiAzHaIsOfferRestricted. No plan can detect it. ",
+      "To fix it properly, file a quota request for this subscription and region ",
+      "(docs/AZURE_POSTGRES_ZONE_REDUNDANT_HA.md), then ",
       "set db_high_availability_mode = \"ZoneRedundant\" (it bills 2x compute ",
       "and 2x storage: the standby is a full server, and \"SameZone\" is not a ",
       "saving -- it costs the same and trades SLA for latency). ",
@@ -1261,10 +1261,11 @@ resource "azurerm_postgresql_flexible_server" "main" {
   #   Multi-Zone HA is not supported in this region. Please choose a different
   #   region. For exceptions to this rule please open a support request...
   #
-  # That is a per-subscription offer restriction, not a regional capability --
-  # North Europe supports it, this customer's subscription is not entitled to
-  # it. Terraform cannot see that at plan time, and it surfaces ~15 minutes
-  # into the create, after the server has been accepted.
+  # Azure grants zone-redundant Flexible Server per subscription and per
+  # region, and only where the region has zonal capacity: in September 2026
+  # Microsoft declined a North Europe request as capacity-restricted. Terraform
+  # cannot see either at plan time, and it surfaces ~15 minutes into the
+  # create, after the server has been accepted.
   dynamic "high_availability" {
     for_each = var.db_high_availability_mode == "Disabled" ? [] : [1]
     content {

@@ -297,7 +297,7 @@ Resources that commonly still differ:
 - `expiration_date` on the three Key Vault secrets — covered by
   `ignore_changes`, so it should settle on a second plan.
 - `db_high_availability_mode` — if HA was disabled at deploy time because of a
-  subscription entitlement, the variable must say `"Disabled"` or the plan
+  missing zone-redundant capacity grant, the variable must say `"Disabled"` or the plan
   proposes to add a standby.
 - `marketplace_image_version` — floats on `"latest"`, but `ignore_changes` on
   `source_image_reference` means it should not surface.

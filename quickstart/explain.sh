@@ -12,9 +12,9 @@
 #   * "SoftDeletedVaultDoesNotExist" on a Key Vault. Nothing to do with soft
 #     delete. The provider's pre-create lookup is a subscription-scoped read
 #     that an operator with resource-group-scoped access cannot perform.
-#   * "Multi-Zone HA is not supported in this region" on Postgres. The region
-#     supports it fine; that subscription is not entitled to it. Changing
-#     region does not help.
+#   * "Multi-Zone HA is not supported in this region" on Postgres. Azure
+#     grants it per subscription and per region, only where the region has
+#     capacity, and it takes a quota request, not a different config.
 #
 # Each of those cost a round trip with a customer to work out. A round trip
 # costs a day, and most people who hit a wall never open one — they just stop.
@@ -271,17 +271,18 @@ fi
 if has "MultiAzHaIsOfferRestricted"; then
     hit "Database: zone-redundant HA is not enabled on this subscription"
     does "The message says 'not supported in this region'. That is misleading:"
-    cont "the region does support it, this SUBSCRIPTION is not entitled to it."
-    cont "Changing region will not help, and no plan can see it in advance."
+    cont "Azure grants it per subscription AND per region, and only where the"
+    cont "region has capacity for it. No plan can see either in advance."
     printf '\n'
-    who "You, by turning it off — or an admin, by requesting the entitlement."
+    who "You, by turning it off — or an admin, by filing a quota request."
     do_ "To get a working deployment now:"
     cmd 'db_high_availability_mode = "Disabled"'
     cont "The application VMs stay hot-hot across zones either way. What this"
     cont "gives up is the DATABASE standby: losing a zone becomes a restore"
     cont "rather than an automatic failover."
     printf '\n'
-    do_ "To keep database HA instead, forward this:"
+    do_ "To keep database HA instead, forward this (full guide:"
+    cont "docs/AZURE_POSTGRES_ZONE_REDUNDANT_HA.md):"
     printf '\n'
     fwd "Hello,"
     fwd ""
@@ -290,9 +291,10 @@ if has "MultiAzHaIsOfferRestricted"; then
     fwd "our subscription."
     fwd ""
     fwd "Azure returns MultiAzHaIsOfferRestricted with the message \"Multi-Zone"
-    fwd "HA is not supported in this region\". That message is misleading — the"
-    fwd "region supports it, our subscription is not entitled. It is a"
-    fwd "per-subscription offer entitlement, so changing region will not help."
+    fwd "HA is not supported in this region\". File it as a quota request"
+    fwd "(Service and subscription limits) for our subscription and region. If"
+    fwd "Microsoft says the region is capacity-restricted, ask to keep the"
+    fwd "request open until fulfilled, and which regions have capacity now."
     fwd ""
     fwd "Thank you."
 fi
