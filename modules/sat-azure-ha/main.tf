@@ -63,6 +63,7 @@ module "this" {
   appgw_tls_pfx_base64                   = var.appgw_tls_pfx_base64
   appgw_tls_pfx_password                 = var.appgw_tls_pfx_password
   appgw_backend_host_header              = var.appgw_backend_host_header
+  admin_public_url                       = var.admin_public_url
   waf_policy_id                          = var.waf_policy_id
   alert_email                            = var.alert_email
   refresh_rollback_5xx_count_threshold   = var.refresh_rollback_5xx_count_threshold

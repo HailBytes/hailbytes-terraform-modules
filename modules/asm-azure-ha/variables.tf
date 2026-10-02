@@ -416,6 +416,16 @@ variable "appgw_tls_pfx_password" {
   sensitive   = true
 }
 
+variable "admin_public_url" {
+  description = "Origin users reach the SAT console on, e.g. \"https://sat.example.com\" -- the App Gateway or load-balancer hostname, no path. The image builds SSO (Entra ID / Google) and SAML callback URLs from it; left null they fall back to the VM listen address (https://0.0.0.0:3333), which no identity provider can redirect to. Delivered in custom_data, which is in ignore_changes: setting it on a running deployment takes effect on each VM's next -replace (the rolling procedure in docs/AZURE_PATCHING_AND_MIGRATION.md), never as an in-place change. Requires a SAT image that reads HAILBYTES_SAT_ADMIN_PUBLIC_URL; older images ignore it."
+  type        = string
+  default     = null
+  validation {
+    condition     = var.admin_public_url == null || can(regex("^https?://[A-Za-z0-9.-]+(:[0-9]+)?/?$", var.admin_public_url))
+    error_message = "admin_public_url must be a bare origin such as https://sat.example.com (scheme and host, optional port, no path)."
+  }
+}
+
 variable "appgw_backend_host_header" {
   description = "Optional Host header App Gateway sends to the SAT backend pool. Leave null to use the backend's IP."
   type        = string

@@ -1044,6 +1044,9 @@ resource "azurerm_linux_virtual_machine" "vm" {
       # Azure Cache for Redis requires an access key. The VM reads it from the
       # same Key Vault as the DB password; only the secret name travels here.
       redis_secret_name = local.provision_managed_redis ? local.redis_secret_name : null
+      # Console origin for SSO/SAML callback URLs; bootstrap writes it to
+      # HAILBYTES_SAT_ADMIN_PUBLIC_URL. Null when unset.
+      admin_public_url = var.admin_public_url
     }
   }))
 

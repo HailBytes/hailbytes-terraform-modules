@@ -4,6 +4,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- **`asm-azure-ha` / `sat-azure-ha`: new `admin_public_url`, the origin users reach the console on (e.g. `https://sat.example.com`).** Behind the Application Gateway, SAT built SSO callback URLs from the VM listen address, so Entra ID sign-in failed: `redirect_uri=https://0.0.0.0:3333/sso/callback/microsoft` got `AADSTS900971`, and rewriting it at the gateway only moved the failure to the token exchange (`AADSTS500112`). The value travels in `custom_data`, the SAT bootstrap writes it to `HAILBYTES_SAT_ADMIN_PUBLIC_URL` on every boot, and the binary builds its SSO and SAML callbacks from it. Needs a SAT image that reads that variable; older images ignore it.
+
+  Defaults to `null`. `custom_data` is in `ignore_changes`, so setting it on a running deployment plans clean and replaces nothing: it reaches each VM on that VM's next `-replace`, which is the rolling procedure in [docs/AZURE_PATCHING_AND_MIGRATION.md](docs/AZURE_PATCHING_AND_MIGRATION.md).
+
 ### Documentation
 
 - **`MultiAzHaIsOfferRestricted` is not purely a subscription entitlement, and changing region can help.** The module, `explain.sh` and the quickstart README said the region always supports zone-redundant Postgres and only the subscription was missing a grant. Microsoft's answer to a North Europe request (September 2026) was that the region is capacity-restricted for new zone-redundant Flexible Server deployments. Azure grants it per subscription and per region, only where there is capacity. The `database_has_a_standby` check message, variable comments and the explainer's forwardable text now say that, and the forwarded request is filed as a quota request instead of arguing the premise.
