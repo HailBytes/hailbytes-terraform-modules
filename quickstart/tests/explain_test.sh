@@ -54,9 +54,9 @@ echo "explain.sh"
 
 # --- Key Vault soft delete -- verbatim from a customer log, 2026-09-07 -------
 cat > "$WORK/kv.log" <<'EOF'
-Error: creating Key Vault (Subscription: "3868e0d4-f365-4798-bf18-ff22be2bccfa"
-Resource Group Name: "simsphishing-rg-X-08"
-Key Vault Name: "kv-simsphishing-6a8a4y"): performing CreateOrUpdate: unexpected status 400 (400 Bad Request) with error: SoftDeletedVaultDoesNotExist: A soft deleted vault with the given name does not exist. Ensure that the name for the vault that is being attempted to recover is in a recoverable state.
+Error: creating Key Vault (Subscription: "00000000-0000-0000-0000-000000000000"
+Resource Group Name: "examplephish-rg-X-08"
+Key Vault Name: "kv-examplephish-6a8a4y"): performing CreateOrUpdate: unexpected status 400 (400 Bad Request) with error: SoftDeletedVaultDoesNotExist: A soft deleted vault with the given name does not exist. Ensure that the name for the vault that is being attempted to recover is in a recoverable state.
 
   with module.hailbytes_sat.module.this.azurerm_key_vault.main,
 EOF
@@ -68,11 +68,11 @@ has "key vault: says no admin is needed"               "No admin needed" "$o"
 
 # --- Azure RBAC refusal -- the action and scope must be parsed back out ------
 cat > "$WORK/rbac.log" <<'EOF'
-Error: authorization.RoleAssignmentsClient#Create: Failure responding to request: StatusCode=403 -- Original Error: autorest/azure: Service returned an error. Status=403 Code="AuthorizationFailed" Message="The client 'jordan@example.ie' with object id 'dd4a5844-d123-4f06-9d45-ecc369f1fbe7' does not have authorization to perform action 'Microsoft.Authorization/roleAssignments/write' over scope '/subscriptions/3868e0d4-f365-4798-bf18-ff22be2bccfa/resourceGroups/rg-x/providers/Microsoft.KeyVault/vaults/kv-x' or the scope is invalid."
+Error: authorization.RoleAssignmentsClient#Create: Failure responding to request: StatusCode=403 -- Original Error: autorest/azure: Service returned an error. Status=403 Code="AuthorizationFailed" Message="The client 'jordan@example.ie' with object id 'dd4a5844-d123-4f06-9d45-ecc369f1fbe7' does not have authorization to perform action 'Microsoft.Authorization/roleAssignments/write' over scope '/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-x/providers/Microsoft.KeyVault/vaults/kv-x' or the scope is invalid."
 EOF
 o="$(bash "$EXPLAIN" "$WORK/rbac.log" 2>&1)"
 has "rbac: extracts the refused action"   "Microsoft.Authorization/roleAssignments/write" "$o"
-has "rbac: extracts the scope"            "/subscriptions/3868e0d4-f365-4798-bf18-ff22be2bccfa/resourceGroups/rg-x/providers/Microsoft.KeyVault/vaults/kv-x" "$o"
+has "rbac: extracts the scope"            "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-x/providers/Microsoft.KeyVault/vaults/kv-x" "$o"
 has "rbac: emits a forwardable request"   "A deployment I am running was refused" "$o"
 # The distinction that cost this project several days: portal shows "Owner",
 # scoped to a resource group, and subscription-scoped actions still fail.
@@ -125,6 +125,20 @@ o="$(bash "$EXPLAIN" "$WORK/exists.log" 2>&1)"
 has "leftovers: points at the sweep tool" "sweep-azure.sh list" "$o"
 has "leftovers: names the billing cost of bumping the name" "KEEP BILLING" "$o"
 has "leftovers: says it is not a permissions problem" "not a permissions problem" "$o"
+
+# --- Marketplace terms already accepted --------------------------------------
+# Built from the provider's own ImportAsExistsError format and the agreement's
+# resource ID shape (terraform-provider-azurerm marketplace_agreement_resource.go),
+# not pasted from a customer log: no deployment has hit it yet, because every
+# one so far was the first in its subscription.
+cat > "$WORK/terms_exist.log" <<'EOF'
+Error: A resource with the ID "/subscriptions/00000000-0000-0000-0000-000000000000/providers/Microsoft.MarketplaceOrdering/agreements/lcmcon1687976613543/offers/gophish-phishing-simulator/plans/standard-v2" already exists - to be managed via Terraform this resource needs to be imported into the State. Please see the resource documentation for "azurerm_marketplace_agreement" for more information.
+EOF
+o="$(bash "$EXPLAIN" "$WORK/terms_exist.log" 2>&1)"
+has   "terms exist: says it is per subscription"    "per subscription" "$o"
+has   "terms exist: names the variable to set"      "accept_marketplace_terms = false" "$o"
+has   "terms exist: warns against importing"        "CANCELS the terms" "$o"
+hasnt "terms exist: does not send them to delete a resource group" "sweep-azure.sh delete" "$o"
 
 # --- Postgres HA entitlement ------------------------------------------------
 cat > "$WORK/ha.log" <<'EOF'
