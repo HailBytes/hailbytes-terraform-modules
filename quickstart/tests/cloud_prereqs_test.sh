@@ -213,7 +213,14 @@ aws() {
       return 0
       ;;
     "ec2 describe-images") echo "None" ;;
-    "service-quotas get-service-quota") echo "64.0" ;;
+    "ec2 describe-addresses") [ "$scenario" = eips_full ] && echo 4 || echo 1 ;;
+    "ec2 describe-vpcs") echo 2 ;;
+    "service-quotas get-service-quota")
+      case "$*" in
+        *L-0263D0A3*|*L-F678F1CE*) echo "5.0" ;;
+        *) echo "64.0" ;;
+      esac
+      ;;
     *) echo "MOCK aws: unhandled invocation: $*" >&2; return 1 ;;
   esac
 }
@@ -269,6 +276,25 @@ run "rejects an unknown tier"         2 happy       bash "${REPO}/quickstart/pre
 run "single tier needs no SLRs"       0 happy       bash "${REPO}/quickstart/preflight-aws.sh" single
 run "ha tier, all missing -> creates" 0 all_missing bash "${REPO}/quickstart/preflight-aws.sh" ha
 run "ha tier, one cannot be created"  1 fail_create bash "${REPO}/quickstart/preflight-aws.sh" ha
+run "rejects an unknown aws flag"     2 happy       bash "${REPO}/quickstart/preflight-aws.sh" ha --nope
+run "rejects aws --max-count 0"      2 happy       bash "${REPO}/quickstart/preflight-aws.sh" autoscale --max-count 0
+
+# Elastic IPs: an HA deployment needs two (a NAT gateway per AZ). The mock's
+# eips_full scenario has 4 of 5 used, which must be flagged; happy has 1 of 5.
+out="$( export MOCK_SCENARIO=eips_full; bash "${REPO}/quickstart/preflight-aws.sh" ha 2>&1 )"
+check "aws: flags too few Elastic IPs for an HA deployment" \
+  "$(grep -c 'NOT ENOUGH. Request an increase in Service Quotas' <<<"$out")" "1"
+out="$( export MOCK_SCENARIO=happy; bash "${REPO}/quickstart/preflight-aws.sh" ha 2>&1 )"
+check "aws: reports Elastic IP headroom when there is room" \
+  "$(grep -c 'Elastic IPs: 1 used of 5 -- this deployment needs 2.' <<<"$out")" "1"
+check "aws: says a visible AMI does not prove the subscription" \
+  "$(grep -c 'does NOT' <<<"$out")" "1"
+out="$( export MOCK_SCENARIO=happy; bash "${REPO}/quickstart/preflight-aws.sh" autoscale --max-count 6 --instance-type m6i.xlarge 2>&1 )"
+check "aws autoscale: vCPU need is max-count x the type's vCPUs" \
+  "$(grep -c 'so it needs 24 vCPUs' <<<"$out")" "1"
+out="$( export MOCK_SCENARIO=happy; bash "${REPO}/quickstart/preflight-aws.sh" single 2>&1 )"
+check "aws single: needs no Elastic IPs (no NAT gateway in the quickstart)" \
+  "$(grep -c 'Elastic IPs: 1 used of 5 -- this deployment needs 0.' <<<"$out")" "1"
 
 printf '\npreflight-azure.sh, run as a real subprocess against the mock\n'
 run "rejects an unknown tier"            2 happy   bash "${REPO}/quickstart/preflight-azure.sh" bogus
@@ -279,6 +305,8 @@ run "single tier, everything green"      0 happy   bash "${REPO}/quickstart/pref
 run "autoscale tier, everything green"   0 happy   bash "${REPO}/quickstart/preflight-azure.sh" autoscale --location northeurope
 run "rejects --max-count 0"              2 happy   bash "${REPO}/quickstart/preflight-azure.sh" autoscale --max-count 0
 run "rejects --max-count with no value"  2 happy   bash "${REPO}/quickstart/preflight-azure.sh" autoscale --max-count
+run "asm product, everything green"     0 happy   bash "${REPO}/quickstart/preflight-azure.sh" ha --product asm
+run "rejects an unknown --product"       2 happy   bash "${REPO}/quickstart/preflight-azure.sh" ha --product bogus
 run "reports rather than fails: no image"    0 no_image bash "${REPO}/quickstart/preflight-azure.sh" ha
 run "reports rather than fails: no zone 2"   0 no_zones bash "${REPO}/quickstart/preflight-azure.sh" ha
 run "reports rather than fails: short quota" 0 no_quota bash "${REPO}/quickstart/preflight-azure.sh" ha
@@ -315,6 +343,17 @@ check "an unavailable image says the region is the problem" \
 out="$(azure_out no_zones)"
 check "a missing zone names the zone and the consequence" \
   "$(grep -c 'zone 2 is not available' <<<"$out")" "1"
+
+# --product picks the listing, and the offer it checks must be the one the
+# modules deploy -- read from the module rather than typed here, so the two
+# cannot drift apart silently.
+for p in sat asm; do
+  mod_offer="$(sed -n "/^    ${p} = {/,/^    }/p" "${REPO}/modules/ha-hot-hot/azure/main.tf" \
+    | sed -n 's/^ *offer *= *"\(.*\)"$/\1/p' | head -1)"
+  out="$( export MOCK_SCENARIO=happy; bash "${REPO}/quickstart/preflight-azure.sh" ha --product "$p" 2>&1 )"
+  check "--product ${p} checks the module's offer (${mod_offer:-unread})" \
+    "$(grep -c "Offer: lcmcon1687976613543:${mod_offer}:standard-v2" <<<"$out")" "1"
+done
 
 # Autoscale: the scale set spans zones 1-3, and quota is sized for the ceiling.
 # The mock's no_zones scenario offers 1 and 3, so zone 2 is the one to flag.

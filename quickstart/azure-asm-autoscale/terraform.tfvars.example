@@ -1,0 +1,27 @@
+# Copy to terraform.tfvars and fill in the two REPLACE values.
+# Everything else has a sensible default; override only if needed.
+
+# REQUIRED: who may reach the admin UI over HTTPS.
+allowed_cidrs = ["REPLACE.WITH.YOUR.IP/32"]
+
+# REQUIRED: contents of your SSH public key file.
+ssh_public_key = "ssh-ed25519 AAAA...REPLACE user@host"
+
+
+# MSSPs: one deployment per client. Prefixes every resource, tags it
+# customer=<name>, and stops Terraform owning the subscription-wide Marketplace
+# terms (accept them once with ../preflight-azure.sh autoscale --product asm --accept-terms).
+# customer = "acme"
+
+# Scale. Every running instance meters $0.24/vCPU-hour.
+# vm_size          = "Standard_D2s_v3"
+# vmss_min_count   = 2
+# vmss_max_count   = 4
+# db_replica_count = 0
+
+# Optional overrides:
+# resource_group_name = "rg-hailbytes-asm-autoscale"
+# location            = "northeurope"
+# admin_username      = "hbadmin"
+# environment         = "prod"
+# alert_email         = "soc@example.com"

@@ -53,11 +53,13 @@ Redis stays on. On this tier it is the only shared session store.
 
 ```bash
 curl -k https://$(terraform output -raw load_balancer_public_ip)/api/health
-VAULT=$(terraform output -raw key_vault_uri | sed -E 's#https://([^.]+)\..*#\1#')
-../keyvault-maintenance.sh get --vault "$VAULT" --secret hailbytes-admin-initial-password
+eval "$(terraform output -raw initial_credentials_command)"
 ```
 
-Log in as `admin` with that password and change it.
+That prints the first-boot admin password from each instance in turn. This
+tier does not yet share one admin password across instances the way the HA
+tier does, so they can differ. Log in as `admin` with the first one that works,
+then change it.
 
 ## Tearing down
 

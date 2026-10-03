@@ -1,15 +1,12 @@
-# HailBytes SAT on Azure, HA hot-hot tier: complete quickstart.
+# HailBytes ASM on Azure, HA hot-hot tier: complete quickstart.
 #
 # This root config provisions EVERYTHING, including the networking
 # prerequisites (vnet, workload subnet, delegated Postgres subnet,
 # private DNS zone) that the workload module otherwise expects you
-# to bring. Subscribe to the HailBytes SAT Azure Marketplace listing
+# to bring. Subscribe to the HailBytes ASM Azure Marketplace listing
 # first, set two variables in terraform.tfvars, then:
 #
 #   terraform init && terraform apply
-#
-# Deploying ASM instead? Use ../azure-asm-ha, the same root for the ASM
-# listing.
 
 terraform {
   required_version = ">= 1.5.0"
@@ -67,7 +64,7 @@ provider "azurerm" {
 }
 
 variable "resource_group_name" {
-  description = "Resource group to create. All quickstart resources live here. Leave null for rg-hailbytes-sat-prod, or rg-<customer>-sat-<environment> when customer is set."
+  description = "Resource group to create. All quickstart resources live here. Leave null for rg-hailbytes-asm-prod, or rg-<customer>-asm-<environment> when customer is set."
   type        = string
   default     = null
 }
@@ -84,7 +81,7 @@ variable "customer" {
 }
 
 variable "accept_marketplace_terms" {
-  description = "Accept the Marketplace image terms from Terraform. Leave null: true for a single deployment, false when customer is set. Terms are per SUBSCRIPTION, and Terraform treats them as a resource it owns -- a second deployment in the same subscription fails with 'already exists', and destroying ANY deployment cancels the terms for every other one. With customer set, accept them once instead: ../preflight-azure.sh ha --accept-terms."
+  description = "Accept the Marketplace image terms from Terraform. Leave null: true for a single deployment, false when customer is set. Terms are per SUBSCRIPTION, and Terraform treats them as a resource it owns -- a second deployment in the same subscription fails with 'already exists', and destroying ANY deployment cancels the terms for every other one. With customer set, accept them once instead: ../preflight-azure.sh ha --product asm --accept-terms."
   type        = bool
   default     = null
 }
@@ -105,11 +102,6 @@ variable "ssh_public_key" {
   type        = string
 }
 
-variable "phish_allowed_cidrs" {
-  description = "CIDRs allowed to reach the phishing/landing surface. Leave null and it inherits allowed_cidrs — correct only if every simulation target sits inside your admin range. For a live simulation the targets are elsewhere, so set this (usually [\"0.0.0.0/0\"]); otherwise the campaign sends and then records no interactions."
-  type        = list(string)
-  default     = null
-}
 
 variable "admin_username" {
   type    = string
@@ -142,8 +134,8 @@ variable "key_vault_reader_principal_ids" {
 locals {
   # Null customer reproduces the names this root has always used, so an
   # existing deployment plans clean.
-  name_prefix         = var.customer == null ? "hailbytes-sat-${var.environment}" : "${var.customer}-sat-${var.environment}"
-  resource_group_name = coalesce(var.resource_group_name, var.customer == null ? "rg-hailbytes-sat-prod" : "rg-${var.customer}-sat-${var.environment}")
+  name_prefix         = var.customer == null ? "hailbytes-asm-${var.environment}" : "${var.customer}-asm-${var.environment}"
+  resource_group_name = coalesce(var.resource_group_name, var.customer == null ? "rg-hailbytes-asm-prod" : "rg-${var.customer}-asm-${var.environment}")
   accept_terms        = var.accept_marketplace_terms != null ? var.accept_marketplace_terms : var.customer == null
   tags                = var.customer == null ? {} : { customer = var.customer }
 }
@@ -171,8 +163,8 @@ module "network" {
   associate_subnet_nsgs = false
 }
 
-module "hailbytes_sat" {
-  source = "../../modules/sat-azure-ha"
+module "hailbytes_asm" {
+  source = "../../modules/asm-azure-ha"
 
   environment            = var.environment
   name_prefix            = local.name_prefix
@@ -184,7 +176,6 @@ module "hailbytes_sat" {
   db_delegated_subnet_id = module.network.db_delegated_subnet_id
   private_dns_zone_id    = module.network.private_dns_zone_id
   allowed_cidrs          = var.allowed_cidrs
-  phish_allowed_cidrs    = var.phish_allowed_cidrs
   admin_username         = var.admin_username
   ssh_public_key         = var.ssh_public_key
 
@@ -215,26 +206,28 @@ output "resource_group_name" {
 
 output "load_balancer_public_ip" {
   description = "Point your browser at https://<this IP>/ once apply completes."
-  value       = module.hailbytes_sat.load_balancer_public_ip
+  value       = module.hailbytes_asm.load_balancer_public_ip
 }
 
 output "vm_ids" {
-  value = module.hailbytes_sat.vm_ids
+  value = module.hailbytes_asm.vm_ids
 }
 
 output "postgres_fqdn" {
-  value = module.hailbytes_sat.postgres_fqdn
+  value = module.hailbytes_asm.postgres_fqdn
 }
 
 output "key_vault_uri" {
   description = "The DB password is stored here under secret name 'hailbytes-db-password'."
-  value       = module.hailbytes_sat.key_vault_uri
+  value       = module.hailbytes_asm.key_vault_uri
 }
 
 output "initial_credentials_command" {
-  description = "Prints the first-boot admin password. Both nodes share it through Key Vault, so there is one value."
+  description = "Prints the first-boot admin password from each node in turn. Log in with the first one that works."
   value = join(" ", [
-    "az keyvault secret show --name hailbytes-admin-initial-password --query value -o tsv --vault-name",
-    regex("^https://([^.]+)\\.", module.hailbytes_sat.key_vault_uri)[0],
+    "for vm in", join(" ", [for id in module.hailbytes_asm.vm_ids : element(split("/", id), length(split("/", id)) - 1)]), "; do",
+    "az vm run-command invoke -g", azurerm_resource_group.main.name, "-n \"$vm\"",
+    "--command-id RunShellScript --scripts", "'sudo grep DJANGO_SUPERUSER_PASSWORD /opt/hailbytes-asm/.env'",
+    "--query 'value[0].message' -o tsv; done",
   ])
 }

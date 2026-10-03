@@ -231,3 +231,13 @@ output "key_vault_uri" {
   description = "The DB password is stored here under secret name 'hailbytes-db-password'."
   value       = module.hailbytes_sat.key_vault_uri
 }
+
+output "initial_credentials_command" {
+  description = "Prints the first-boot admin password from each scale-set instance in turn. This tier has no shared admin-password secret yet, so instances can differ: log in with the first one that works."
+  value = join(" ", [
+    "for i in $(az vmss list-instances -g", azurerm_resource_group.main.name, "-n", module.hailbytes_sat.vmss_name, "--query '[].instanceId' -o tsv); do",
+    "az vmss run-command invoke -g", azurerm_resource_group.main.name, "-n", module.hailbytes_sat.vmss_name, "--instance-id \"$i\"",
+    "--command-id RunShellScript --scripts", "'sudo cat /opt/hailbytes-sat/hailbytes-sat-initial-credentials.txt'",
+    "--query 'value[0].message' -o tsv; done",
+  ])
+}

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# HailBytes SAT — Azure subscription preflight.
+# HailBytes SAT / ASM — Azure subscription preflight.
 #
 # Run this ONCE per subscription, in Azure Cloud Shell, before the first
 # terraform apply. It is idempotent: re-running it is harmless.
@@ -11,6 +11,7 @@
 #   ./quickstart/preflight-azure.sh ha        # HA hot-hot tier (two VMs + Flexible Server)
 #   ./quickstart/preflight-azure.sh single    # single-VM tier
 #   ./quickstart/preflight-azure.sh autoscale --max-count 4   # scale set; quota sized for the ceiling
+#   ./quickstart/preflight-azure.sh ha --product asm          # the ASM listing instead of SAT
 #
 # Add --location <region> (or set HB_LOCATION) to check the region you will
 # actually deploy into. Three of the checks below are regional -- marketplace
@@ -35,7 +36,7 @@
 # WHAT IT CHANGES
 #   * Registers resource providers (subscription-scoped, one-time, additive).
 #     Registering a provider does not create resources and is not billable.
-#   * Accepts Azure Marketplace image terms for the HailBytes SAT offer, but
+#   * Accepts Azure Marketplace image terms for the chosen product's offer, but
 #     ONLY with --accept-terms. Left off by default because accepting legal
 #     terms on someone's subscription should be a deliberate act.
 # It creates no resource groups, networks, VMs or databases.
@@ -44,6 +45,7 @@ set -uo pipefail
 
 TIER="${1:-ha}"
 ACCEPT_TERMS=0
+PRODUCT="${HB_PRODUCT:-sat}"
 LOCATION="${HB_LOCATION:-northeurope}"
 # Must match the size the tier will actually deploy, or the preflight checks a
 # quota pool the apply will not draw from. HA: modules/ha-hot-hot/azure default.
@@ -84,6 +86,12 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --max-count=*) MAX_COUNT="${1#--max-count=}" ;;
+        --product)
+            [ $# -ge 2 ] || { echo "--product needs sat or asm" >&2; exit 2; }
+            PRODUCT="$2"
+            shift
+            ;;
+        --product=*) PRODUCT="${1#--product=}" ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
     shift
@@ -92,7 +100,7 @@ done
 case "$TIER" in
     ha|single|autoscale) ;;
     *)
-        echo "usage: $0 {ha|single|autoscale} [--accept-terms] [--location REGION] [--vm-size SIZE] [--max-count N]" >&2
+        echo "usage: $0 {ha|single|autoscale} [--product sat|asm] [--accept-terms] [--location REGION] [--vm-size SIZE] [--max-count N]" >&2
         exit 2
         ;;
 esac
@@ -100,10 +108,14 @@ case "$MAX_COUNT" in
     ''|*[!0-9]*|0) echo "--max-count must be a whole number of 1 or more: ${MAX_COUNT}" >&2; exit 2 ;;
 esac
 
-# Marketplace plan for the SAT offer. Keep in sync with
+# Marketplace plan for the chosen product. Keep in sync with
 # modules/ha-hot-hot/azure/main.tf local.marketplace_plans.
 PUBLISHER="lcmcon1687976613543"
-OFFER="gophish-phishing-simulator"
+case "$PRODUCT" in
+    sat) OFFER="gophish-phishing-simulator";   PRODUCT_NAME="SAT" ;;
+    asm) OFFER="hardened_ubuntu_with_rengine"; PRODUCT_NAME="ASM" ;;
+    *)   echo "--product must be sat or asm: ${PRODUCT}" >&2; exit 2 ;;
+esac
 SKU="standard-v2"
 
 # vCPUs per application node, and the quota pool the size draws from. Both are
@@ -213,7 +225,7 @@ else
 fi
 
 echo "=============================================================="
-echo " HailBytes SAT — Azure preflight (${TIER} tier)"
+echo " HailBytes ${PRODUCT_NAME} — Azure preflight (${TIER} tier)"
 echo "=============================================================="
 echo
 

@@ -1,15 +1,15 @@
-# HailBytes SAT on Azure, HA hot-hot tier: complete quickstart.
+# HailBytes ASM on Azure, unlimited-scale (autoscale) tier: complete quickstart.
 #
-# This root config provisions EVERYTHING, including the networking
-# prerequisites (vnet, workload subnet, delegated Postgres subnet,
-# private DNS zone) that the workload module otherwise expects you
-# to bring. Subscribe to the HailBytes SAT Azure Marketplace listing
-# first, set two variables in terraform.tfvars, then:
+# A VM scale set behind a load balancer, a Postgres Flexible Server, Azure
+# Cache for Redis for shared sessions, and Key Vault. Like ../azure-ha, this
+# root also builds the networking (vnet, workload subnet, delegated Postgres
+# subnet, private DNS zone), so the only required inputs are allowed_cidrs and
+# ssh_public_key:
 #
 #   terraform init && terraform apply
 #
-# Deploying ASM instead? Use ../azure-asm-ha, the same root for the ASM
-# listing.
+# Every running instance meters at $0.24/vCPU-hour, so vmss_max_count is the
+# ceiling on the software bill as well as on capacity. See README.md.
 
 terraform {
   required_version = ">= 1.5.0"
@@ -67,7 +67,7 @@ provider "azurerm" {
 }
 
 variable "resource_group_name" {
-  description = "Resource group to create. All quickstart resources live here. Leave null for rg-hailbytes-sat-prod, or rg-<customer>-sat-<environment> when customer is set."
+  description = "Resource group to create. All quickstart resources live here. Leave null for rg-hailbytes-asm-autoscale, or rg-<customer>-asm-<environment> when customer is set."
   type        = string
   default     = null
 }
@@ -84,7 +84,7 @@ variable "customer" {
 }
 
 variable "accept_marketplace_terms" {
-  description = "Accept the Marketplace image terms from Terraform. Leave null: true for a single deployment, false when customer is set. Terms are per SUBSCRIPTION, and Terraform treats them as a resource it owns -- a second deployment in the same subscription fails with 'already exists', and destroying ANY deployment cancels the terms for every other one. With customer set, accept them once instead: ../preflight-azure.sh ha --accept-terms."
+  description = "Accept the Marketplace image terms from Terraform. Leave null: true for a single deployment, false when customer is set. Terms are per SUBSCRIPTION, and Terraform treats them as a resource it owns -- a second deployment in the same subscription fails with 'already exists', and destroying ANY deployment cancels the terms for every other one. With customer set, accept them once instead: ../preflight-azure.sh autoscale --product asm --accept-terms."
   type        = bool
   default     = null
 }
@@ -100,15 +100,10 @@ variable "allowed_cidrs" {
   type        = list(string)
 }
 
+
 variable "ssh_public_key" {
   description = "SSH public key for VM admin access (contents of ~/.ssh/id_ed25519.pub)."
   type        = string
-}
-
-variable "phish_allowed_cidrs" {
-  description = "CIDRs allowed to reach the phishing/landing surface. Leave null and it inherits allowed_cidrs — correct only if every simulation target sits inside your admin range. For a live simulation the targets are elsewhere, so set this (usually [\"0.0.0.0/0\"]); otherwise the campaign sends and then records no interactions."
-  type        = list(string)
-  default     = null
 }
 
 variable "admin_username" {
@@ -121,29 +116,39 @@ variable "environment" {
   default = "prod"
 }
 
-variable "enable_db_delete_lock" {
-  description = "CanNotDelete lock on the database. Blocks deletion by anyone, terraform destroy included: turn it on once the client is live, and off again in its own apply before a planned teardown."
-  type        = bool
-  default     = false
+variable "vm_size" {
+  description = "Size of each scale-set instance. Standard_D2s_v3 matches the HA tier default and draws the standardDSv3Family quota pool; the module default (Standard_D4s_v5) draws standardDSv5Family, which subscriptions are often granted a limit of 0 in. Check with ../preflight-azure.sh autoscale --product asm --vm-size <size>."
+  type        = string
+  default     = "Standard_D2s_v3"
 }
 
-variable "enable_public_ip_delete_lock" {
-  description = "CanNotDelete lock on the public IPs this root creates. Azure has no undelete for a public IP. Same trade-off as enable_db_delete_lock: off in its own apply before a teardown."
-  type        = bool
-  default     = false
+variable "vmss_min_count" {
+  description = "Instances that always run. Each meters $0.24/vCPU-hour around the clock."
+  type        = number
+  default     = 2
 }
 
-variable "key_vault_reader_principal_ids" {
-  description = "Entra object IDs (ideally one group) granted read on the Key Vault holding the database password and session keys. Whoever runs the apply gets access automatically; set this when that is a service principal, so your operators are not locked out of their own deployment."
-  type        = list(string)
-  default     = []
+variable "vmss_max_count" {
+  description = "Ceiling the autoscaler may reach -- and so the ceiling on the hourly software bill and the vCPU quota the region must have."
+  type        = number
+  default     = 4
+}
+
+variable "db_replica_count" {
+  description = "Postgres read replicas. Each is a full database server billed like the primary; the module default is 2. Start at 0 and add replicas when measured read load calls for them."
+  type        = number
+  default     = 0
+}
+
+variable "alert_email" {
+  description = "Where scale and health alerts go. Null creates no email receiver."
+  type        = string
+  default     = null
 }
 
 locals {
-  # Null customer reproduces the names this root has always used, so an
-  # existing deployment plans clean.
-  name_prefix         = var.customer == null ? "hailbytes-sat-${var.environment}" : "${var.customer}-sat-${var.environment}"
-  resource_group_name = coalesce(var.resource_group_name, var.customer == null ? "rg-hailbytes-sat-prod" : "rg-${var.customer}-sat-${var.environment}")
+  name_prefix         = var.customer == null ? "hailbytes-asm-${var.environment}" : "${var.customer}-asm-${var.environment}"
+  resource_group_name = coalesce(var.resource_group_name, var.customer == null ? "rg-hailbytes-asm-autoscale" : "rg-${var.customer}-asm-${var.environment}")
   accept_terms        = var.accept_marketplace_terms != null ? var.accept_marketplace_terms : var.customer == null
   tags                = var.customer == null ? {} : { customer = var.customer }
 }
@@ -154,8 +159,6 @@ resource "azurerm_resource_group" "main" {
   tags     = local.tags
 }
 
-# Networking prerequisites: vnet, workload/LB subnets, subnet delegated
-# to Postgres Flexible Server, and the privatelink Postgres DNS zone.
 module "network" {
   source = "../../modules/network/azure"
 
@@ -164,15 +167,13 @@ module "network" {
   location            = azurerm_resource_group.main.location
   tags                = local.tags
 
-  # The workload module associates its own NSG, and Azure allows one NSG per
-  # subnet, so the network module must not attach its baseline set. The flag
-  # also stops those NSGs being created at all, which matters here because the
-  # workload module's load-balancer NSG carries the same name.
+  # The workload module associates its own NSG to the scale-set subnet, and
+  # Azure allows one NSG per subnet.
   associate_subnet_nsgs = false
 }
 
-module "hailbytes_sat" {
-  source = "../../modules/sat-azure-ha"
+module "hailbytes_asm" {
+  source = "../../modules/asm-azure-autoscale"
 
   environment            = var.environment
   name_prefix            = local.name_prefix
@@ -180,31 +181,25 @@ module "hailbytes_sat" {
   resource_group_name    = azurerm_resource_group.main.name
   location               = azurerm_resource_group.main.location
   vm_subnet_id           = module.network.workload_subnet_id
-  lb_subnet_id           = module.network.lb_subnet_id
   db_delegated_subnet_id = module.network.db_delegated_subnet_id
   private_dns_zone_id    = module.network.private_dns_zone_id
   allowed_cidrs          = var.allowed_cidrs
-  phish_allowed_cidrs    = var.phish_allowed_cidrs
   admin_username         = var.admin_username
   ssh_public_key         = var.ssh_public_key
+  alert_email            = var.alert_email
 
-  accept_marketplace_terms       = local.accept_terms
-  key_vault_reader_principal_ids = var.key_vault_reader_principal_ids
-  enable_db_delete_lock          = var.enable_db_delete_lock
-  enable_public_ip_delete_lock   = var.enable_public_ip_delete_lock
+  vm_size            = var.vm_size
+  vmss_min_count     = var.vmss_min_count
+  vmss_default_count = var.vmss_min_count
+  vmss_max_count     = var.vmss_max_count
+  db_replica_count   = var.db_replica_count
 
-  # Key Vault names are GLOBALLY unique, the vault carries purge protection, and
-  # a deleted name is reserved for 30 days with no force-purge. Derived from
-  # name_prefix alone this root would ask Azure for the same name as every other
-  # copy of it, and a rebuild inside 30 days would ask for a name its own
-  # teardown had just spent -- which fails as 400 SoftDeletedVaultDoesNotExist,
-  # an error that names recovery rather than reuse. The suffix is keyed on the
-  # resource group, so a new group always draws a new name.
-  #
-  # ALREADY APPLIED THIS ROOT? Do NOT add this to a live deployment: it renames
-  # the vault, and renaming destroys it along with the database password, the
-  # session keys and the disk encryption key. Set key_vault_name to the name you
-  # already hold instead.
+  accept_marketplace_terms = local.accept_terms
+
+  # Globally unique, purge-protected, and reserved for 30 days after a destroy:
+  # see the same setting in ../azure-ha/main.tf. Do NOT add this to a live
+  # deployment that was applied without it -- it renames, and so destroys, the
+  # vault.
   key_vault_name_random_suffix = true
 }
 
@@ -215,26 +210,28 @@ output "resource_group_name" {
 
 output "load_balancer_public_ip" {
   description = "Point your browser at https://<this IP>/ once apply completes."
-  value       = module.hailbytes_sat.load_balancer_public_ip
+  value       = module.hailbytes_asm.load_balancer_public_ip
 }
 
-output "vm_ids" {
-  value = module.hailbytes_sat.vm_ids
+output "vmss_name" {
+  value = module.hailbytes_asm.vmss_name
 }
 
-output "postgres_fqdn" {
-  value = module.hailbytes_sat.postgres_fqdn
+output "postgres_primary_fqdn" {
+  value = module.hailbytes_asm.postgres_primary_fqdn
 }
 
 output "key_vault_uri" {
   description = "The DB password is stored here under secret name 'hailbytes-db-password'."
-  value       = module.hailbytes_sat.key_vault_uri
+  value       = module.hailbytes_asm.key_vault_uri
 }
 
 output "initial_credentials_command" {
-  description = "Prints the first-boot admin password. Both nodes share it through Key Vault, so there is one value."
+  description = "Prints the first-boot admin password from each scale-set instance in turn. This tier has no shared admin-password secret yet, so instances can differ: log in with the first one that works."
   value = join(" ", [
-    "az keyvault secret show --name hailbytes-admin-initial-password --query value -o tsv --vault-name",
-    regex("^https://([^.]+)\\.", module.hailbytes_sat.key_vault_uri)[0],
+    "for i in $(az vmss list-instances -g", azurerm_resource_group.main.name, "-n", module.hailbytes_asm.vmss_name, "--query '[].instanceId' -o tsv); do",
+    "az vmss run-command invoke -g", azurerm_resource_group.main.name, "-n", module.hailbytes_asm.vmss_name, "--instance-id \"$i\"",
+    "--command-id RunShellScript --scripts", "'sudo grep DJANGO_SUPERUSER_PASSWORD /opt/hailbytes-asm/.env'",
+    "--query 'value[0].message' -o tsv; done",
   ])
 }

@@ -360,10 +360,10 @@ if has "AccountNameInvalid" || has "StorageAccountAlreadyTaken" \
     cont "this one already — most often your own earlier attempt."
     printf '\n'
     who "You. Change the name prefix and re-run."
-    do_ "Set a different name_prefix, then re-run the pre-flight, which tests"
-    cont "each generated name for availability before anything is built:"
-    if [ "$CLOUD" = "aws" ]; then cmd "./quickstart/preflight-aws.sh ha"
-    else cmd "./quickstart/preflight-azure.sh ha"; fi
+    do_ "In the quickstarts, set or change customer (or environment) in"
+    cont "terraform.tfvars, which changes every generated name, then re-run"
+    cont "the apply. Nothing checks these names in advance, so a clash only"
+    cont "shows here."
 fi
 
 # ===========================================================================
@@ -446,6 +446,59 @@ if has "VMExtensionProvisioningError" || has "RunCommandHandlerLinux" \
     printf '\n'
     cont "Azure's troubleshooting page for this extension:"
     cmd "https://aka.ms/RunCommandManagedLinux"
+fi
+
+# ===========================================================================
+# AWS teardown and rebuild
+#
+# The AWS modules protect data by default -- RDS and load-balancer deletion
+# protection, an Object-Locked backup bucket, a seven-day Secrets Manager
+# recovery window -- so terraform destroy and a same-name rebuild each stop
+# with an error that is correct but not self-explanatory.
+# ===========================================================================
+if has "Cannot delete protected DB Instance" \
+   || has "deletion protection is enabled"; then
+    hit "Deletion protection is on, which is what stopped the destroy"
+    does "The database or load balancer is protected on purpose, and the"
+    cont "destroy stopped partway. Nothing is broken; nothing was lost."
+    printf '\n'
+    who "You."
+    do_ "Turn protection off in its own apply, then destroy again:"
+    cmd "terraform apply -var deletion_protection=false"
+    cont "That also turns off the database's final snapshot, so take the"
+    cont "export first if you have not: docs/AWS_MSSP_RUNBOOK.md, Step 10."
+fi
+
+if has "BucketNotEmpty"; then
+    hit "A bucket still holds objects, so it cannot be deleted"
+    does "The backup bucket (Object Lock) and the access-log bucket are not"
+    cont "force-destroyed, by design. Every object version has to go first."
+    printf '\n'
+    who "You. Deleting from the backup bucket needs s3:BypassGovernanceRetention."
+    do_ "Empty it, then re-run the destroy:"
+    cmd "./quickstart/empty-bucket-aws.sh <bucket name from the error>"
+fi
+
+if has "already scheduled for deletion"; then
+    hit "A secret with this name is still in its recovery window"
+    does "Destroying a deployment schedules its secrets for deletion after"
+    cont "seven days. Re-creating the same names inside that window fails."
+    printf '\n'
+    who "You."
+    do_ "Delete the old secrets now (it cannot be undone), then re-apply:"
+    cmd "aws secretsmanager delete-secret --force-delete-without-recovery --secret-id <name from the error>"
+    cont "Or deploy under a different environment name instead."
+fi
+
+if has "AddressLimitExceeded" || has "VpcLimitExceeded"; then
+    hit "The region is out of Elastic IPs or VPCs"
+    does "Each quickstart builds its own VPC, and HA and autoscale use two"
+    cont "Elastic IPs for NAT. The default limit is five of each per region."
+    printf '\n'
+    who "Whoever can request AWS service quota increases."
+    do_ "Request an increase in Service Quotas, or deploy into another region."
+    cont "Check the headroom first with:"
+    cmd "./quickstart/preflight-aws.sh ha"
 fi
 
 # ===========================================================================
