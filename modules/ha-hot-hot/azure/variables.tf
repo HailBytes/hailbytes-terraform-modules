@@ -178,7 +178,7 @@ variable "name_prefix" {
 }
 
 variable "vm_names" {
-  description = "Exact names for the two application VMs, in zone order -- element 0 lands in zone 1, element 1 in zone 2. Leave null to derive them as <name_prefix>-vm-1 and -vm-2. Set this when a host-naming standard governs VM names (e.g. [\"simsphishing-web-P-01\", \"simsphishing-web-P-02\"]); name_prefix still governs every other resource. Renaming an existing VM REPLACES it, so on a live deployment change one element at a time and apply with -target, or accept that both nodes are rebuilt at once -- which on a two-node HA pair is a full outage."
+  description = "Exact names for the two application VMs, in zone order -- element 0 lands in zone 1, element 1 in zone 2. Leave null to derive them as <name_prefix>-vm-1 and -vm-2. Set this when a host-naming standard governs VM names (e.g. [\"examplephish-web-P-01\", \"examplephish-web-P-02\"]); name_prefix still governs every other resource. Renaming an existing VM REPLACES it, so on a live deployment change one element at a time and apply with -target, or accept that both nodes are rebuilt at once -- which on a two-node HA pair is a full outage."
   type        = list(string)
   default     = null
 

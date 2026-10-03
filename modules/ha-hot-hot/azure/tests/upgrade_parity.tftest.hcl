@@ -46,18 +46,18 @@ mock_provider "random" {}
 variables {
   product                = "sat"
   environment            = "prod"
-  name_prefix            = "simsphishing"
-  resource_group_name    = "simsphishing-rg-X-01"
+  name_prefix            = "examplephish"
+  resource_group_name    = "examplephish-rg-X-01"
   location               = "northeurope"
   vm_subnet_id           = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-parity/providers/Microsoft.Network/virtualNetworks/vnet/subnets/vm"
   db_delegated_subnet_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-parity/providers/Microsoft.Network/virtualNetworks/vnet/subnets/db"
   private_dns_zone_id    = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-parity/providers/Microsoft.Network/privateDnsZones/ne.postgres.database.azure.com"
   lb_subnet_id           = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-parity/providers/Microsoft.Network/virtualNetworks/vnet/subnets/lb"
-  allowed_cidrs          = ["87.44.47.0/24"]
+  allowed_cidrs          = ["203.0.113.0/24"]
   admin_username         = "hbadmin"
   ssh_public_key         = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCVak/KSum8/0jr1oi9r9hvO8WDmnPqJWRRWXLOJiHcN5BuIwlNxHzn6gDP/ov7/UTpCqgrksYHojVdSj93bDnSU4Xi1X79aJ2AUxDwZZNQcPQDWS+x6kcE5q9Dv29xRIYGYgizF9thNJMfPEXVoLYeiA3aiR7UntjYkDgWfHJftrsPxqIo49A0Ep9tn4Qi5EVDRfy+rj04gKo3PCnM7qgYvGkXh4U4LRGji28VfzLkAe4rjo5ABHMRBOR3CQ2+nP1YHPBOOHK/v+ro7kOuPIItd99MhW5nP+/8TD+mJBJ9jFfkXXAqbk6E9lsOMHIuLIa5tuWV29oHo3IIVyw5V87F test@hailbytes"
 
-  vm_names                      = ["simsphishing-web-P-01", "simsphishing-web-P-02"]
+  vm_names                      = ["examplephish-web-P-01", "examplephish-web-P-02"]
   vm_size                       = "Standard_D2s_v3"
   db_high_availability_mode     = "Disabled"
   enable_pre_patch_run_command  = false
@@ -81,7 +81,7 @@ run "the_key_vault_name_is_unchanged" {
   expect_failures = [check.database_has_a_standby]
 
   assert {
-    condition     = azurerm_key_vault.main.name == "simsphishingkv"
+    condition     = azurerm_key_vault.main.name == "examplephishkv"
     error_message = "The derived Key Vault name moved. Upgrading to this ref RENAMES and therefore DESTROYS the vault of every deployment that did not pin key_vault_name."
   }
 }
@@ -95,11 +95,11 @@ run "the_vm_names_and_zones_are_unchanged" {
   expect_failures = [check.database_has_a_standby]
 
   assert {
-    condition     = azurerm_linux_virtual_machine.vm[0].name == "simsphishing-web-P-01"
+    condition     = azurerm_linux_virtual_machine.vm[0].name == "examplephish-web-P-01"
     error_message = "VM 0 name moved; renaming an Azure VM replaces it."
   }
   assert {
-    condition     = azurerm_linux_virtual_machine.vm[1].name == "simsphishing-web-P-02"
+    condition     = azurerm_linux_virtual_machine.vm[1].name == "examplephish-web-P-02"
     error_message = "VM 1 name moved; renaming an Azure VM replaces it."
   }
   assert {
@@ -118,7 +118,7 @@ run "the_database_identity_is_unchanged" {
   expect_failures = [check.database_has_a_standby]
 
   assert {
-    condition     = azurerm_postgresql_flexible_server.main[0].name == "simsphishing-pg"
+    condition     = azurerm_postgresql_flexible_server.main[0].name == "examplephish-pg"
     error_message = "Postgres server name moved; that is a replacement, and a restore."
   }
   assert {
@@ -145,7 +145,7 @@ run "the_supplied_address_is_still_the_frontend" {
     error_message = "The module created a load-balancer address despite public_ip_id being supplied, so the frontend -- and DNS -- moved."
   }
   assert {
-    condition     = azurerm_lb.main.name == "simsphishing-lb"
+    condition     = azurerm_lb.main.name == "examplephish-lb"
     error_message = "Load balancer name moved, which replaces it and with it the frontend."
   }
 }
@@ -160,11 +160,11 @@ run "the_other_resource_names_are_unchanged" {
   expect_failures = [check.database_has_a_standby]
 
   assert {
-    condition     = azurerm_managed_disk.data[0].name == "simsphishing-data-1"
+    condition     = azurerm_managed_disk.data[0].name == "examplephish-data-1"
     error_message = "Data disk 0 name moved, which replaces the disk and loses what is on it."
   }
   assert {
-    condition     = azurerm_managed_disk.data[1].name == "simsphishing-data-2"
+    condition     = azurerm_managed_disk.data[1].name == "examplephish-data-2"
     error_message = "Data disk 1 name moved, which replaces the disk and loses what is on it."
   }
   # CMK is off by default, so there is no disk encryption set to name. Assert
@@ -174,7 +174,7 @@ run "the_other_resource_names_are_unchanged" {
     error_message = "A disk encryption set appeared without enable_customer_managed_key."
   }
   assert {
-    condition     = azurerm_network_security_group.lb.name == "simsphishing-lb-nsg"
+    condition     = azurerm_network_security_group.lb.name == "examplephish-lb-nsg"
     error_message = "LB NSG name moved."
   }
 }

@@ -86,8 +86,8 @@ variables {
   phish_allowed_cidrs = ["0.0.0.0/0"]
 
   # Customer naming policy, taken verbatim rather than derived from the prefix.
-  vm_names   = ["simsphishing-web-X-01", "simsphishing-web-X-02"]
-  db_vm_name = "simsphishing-db-X-01"
+  vm_names   = ["examplephish-web-X-01", "examplephish-web-X-02"]
+  db_vm_name = "examplephish-db-X-01"
 
   # The pilot rung. 2 vCPU per node, two nodes, 4 metered vCores in total.
   vm_size = "Standard_D2s_v5"

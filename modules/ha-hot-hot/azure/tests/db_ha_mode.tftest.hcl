@@ -138,7 +138,7 @@ run "a_bogus_mode_is_refused_at_plan_time" {
 # entitled to zone-redundant Postgres has no other option -- and the resulting
 # deployment looks identical from the outside: two app VMs, two zones, one
 # zone-redundant address, and a SINGLE-ZONE database behind them. Nothing said
-# so. The Asiera deployment ran that way while the customer understood they were
+# so. A customer deployment ran that way while the customer understood they were
 # buying HA.
 #
 # A check block rather than a validation, because it must not block an apply

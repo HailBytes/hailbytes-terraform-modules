@@ -403,7 +403,7 @@ run "phish_allow_list_is_independent_when_set" {
 
   variables {
     product             = "sat"
-    allowed_cidrs       = ["87.44.47.0/24"]
+    allowed_cidrs       = ["203.0.113.0/24"]
     phish_allowed_cidrs = ["0.0.0.0/0"]
   }
 
@@ -418,7 +418,7 @@ run "phish_allow_list_is_independent_when_set" {
   assert {
     condition = alltrue([
       for k, r in azurerm_network_security_rule.lb_https_in :
-      r.source_address_prefix == "87.44.47.0/24"
+      r.source_address_prefix == "203.0.113.0/24"
     ])
     error_message = "Opening the phishing surface must NOT widen the admin surface — that is the whole point of splitting the lists."
   }
@@ -445,13 +445,13 @@ run "vm_names_default_to_the_derived_pattern" {
   command = plan
 
   variables {
-    name_prefix = "simsphishing"
+    name_prefix = "examplephish"
   }
 
   assert {
     condition = alltrue([
       for i, vm in azurerm_linux_virtual_machine.vm :
-      vm.name == "simsphishing-vm-${i + 1}"
+      vm.name == "examplephish-vm-${i + 1}"
     ])
     error_message = "With vm_names unset the VMs must keep the derived <name_prefix>-vm-N names."
   }
@@ -461,24 +461,24 @@ run "vm_names_override_exactly" {
   command = plan
 
   variables {
-    name_prefix = "simsphishing"
-    vm_names    = ["simsphishing-web-P-01", "simsphishing-web-P-02"]
+    name_prefix = "examplephish"
+    vm_names    = ["examplephish-web-P-01", "examplephish-web-P-02"]
   }
 
   assert {
-    condition     = azurerm_linux_virtual_machine.vm[0].name == "simsphishing-web-P-01"
+    condition     = azurerm_linux_virtual_machine.vm[0].name == "examplephish-web-P-01"
     error_message = "vm_names[0] must name the zone-1 VM verbatim."
   }
 
   assert {
-    condition     = azurerm_linux_virtual_machine.vm[1].name == "simsphishing-web-P-02"
+    condition     = azurerm_linux_virtual_machine.vm[1].name == "examplephish-web-P-02"
     error_message = "vm_names[1] must name the zone-2 VM verbatim."
   }
 
   # The override is scoped to the VMs. Everything else still follows
   # name_prefix, which is what the customer asked for.
   assert {
-    condition     = azurerm_public_ip.lb[0].name == "simsphishing-lb-pip"
+    condition     = azurerm_public_ip.lb[0].name == "examplephish-lb-pip"
     error_message = "vm_names must not leak into the naming of anything but the VMs."
   }
 }
@@ -487,13 +487,13 @@ run "db_vm_name_overrides_the_self_managed_postgres_vm" {
   command = plan
 
   variables {
-    name_prefix = "simsphishing"
+    name_prefix = "examplephish"
     db_mode     = "vm"
-    db_vm_name  = "simsphishing-db-P-01"
+    db_vm_name  = "examplephish-db-P-01"
   }
 
   assert {
-    condition     = azurerm_linux_virtual_machine.db_vm[0].name == "simsphishing-db-P-01"
+    condition     = azurerm_linux_virtual_machine.db_vm[0].name == "examplephish-db-P-01"
     error_message = "db_vm_name must name the self-managed Postgres VM verbatim."
   }
 }

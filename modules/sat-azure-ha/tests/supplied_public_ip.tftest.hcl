@@ -111,7 +111,7 @@ run "customer_supplied_ip_is_used_and_reported" {
   command = apply
 
   variables {
-    public_ip_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/asiera-net/providers/Microsoft.Network/publicIPAddresses/reserved-pip"
+    public_ip_id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/customer-net/providers/Microsoft.Network/publicIPAddresses/reserved-pip"
     key_vault_reader_principal_ids = [
       "11111111-1111-1111-1111-111111111111",
       "22222222-2222-2222-2222-222222222222",

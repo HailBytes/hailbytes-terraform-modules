@@ -3,7 +3,7 @@
 # about, force `create_backup_storage_account = false` so the backup path is
 # untested, and never plan `db_mode = "vm"` at all.
 #
-# This file covers those, in North Europe — the region the Asiera deployment
+# This file covers those, in North Europe — the region the first customer HA deployment
 # targets. North Europe supports three availability zones, which is what makes
 # the two-zone VM spread and the ZoneRedundant database valid there:
 # https://learn.microsoft.com/en-us/azure/reliability/regions-list

@@ -38,7 +38,7 @@ mock_provider "random" {}
 
 variables {
   product                = "sat"
-  name_prefix            = "simsphishing"
+  name_prefix            = "examplephish"
   resource_group_name    = "rg-hailbytes-test"
   location               = "northeurope"
   vm_subnet_id           = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.Network/virtualNetworks/vnet/subnets/vm"
@@ -61,7 +61,7 @@ run "the_suffix_is_off_by_default_so_an_upgrade_never_renames_the_vault" {
   command = plan
 
   assert {
-    condition     = azurerm_key_vault.main.name == "simsphishingkv"
+    condition     = azurerm_key_vault.main.name == "examplephishkv"
     error_message = "The derived Key Vault name changed with key_vault_name_random_suffix off. Any change here renames the vault on the next apply of every existing deployment, which destroys it along with the DB password, the session keys and the disk encryption key."
   }
 
@@ -113,12 +113,12 @@ run "an_explicit_name_wins_over_the_suffix" {
   command = plan
 
   variables {
-    key_vault_name               = "kvsimsphishing0912"
+    key_vault_name               = "kvexamplephish0912"
     key_vault_name_random_suffix = true
   }
 
   assert {
-    condition     = azurerm_key_vault.main.name == "kvsimsphishing0912"
+    condition     = azurerm_key_vault.main.name == "kvexamplephish0912"
     error_message = "key_vault_name must win over key_vault_name_random_suffix."
   }
 
@@ -325,7 +325,7 @@ run "the_gateway_subnet_is_bounded_by_allowed_cidrs" {
     enable_application_gateway = true
     appgw_tls_pfx_base64       = "TU9DSw=="
     appgw_tls_pfx_password     = "mock"
-    allowed_cidrs              = ["87.44.47.0/24", "10.30.11.0/24"]
+    allowed_cidrs              = ["203.0.113.0/24", "10.30.11.0/24"]
   }
 
   assert {
