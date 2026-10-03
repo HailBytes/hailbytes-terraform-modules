@@ -1,5 +1,11 @@
 # Quickstart: HailBytes ASM on Azure, HA tier
 
+> **Known gap: use the single-VM tier for ASM for now.** The current ASM image
+> does not read the database and shared-secret settings this tier passes it,
+> so each node runs its own local database and the managed database goes
+> unused: two separate deployments behind one address. Tracked in
+> HailBytes/hailbytes-asm#1734, whose HA smoke check now fails on exactly this.
+
 Two VMs across Availability Zones 1 and 2 behind a load balancer, a zone-redundant Postgres Flexible Server, and Key Vault. Like the SAT HA quickstart, this config builds the networking too.
 
 The ASM twin of [`../azure-ha`](../azure-ha) (SAT). It differs in three

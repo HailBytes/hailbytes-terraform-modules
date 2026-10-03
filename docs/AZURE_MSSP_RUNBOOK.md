@@ -46,6 +46,10 @@ its console on 3333; ASM has no phishing surface and its console on 443.
 
 ### Decision 3. Which tier?
 
+> **(ASM) single VM only, for now.** The current ASM image ignores the shared
+> database and secrets the HA and autoscale tiers pass it, so each node keeps
+> its own data. HailBytes/hailbytes-asm#1734 tracks the fix. SAT is unaffected.
+
 | Tier | SAT quickstart | ASM quickstart | Application nodes | Database | Use when |
 |---|---|---|---|---|---|
 | Single VM | [`azure-single`](../quickstart/azure-single) | [`azure-asm-single`](../quickstart/azure-asm-single) | 1 | PostgreSQL on the VM | Pilots, small clients. A reboot is an outage and the VM holds the only copy of the data. |

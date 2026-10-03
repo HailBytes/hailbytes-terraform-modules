@@ -1,5 +1,11 @@
 # Quickstart: HailBytes ASM on AWS, ha tier
 
+> **Known gap: use the single-VM tier for ASM for now.** The current ASM image
+> does not read the database and shared-secret settings this tier passes it,
+> so each node runs its own local database and the managed database goes
+> unused: two separate deployments behind one address. Tracked in
+> HailBytes/hailbytes-asm#1734, whose HA smoke check now fails on exactly this.
+
 Two EC2 instances across two Availability Zones behind an Application Load Balancer, RDS PostgreSQL, Secrets Manager, and the VPC around them. Production for most clients.
 
 Everything deploys into **your** AWS account. No HailBytes access, no

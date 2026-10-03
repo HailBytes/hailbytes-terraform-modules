@@ -44,6 +44,10 @@ public surface for the phishing landing pages; ASM has none.
 
 ### Decision 3. Which tier?
 
+> **(ASM) single VM only, for now.** The current ASM image ignores the shared
+> database and secrets the HA and autoscale tiers pass it, so each node keeps
+> its own data. HailBytes/hailbytes-asm#1734 tracks the fix. SAT is unaffected.
+
 | Tier | SAT quickstart | ASM quickstart | Application nodes | Database | Use when |
 |---|---|---|---|---|---|
 | Single | [`aws-sat-single`](../quickstart/aws-sat-single) | [`aws-asm-single`](../quickstart/aws-asm-single) | 1, with a public IP | PostgreSQL on the instance | Pilots, small clients. A reboot is an outage, and the public IP changes if the instance is stopped and started. |
