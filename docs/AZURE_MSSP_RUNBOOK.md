@@ -1,6 +1,7 @@
-# HailBytes SAT on Azure: the MSSP runbook
+# HailBytes SAT and ASM on Azure: the MSSP runbook
 
-Stand up HailBytes SAT for a client on Azure, run it, and tear it down again,
+Stand up HailBytes SAT or HailBytes ASM for a client on Azure, run it, and
+tear it down again,
 with Terraform, one numbered step at a time. Every command is copy-paste. Each
 step says what it does, what to check before moving on, and what to do when it
 goes wrong.
@@ -21,7 +22,7 @@ so you meet it here instead of halfway through an apply.
 
 ---
 
-## Before you start: two decisions
+## Before you start: three decisions
 
 ### Decision 1. Whose subscription?
 
@@ -36,14 +37,21 @@ so you meet it here instead of halfway through an apply.
 
 Both use exactly the same steps. Where a step differs, it says **(A)** or **(B)**.
 
-### Decision 2. Which tier?
+### Decision 2. Which product?
 
-| Tier | Quickstart | Application nodes | Database | Use when |
-|---|---|---|---|---|
-| Single VM | [`quickstart/azure-single`](../quickstart/azure-single) | 1 | PostgreSQL on the VM | Pilots, small clients. A reboot is an outage and the VM holds the only copy of the data. |
-| HA hot-hot | [`quickstart/azure-ha`](../quickstart/azure-ha) | 2, across zones 1 and 2 | Flexible Server, zone-redundant standby | Production for most clients. |
-| HA with a reserved IP and TLS | [`quickstart/azure-ha-byoip`](../quickstart/azure-ha-byoip) | 2 | Flexible Server | Production where the client owns DNS and wants a fixed address and a trusted certificate from day one. |
-| Autoscale | [`quickstart/azure-autoscale`](../quickstart/azure-autoscale) | 2 to `vmss_max_count`, across zones 1-3 | Flexible Server, plus optional read replicas | One shared instance carrying many clients, or one very large client. |
+**SAT** (phishing simulation and training) or **ASM** (attack surface
+management). The steps are the same. Where they differ it says **(SAT)** or
+**(ASM)**: SAT has a second, public surface for the phishing landing pages and
+its console on 3333; ASM has no phishing surface and its console on 443.
+
+### Decision 3. Which tier?
+
+| Tier | SAT quickstart | ASM quickstart | Application nodes | Database | Use when |
+|---|---|---|---|---|---|
+| Single VM | [`azure-single`](../quickstart/azure-single) | [`azure-asm-single`](../quickstart/azure-asm-single) | 1 | PostgreSQL on the VM | Pilots, small clients. A reboot is an outage and the VM holds the only copy of the data. |
+| HA hot-hot | [`azure-ha`](../quickstart/azure-ha) | [`azure-asm-ha`](../quickstart/azure-asm-ha) | 2, across zones 1 and 2 | Flexible Server, zone-redundant standby | Production for most clients. |
+| HA with a reserved IP and TLS | [`azure-ha-byoip`](../quickstart/azure-ha-byoip) | (use `azure-asm-ha` plus Step 8) | 2 | Flexible Server | Production where the client owns DNS and wants a fixed address and a trusted certificate from day one. |
+| Autoscale | [`azure-autoscale`](../quickstart/azure-autoscale) | [`azure-asm-autoscale`](../quickstart/azure-asm-autoscale) | 2 to `vmss_max_count`, across zones 1-3 | Flexible Server, plus optional read replicas | One shared instance carrying many clients, or one very large client. |
 
 The software meter is $0.24 per vCPU-hour on every node running the HailBytes
 image, billed through the client's or your Marketplace subscription. The Azure
@@ -51,12 +59,14 @@ infrastructure (VMs, database, load balancer, storage) is billed separately by
 Microsoft on the same subscription. [`AZURE_COST_SHAPES.md`](../AZURE_COST_SHAPES.md)
 has both, side by side.
 
-Set three shell variables for the rest of the runbook. Everything below reads them:
+Set four shell variables for the rest of the runbook. Everything below reads them:
 
 ```bash
 export CUSTOMER=acme          # 2-16 chars: lowercase letters, digits, hyphens
+export PRODUCT=sat            # sat | asm
 export TIER=ha                # single | ha | autoscale
 export LOCATION=northeurope   # the client's region
+QS=azure-$TIER; [ "$PRODUCT" = asm ] && QS=azure-asm-$TIER   # the quickstart directory
 ```
 
 ---
@@ -92,7 +102,8 @@ Everything after this lands in it.
 
 ## Step 2. Subscription prep: once per subscription, not per client
 
-1. Open the [HailBytes SAT Marketplace listing](https://marketplace.microsoft.com/en-us/product/virtual-machines/lcmcon1687976613543.gophish-phishing-simulator)
+1. Open the Marketplace listing for the product, [SAT](https://marketplace.microsoft.com/en-us/product/virtual-machines/lcmcon1687976613543.gophish-phishing-simulator)
+   or [ASM](https://marketplace.microsoft.com/en-us/product/virtual-machines/lcmcon1687976613543.hardened_ubuntu_with_rengine),
    while signed in to this subscription, and make sure it is purchasable.
 2. Run the preflight. It registers the resource providers the stack needs,
    accepts the Marketplace image terms, and checks the three regional things
@@ -102,11 +113,14 @@ Everything after this lands in it.
 
 ```bash
 git clone --depth 1 https://github.com/HailBytes/hailbytes-terraform-modules ~/hailbytes-terraform-modules
-~/hailbytes-terraform-modules/quickstart/preflight-azure.sh "$TIER" --location "$LOCATION" --accept-terms
+~/hailbytes-terraform-modules/quickstart/preflight-azure.sh "$TIER" --product "$PRODUCT" --location "$LOCATION" --accept-terms
 # autoscale: add --max-count <ceiling>. Any tier: add --vm-size <size> if you will set vm_size.
 # The defaults it checks are the sizes each quickstart deploys: Standard_D2s_v3
 # for HA and autoscale, Standard_D4s_v5 for single VM.
 ```
+
+Terms are per product, so an MSSP running both SAT and ASM in one
+subscription runs this once with `--product sat` and once with `--product asm`.
 
 **Why the terms are accepted here and not by Terraform.** Image terms belong to
 the *subscription*. If a client's Terraform accepts them, that client's state
@@ -137,7 +151,7 @@ cache. Never share one between clients.
 
 ```bash
 git clone --depth 1 https://github.com/HailBytes/hailbytes-terraform-modules ~/hailbytes/"$CUSTOMER"
-cd ~/hailbytes/"$CUSTOMER"/quickstart/azure-"$TIER"
+cd ~/hailbytes/"$CUSTOMER"/quickstart/"$QS"
 ```
 
 Keep the directory, or at least its `terraform.tfvars` and `backend.tf`, in
@@ -153,7 +167,7 @@ recoverable ([AZURE_STATE_RECOVERY.md](AZURE_STATE_RECOVERY.md)) but slow.
 (Entra auth only, versioned, delete-locked) and writes `backend.tf`:
 
 ```bash
-../bootstrap-state-azure.sh --out . --location "$LOCATION" --key "clients/$CUSTOMER/sat-$TIER.tfstate"
+../bootstrap-state-azure.sh --out . --location "$LOCATION" --key "clients/$CUSTOMER/$PRODUCT-$TIER.tfstate"
 ```
 
 It prints the account name it created. Note it down.
@@ -162,7 +176,7 @@ It prints the account name it created. Note it down.
 
 ```bash
 ../bootstrap-state-azure.sh --out . --location "$LOCATION" \
-  --account <account name from the first client> --key "clients/$CUSTOMER/sat-$TIER.tfstate"
+  --account <account name from the first client> --key "clients/$CUSTOMER/$PRODUCT-$TIER.tfstate"
 ```
 
 **Check before moving on:** `backend.tf` exists in this directory and names
@@ -181,17 +195,21 @@ customer      = "acme"                    # same as $CUSTOMER. Set it now: chang
 location      = "northeurope"
 allowed_cidrs = ["203.0.113.0/24"]        # who may reach the ADMIN console: your SOC, the client's admins
 ssh_public_key = "ssh-ed25519 AAAA... you@host"
+```
 
-# Who may reach the PHISHING landing pages. These are the simulation targets,
-# who are by definition not in the admin range. Leave it unset and the campaign
-# sends, then records no clicks, which looks like a product fault.
+**(SAT)** also set who may reach the phishing landing pages. These are the
+simulation targets, who are by definition not in the admin range. Leave it
+unset and the campaign sends, then records no clicks, which looks like a
+product fault:
+
+```hcl
 phish_allowed_cidrs = ["0.0.0.0/0"]
 ```
 
 What `customer` does:
 
-- Prefixes every resource with `<customer>-sat-<environment>` and puts it all in
-  `rg-<customer>-sat-<environment>`. Postgres server and storage account names
+- Prefixes every resource with `<customer>-<product>-<environment>` and puts it
+  all in `rg-<customer>-<product>-<environment>`. Postgres server and storage account names
   are **globally** unique, so two clients on the default names collide.
 - Tags every resource `customer=<customer>`. Filter Azure Cost Management by
   that tag to get each client's infrastructure bill.
@@ -207,7 +225,7 @@ deployment. Grant a group at deploy time:
 key_vault_reader_principal_ids = ["<Entra group object id>"]
 ```
 
-**HA with a reserved IP (`azure-ha-byoip`):** that root has no `customer`
+**(SAT) HA with a reserved IP (`azure-ha-byoip`):** that root has no `customer`
 input. Set `name_prefix = "<customer>-sat"` and
 `resource_group_name = "rg-<customer>-sat-prod"` yourself, and
 `accept_marketplace_terms = false`, because Step 2 already accepted the terms.
@@ -252,34 +270,38 @@ it's HA until the standby is in place (Step 2, last paragraph).
 
 ## Step 7. Verify, and log in for the first time
 
+Every quickstart has the same two outputs for this, whatever the product or
+tier:
+
 ```bash
-IP=$(terraform output -raw load_balancer_public_ip 2>/dev/null || terraform output -raw public_ip_address)
-curl -k "https://$IP/api/health"          # expect HTTP 200. /health (no /api) is a 404 by design
+URL=$(terraform output -raw console_url)
+HEALTH=api/health; [ "$PRODUCT" = asm ] && HEALTH=api/ready
+curl -k "${URL}${HEALTH}"                 # expect HTTP 200
+eval "$(terraform output -raw initial_credentials_command)"
 ```
 
-The first-boot admin password:
+The second command prints the first-boot admin password:
 
-- **Single VM:** `eval "$(terraform output -raw initial_credentials_command)"`
-- **HA and autoscale:** it is in the deployment's Key Vault.
+- **SAT HA:** both nodes share one password through Key Vault, so it prints
+  one value.
+- **Everywhere else:** it reads the password off each VM in turn, through Run
+  Command. That means the single VM, every ASM deployment, and both products'
+  autoscale tier. On autoscale the instances do not yet share one password,
+  so log in with the first one that works.
 
-  ```bash
-  VAULT=$(terraform output -raw key_vault_uri | sed -E 's#https://([^.]+)\..*#\1#')
-  ../keyvault-maintenance.sh get --vault "$VAULT" --secret hailbytes-admin-initial-password
-  ```
-
-Browse to `https://<IP>/`, log in as `admin`, and change the password. The
+Browse to the console URL, log in as `admin`, and change the password. The
 certificate is self-signed until Step 8, so expect a browser warning.
 
 **HA only, optional:** prove failover before the client relies on it. Stop one
-node, confirm `/api/health` still answers, then start it again:
+node, confirm the health check still answers, then start it again:
 
 ```bash
 RG=$(terraform output -raw resource_group_name)
 VM=$(terraform output -json vm_ids | jq -r '.[0] | split("/")[-1]')
-az vm deallocate -g "$RG" -n "$VM" && curl -k "https://$IP/api/health" && az vm start -g "$RG" -n "$VM"
+az vm deallocate -g "$RG" -n "$VM" && curl -k "${URL}${HEALTH}" && az vm start -g "$RG" -n "$VM"
 ```
 
-## Step 8. DNS, a trusted certificate, and mail delivery
+## Step 8. DNS, a trusted certificate, and (SAT) mail delivery
 
 **DNS.** The load-balancer address is static for the life of the deployment.
 Point the console hostname's A record at it. If the hostname has to survive a
@@ -298,13 +320,13 @@ Three things the first deployments learned:
 - The gateway subnet does **not** need to be a /24. That is Microsoft's
   recommendation. With this module's 10-instance cap a /27 is comfortable. A
   /28 technically fits but leaves no room for Azure's maintenance upgrades.
-- On SAT the gateway carries the **console** only. The phishing landing pages
+- **(SAT)** the gateway carries the **console** only. The phishing landing pages
   stay on the load balancer's address. That makes two hostnames, so don't
   free the load balancer's address for the gateway.
 - Prefer the client's own certificate over Let's Encrypt on HA. The HTTP-01
   challenge through a layer-4 load balancer lands on either node at random.
 
-**Mail delivery.** Simulations land only if the client's mail filtering lets
+**(SAT) Mail delivery.** Simulations land only if the client's mail filtering lets
 them. [`quickstart/allowlisting`](../quickstart/allowlisting) scripts the
 Exchange Online side.
 [`DELIVERABILITY_CHECKLIST.md`](DELIVERABILITY_CHECKLIST.md) covers the rest.
@@ -340,9 +362,11 @@ resource group too, because the outputs go with the stack.
 
 ```bash
 RG=$(terraform output -raw resource_group_name)
-IP=$(terraform output -raw load_balancer_public_ip 2>/dev/null || terraform output -raw public_ip_address)
-# Full export (database dump + uploads) with an admin's API key from Settings:
-curl -kf -H "Authorization: Bearer <admin API key>" "https://$IP/api/instance/export" -o "$CUSTOMER-export.tar.gz"
+URL=$(terraform output -raw console_url)
+# Full export (database dump + uploads) with an admin's API key from Settings.
+# SAT takes it as a Bearer token, ASM as "Token":
+AUTH="Bearer"; [ "$PRODUCT" = asm ] && AUTH="Token"
+curl -kf -H "Authorization: $AUTH <admin API key>" "${URL}api/instance/export" -o "$CUSTOMER-export.tar.gz"
 ```
 
 **2. Lift any delete locks in their own apply.** A lock makes destroy fail
@@ -387,7 +411,7 @@ picks up where it stopped. If it fails the same way twice, run
 
 ```bash
 az group exists -n "$RG"                                         # expect: false
-../sweep-azure.sh list --prefix "$CUSTOMER-sat-"                  # expect: nothing
+../sweep-azure.sh list --prefix "$CUSTOMER-$PRODUCT-"             # expect: nothing
 ```
 
 `sweep-azure.sh` is also the fallback when state is gone or a group is
@@ -398,7 +422,7 @@ half-deleted. `show <rg>` lists what is inside, including the child resources
 
 ```bash
 az storage blob delete --auth-mode login --account-name <state account> \
-  --container-name tfstate --name "clients/$CUSTOMER/sat-$TIER.tfstate"
+  --container-name tfstate --name "clients/$CUSTOMER/$PRODUCT-$TIER.tfstate"
 ```
 
 Leave the state account itself alone. Your other clients' state lives in it,

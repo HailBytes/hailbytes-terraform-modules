@@ -171,8 +171,8 @@ output "resource_group_name" {
 }
 
 output "console_url" {
-  description = "Admin UI. The certificate is self-signed on first boot, so expect a browser warning."
-  value       = module.hailbytes_asm.console_url
+  description = "Admin UI. The certificate is self-signed on first boot, so expect a browser warning. (The module's own console_url output is the Azure portal page for the VM.)"
+  value       = "https://${module.hailbytes_asm.public_ip_address}/"
 }
 
 output "public_ip_address" {

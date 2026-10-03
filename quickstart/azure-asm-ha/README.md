@@ -32,7 +32,7 @@ The preflight checks quota for Standard_D2s_v3. Pass `--vm-size` if you set `vm_
 ## Verify and log in
 
 ```bash
-curl -k "https://$(terraform output -raw load_balancer_public_ip)/api/ready"
+curl -k "$(terraform output -raw console_url)api/ready"
 eval "$(terraform output -raw initial_credentials_command)"
 ```
 

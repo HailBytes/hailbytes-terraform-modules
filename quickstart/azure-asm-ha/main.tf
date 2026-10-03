@@ -204,6 +204,11 @@ output "resource_group_name" {
   value       = azurerm_resource_group.main.name
 }
 
+output "console_url" {
+  description = "Admin UI, through the load balancer. Self-signed until Step 8 of docs/AZURE_MSSP_RUNBOOK.md, so expect a browser warning."
+  value       = "https://${module.hailbytes_asm.load_balancer_public_ip}/"
+}
+
 output "load_balancer_public_ip" {
   description = "Point your browser at https://<this IP>/ once apply completes."
   value       = module.hailbytes_asm.load_balancer_public_ip

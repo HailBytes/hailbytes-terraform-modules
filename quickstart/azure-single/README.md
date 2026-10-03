@@ -84,7 +84,7 @@ terraform output -raw console_url
 
 # Health endpoint. SAT's path is /api/health -- there is no /health, and
 # curling it returns 404, which looks like a failed deployment.
-curl -k "$(terraform output -raw console_url)/api/health"
+curl -k "$(terraform output -raw console_url)api/health"
 
 # Initial admin password, read from inside the VM
 eval "$(terraform output -raw initial_credentials_command)"

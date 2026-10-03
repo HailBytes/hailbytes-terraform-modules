@@ -32,7 +32,7 @@ The preflight checks quota for Standard_D4s_v5 (the module default, which draws 
 ## Verify and log in
 
 ```bash
-curl -k "https://$(terraform output -raw public_ip_address)/api/ready"
+curl -k "$(terraform output -raw console_url)api/ready"
 eval "$(terraform output -raw initial_credentials_command)"
 ```
 

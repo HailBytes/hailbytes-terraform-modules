@@ -53,6 +53,32 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **A complete quickstart root for every product, cloud and tier.** `quickstart/azure-asm-{single,ha,autoscale}` and `quickstart/aws-{sat,asm}-{single,ha,autoscale}` join the SAT-on-Azure roots. Every root builds its own network, takes the same optional `customer` input (per-client names and a `customer=<name>` tag on everything), and outputs `console_url` and `initial_credentials_command`, so first login is the same command everywhere.
+  - **AWS roots** need only `allowed_cidrs`.
+    - HA and autoscale generate a self-signed certificate and import it into ACM unless `acm_certificate_arn` is set, so a first deploy needs no domain.
+    - `deletion_protection` (default `true`, as in the modules) is the one switch to lift before destroy.
+    - A plan-time guard refuses name prefixes over 26 characters, the most a load-balancer name can take with the modules' suffixes.
+    - The network module's flow log is turned off, because the workload module creates one under the same names.
+    - The single-VM root skips NAT gateways, which saves two of the region's five default Elastic IPs.
+  - **The autoscale roots** start at 2 vCPU instances, a ceiling of 4 and no read replicas, each stated in the README.
+
+- **`docs/AWS_MSSP_RUNBOOK.md`**, the AWS twin of the Azure runbook: ten steps from an empty account to a live console and back with `terraform destroy`, for SAT and ASM. Teardown covers the export, lifting deletion protection, emptying the object-locked buckets, and what survives.
+  - **It warns about the final snapshot.** Lifting deletion protection also turns off the final RDS snapshot, so the export is the only copy.
+  - **It is labelled untested.** No customer has yet deployed through the AWS path. `docs/AZURE_MSSP_RUNBOOK.md` now covers ASM as well as SAT.
+
+- **AWS helpers.**
+  - **`bootstrap-state-aws.sh`** creates a versioned, encrypted, TLS-only S3 state bucket per account and region, one key per client, with S3-native locking.
+  - **`empty-bucket-aws.sh`** empties the object-locked backup bucket and the access-log bucket so destroy can remove them. It refuses buckets without a `Product=hailbytes-*` tag and requires the name to be typed.
+  - Tested in the new `quickstart/tests/aws_helpers_test.sh`, run in CI.
+
+- **`preflight-azure.sh --product asm`** checks the ASM listing.
+
+- **`preflight-aws.sh`** checks the actual shape you will deploy.
+  - **`--instance-type` and `--max-count`.** The vCPU check now covers the instance type and count you will run.
+  - **Elastic IP and VPC headroom.** It reports both: two EIPs per HA deployment against a default limit of five per region stops the third client in a region.
+
+- **`explain.sh`** recognises RDS and load-balancer deletion protection, `BucketNotEmpty`, secrets still in their recovery window, and Elastic IP or VPC limits.
+
 - **`docs/AZURE_MSSP_RUNBOOK.md`: one client, from an empty subscription to a live console and back to nothing with `terraform destroy`, in ten numbered steps, for all three Azure tiers.** It forks once, on whose subscription the deployment lands (the MSSP's, or the client's with a service principal the client owns), and is otherwise the same path for single VM, HA and autoscale. Teardown is a first-class step rather than a footnote: export first, lift delete locks in their own apply, read the destroy plan for `azurerm_marketplace_agreement`, then destroy, verify with `sweep-azure.sh`, and remove the client's state blob. It closes with what the first customer deployments hit and what now prevents each one.
 
 - **`quickstart/azure-autoscale`: a complete root config for the autoscale tier,** matching `azure-single` and `azure-ha` (networking included, two required inputs). Three defaults differ from the module's, each for a reason stated in its README: `vm_size = "Standard_D2s_v3"` (the DSv3 pool, not the DSv5 one new subscriptions are often granted 0 of), `vmss_max_count = 4` (every instance meters) and `db_replica_count = 0` (each replica is a full server).
@@ -112,6 +138,14 @@ All notable changes to this project are documented here. Format follows [Keep a 
   `quickstart/tests/explain_test.sh` (42 assertions) uses real error text rather than paraphrases — the tool matches provider strings, so a paraphrased fixture tests the paraphrase. It also asserts that **nothing is invented**: every script path, module variable and marketplace identifier the tool emits is checked against this repository. Advice that does not work costs a round trip *and* the reader's confidence in everything else printed. Neuter-checked by pointing the tool at a nonexistent script and a non-existent variable; both fail the suite.
 
 ### Fixed
+
+- **The Azure single-VM quickstart's `console_url` pointed at the Azure portal, not the console.** It passed through the module output of the same name, which is the portal page for the VM, so the README's health check curled the portal. It is now `https://<ip>:3333/` for SAT and `https://<ip>/` for ASM.
+
+- **The SAT autoscale quickstart told readers to fetch a Key Vault secret that tier never creates.** The autoscale tier has no shared admin-password secret (the module says so). The README now uses `initial_credentials_command`, which reads each instance.
+
+- **`preflight-aws.sh` implied a visible AMI meant the account was subscribed.** Marketplace AMIs are visible to every account; a missing subscription shows only at launch, as `OptInRequired`. It now says so.
+
+- **`explain.sh` said the preflight checks generated names for availability.** Neither preflight does. The advice now says to change `customer` or `environment`.
 
 - **A second deployment in one subscription failed on the Marketplace terms, and destroying any deployment cancelled them for all of them.** Terms are per subscription, but every module accepts them through an `azurerm_marketplace_agreement` it then owns. The provider refuses to create one that is already accepted (`already exists - to be managed via Terraform this resource needs to be imported`), and deletes it by *cancelling* the terms, which then breaks image swaps and scale-out for every other HailBytes deployment in the subscription. Found while writing the MSSP runbook, not yet hit in the field, because every deployment so far was the first in its subscription. With `customer` set the quickstart roots now default `accept_marketplace_terms` to `false` and the runbook accepts the terms once with `preflight-azure.sh --accept-terms`. Unset, behaviour is unchanged. The module default is untouched: flipping it would destroy, and so cancel, the agreement on every existing deployment's next apply.
 
