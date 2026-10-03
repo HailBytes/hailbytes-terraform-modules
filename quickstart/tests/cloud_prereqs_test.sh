@@ -276,6 +276,9 @@ run "rejects --location with no value"   2 happy   bash "${REPO}/quickstart/pref
 run "rejects an unknown flag"            2 happy   bash "${REPO}/quickstart/preflight-azure.sh" ha --nope
 run "ha tier, everything green"          0 happy   bash "${REPO}/quickstart/preflight-azure.sh" ha --location northeurope
 run "single tier, everything green"      0 happy   bash "${REPO}/quickstart/preflight-azure.sh" single
+run "autoscale tier, everything green"   0 happy   bash "${REPO}/quickstart/preflight-azure.sh" autoscale --location northeurope
+run "rejects --max-count 0"              2 happy   bash "${REPO}/quickstart/preflight-azure.sh" autoscale --max-count 0
+run "rejects --max-count with no value"  2 happy   bash "${REPO}/quickstart/preflight-azure.sh" autoscale --max-count
 run "reports rather than fails: no image"    0 no_image bash "${REPO}/quickstart/preflight-azure.sh" ha
 run "reports rather than fails: no zone 2"   0 no_zones bash "${REPO}/quickstart/preflight-azure.sh" ha
 run "reports rather than fails: short quota" 0 no_quota bash "${REPO}/quickstart/preflight-azure.sh" ha
@@ -312,6 +315,26 @@ check "an unavailable image says the region is the problem" \
 out="$(azure_out no_zones)"
 check "a missing zone names the zone and the consequence" \
   "$(grep -c 'zone 2 is not available' <<<"$out")" "1"
+
+# Autoscale: the scale set spans zones 1-3, and quota is sized for the ceiling.
+# The mock's no_zones scenario offers 1 and 3, so zone 2 is the one to flag.
+out="$( export MOCK_SCENARIO=no_zones; bash "${REPO}/quickstart/preflight-azure.sh" autoscale 2>&1 )"
+check "autoscale: a missing zone is flagged against the 1 2 3 spread" \
+  "$(grep -c 'pins zones 1 2 3' <<<"$out")" "1"
+# Single: checks the pool the single-VM module's OWN default draws from. It used
+# to share HA's default, so it reported room in DSv3 for an apply that would draw
+# DSv5. Derived from the module, like the HA check above.
+single_default_size="$(sed -n '/^variable "vm_size"/,/^}/p' \
+  "${REPO}/modules/single-vm/azure/variables.tf" \
+  | sed -n 's/^  default     = "\(.*\)"$/\1/p' | head -1)"
+out="$( export MOCK_SCENARIO=happy; bash "${REPO}/quickstart/preflight-azure.sh" single 2>&1 )"
+check "single: preflights the single-VM module's default size (${single_default_size})" \
+  "$(grep -c "at ${single_default_size}" <<<"$out")" "1"
+out="$( export MOCK_SCENARIO=happy; bash "${REPO}/quickstart/preflight-azure.sh" autoscale --max-count 6 --vm-size Standard_D2s_v3 2>&1 )"
+check "autoscale: quota is sized for --max-count, not the floor" \
+  "$(grep -c 'builds 6 application VM(s)' <<<"$out")" "1"
+check "autoscale: registers the database and cache providers too" \
+  "$(grep -c 'Microsoft.Cache' <<<"$out")" "1"
 
 out="$(azure_out no_quota)"
 # Both figures below are DERIVED from the module default rather than typed.

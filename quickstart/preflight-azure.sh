@@ -10,6 +10,7 @@
 #
 #   ./quickstart/preflight-azure.sh ha        # HA hot-hot tier (two VMs + Flexible Server)
 #   ./quickstart/preflight-azure.sh single    # single-VM tier
+#   ./quickstart/preflight-azure.sh autoscale --max-count 4   # scale set; quota sized for the ceiling
 #
 # Add --location <region> (or set HB_LOCATION) to check the region you will
 # actually deploy into. Three of the checks below are regional -- marketplace
@@ -44,9 +45,20 @@ set -uo pipefail
 TIER="${1:-ha}"
 ACCEPT_TERMS=0
 LOCATION="${HB_LOCATION:-northeurope}"
-# Must match the Azure module default, or the preflight checks a quota pool
-# the apply will not draw from. See modules/ha-hot-hot/azure/variables.tf.
+# Must match the size the tier will actually deploy, or the preflight checks a
+# quota pool the apply will not draw from. HA: modules/ha-hot-hot/azure default.
+# Autoscale: quickstart/azure-autoscale's default (the module's own is D4s_v5).
+# Single: modules/single-vm/azure default, which is still Standard_D4s_v5 -- and
+# so draws standardDSv5Family, the pool most often granted 0.
 VM_SKU="${HB_VM_SIZE:-Standard_D2s_v3}"
+if [ "$TIER" = "single" ] && [ -z "${HB_VM_SIZE:-}" ]; then
+    VM_SKU="Standard_D4s_v5"
+fi
+# Autoscale only: the most instances the scale set may reach. Quota has to cover
+# the ceiling, not the floor -- a scale-out that hits the limit fails silently
+# in the scale set's activity log while the campaign it was for runs short.
+# Default matches quickstart/azure-autoscale's vmss_max_count.
+MAX_COUNT="${HB_MAX_COUNT:-4}"
 
 # Parse the flags after the tier. --location and --vm-size take values, so a
 # plain `for arg in "$@"` cannot read them.
@@ -66,17 +78,26 @@ while [ $# -gt 0 ]; do
             shift
             ;;
         --vm-size=*) VM_SKU="${1#--vm-size=}" ;;
+        --max-count)
+            [ $# -ge 2 ] || { echo "--max-count needs a number, e.g. --max-count 4" >&2; exit 2; }
+            MAX_COUNT="$2"
+            shift
+            ;;
+        --max-count=*) MAX_COUNT="${1#--max-count=}" ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
     shift
 done
 
 case "$TIER" in
-    ha|single) ;;
+    ha|single|autoscale) ;;
     *)
-        echo "usage: $0 {ha|single} [--accept-terms] [--location REGION] [--vm-size SIZE]" >&2
+        echo "usage: $0 {ha|single|autoscale} [--accept-terms] [--location REGION] [--vm-size SIZE] [--max-count N]" >&2
         exit 2
         ;;
+esac
+case "$MAX_COUNT" in
+    ''|*[!0-9]*|0) echo "--max-count must be a whole number of 1 or more: ${MAX_COUNT}" >&2; exit 2 ;;
 esac
 
 # Marketplace plan for the SAT offer. Keep in sync with
@@ -184,7 +205,8 @@ HA_ONLY_PROVIDERS=(
     Microsoft.Cache
 )
 
-if [ "$TIER" = "ha" ]; then
+# Autoscale needs the same managed Postgres and Redis as HA.
+if [ "$TIER" != "single" ]; then
     PROVIDERS=("${COMMON_PROVIDERS[@]}" "${HA_ONLY_PROVIDERS[@]}")
 else
     PROVIDERS=("${COMMON_PROVIDERS[@]}")
@@ -354,9 +376,16 @@ echo
 # ---------- 5. Availability zones ----------
 #
 # The HA tier pins its two VMs to zones 1 and 2 (ha-hot-hot/azure vm_zones) and
-# runs a ZoneRedundant Flexible Server. Neither is optional, and not every
-# Azure region has zones -- in one that does not, apply fails on the first VM.
-if [ "$TIER" = "ha" ]; then
+# runs a ZoneRedundant Flexible Server. The autoscale tier spreads its scale set
+# across zones 1, 2 and 3 (unlimited-scale/azure). Neither is optional, and not
+# every Azure region has zones -- in one that does not, apply fails on the
+# first VM.
+case "$TIER" in
+    ha)        needed_zones="1 2" ;;
+    autoscale) needed_zones="1 2 3" ;;
+    *)         needed_zones="" ;;
+esac
+if [ -n "$needed_zones" ]; then
     echo "--------------------------------------------------------------"
     echo " Availability zones in ${LOCATION}"
     echo "--------------------------------------------------------------"
@@ -365,15 +394,15 @@ if [ "$TIER" = "ha" ]; then
     if [ -z "$zones" ]; then
         echo "  Could not read zone support for ${VM_SKU} in ${LOCATION}."
         echo "  Either the SKU is not offered there, the region name is wrong, or"
-        echo "  the identity lacks subscription read. The HA tier REQUIRES zones 1"
-        echo "  and 2; verify before deploying:"
+        echo "  the identity lacks subscription read. The ${TIER} tier REQUIRES zones"
+        echo "  ${needed_zones}; verify before deploying:"
         echo "    az vm list-skus -l ${LOCATION} --resource-type virtualMachines --query \"[?name=='${VM_SKU}']\" -o json"
     else
         echo "  ${VM_SKU} is offered in zones: $(printf '%s' "$zones" | tr '\n\t' '  ')"
-        for z in 1 2; do
+        for z in $needed_zones; do
             if ! printf '%s' "$zones" | grep -qw "$z"; then
                 echo "  WARNING: zone ${z} is not available for ${VM_SKU} here."
-                echo "  The HA tier pins zones 1 and 2 and will fail to apply."
+                echo "  The ${TIER} tier pins zones ${needed_zones} and will fail to apply."
             fi
         done
     fi
@@ -384,18 +413,22 @@ fi
 echo "--------------------------------------------------------------"
 echo " Compute quota in ${LOCATION}"
 echo "--------------------------------------------------------------"
-if [ "$TIER" = "ha" ]; then
-    node_count=2
-else
-    node_count=1
-fi
+case "$TIER" in
+    ha)        node_count=2 ;;
+    autoscale) node_count="$MAX_COUNT" ;;
+    *)         node_count=1 ;;
+esac
 needed=$(( node_count * VM_SKU_VCPUS ))
 
 # quota_key and quota_family were derived from the SKU name above.
 echo "The ${TIER} tier builds ${node_count} application VM(s) at ${VM_SKU}"
 echo "(${VM_SKU_VCPUS} vCPUs each), so it needs ${needed} vCPUs of"
 echo "'${quota_family}' quota here."
-if [ "$TIER" = "ha" ]; then
+if [ "$TIER" = "autoscale" ]; then
+    echo "That is the scale-out ceiling (--max-count ${MAX_COUNT}), not the floor:"
+    echo "the scale set cannot grow past whatever quota is left."
+fi
+if [ "$TIER" != "single" ]; then
     echo "The Flexible Server and the Redis cache draw their own quotas, separate"
     echo "from this one."
 fi

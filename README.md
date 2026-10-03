@@ -21,7 +21,9 @@ bash <(curl -fsSL https://raw.githubusercontent.com/HailBytes/hailbytes-terrafor
 
 [`quickstart/deploy.sh`](quickstart/deploy.sh) detects your cloud, checks your Marketplace subscription is actually active (and links the listing if it isn't), asks how you want to deploy, then shows you a `terraform plan` and applies only after you type `APPLY`. Every choice that materially changes your bill prints a `COST IMPACT` block with real figures first — see [`quickstart/README.md`](quickstart/README.md).
 
-Prefer to read the Terraform yourself? [`quickstart/azure-ha`](quickstart/azure-ha) is a complete root config for the Azure HA tier, networking included, that you can copy and edit. Each workload module also ships an `examples/basic` config for teams composing into an existing landing zone.
+Prefer to read the Terraform yourself? [`quickstart/azure-single`](quickstart/azure-single), [`quickstart/azure-ha`](quickstart/azure-ha) and [`quickstart/azure-autoscale`](quickstart/azure-autoscale) are complete root configs for the three Azure tiers, networking included, that you can copy and edit. Each workload module also ships an `examples/basic` config for teams composing into an existing landing zone.
+
+**MSSPs deploying per client on Azure:** [`docs/AZURE_MSSP_RUNBOOK.md`](docs/AZURE_MSSP_RUNBOOK.md) walks one client from an empty subscription to a live console and back to nothing with `terraform destroy`, for any of the three tiers.
 
 ## Overview
 

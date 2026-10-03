@@ -77,10 +77,25 @@ on what the customer already runs:
 
 ## Manual
 
-If you would rather read the Terraform first, [`azure-ha/`](azure-ha) is a
-complete root config for the Azure HA tier — networking included — that you can
+If you would rather read the Terraform first, [`azure-single/`](azure-single),
+[`azure-ha/`](azure-ha) and [`azure-autoscale/`](azure-autoscale) are complete
+root configs for the three Azure tiers — networking included — that you can
 copy, edit and apply. Per-tier module documentation lives under
 [`../modules/`](../modules).
+
+On Azure, use these rather than the wizard: the wizard's Azure output still
+needs the network inputs filled in by hand.
+
+## One deployment per client (MSSPs)
+
+[`../docs/AZURE_MSSP_RUNBOOK.md`](../docs/AZURE_MSSP_RUNBOOK.md) is the
+step-by-step, from an empty subscription to a live console and back to nothing
+with `terraform destroy`. The short version: set `customer` in each client's
+`terraform.tfvars` (or `HB_CUSTOMER` for the Cloud Shell scripts). That gives
+the client its own resource names, a `customer=<name>` tag on everything, and
+leaves the subscription-wide Marketplace terms to `preflight-azure.sh
+--accept-terms`. Otherwise the second client's apply fails on terms the first
+already accepted, and destroying either one cancels them for both.
 
 ## Cleaning up after test deploys
 

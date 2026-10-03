@@ -239,7 +239,26 @@ fi
 # ===========================================================================
 # Leftovers from an earlier attempt
 # ===========================================================================
-if has "needs to be imported into the State" || has "already exists"; then
+if { has "needs to be imported into the State" || has "already exists"; } \
+   && { has "azurerm_marketplace_agreement" || has "Microsoft.MarketplaceOrdering/agreements"; }; then
+    # Not debris. Marketplace terms are accepted once per SUBSCRIPTION, and the
+    # provider refuses to create the agreement when they already are -- so the
+    # second deployment into a subscription (a second MSSP client, or anyone who
+    # ran preflight --accept-terms first) fails here. The generic advice below
+    # would send them to delete a resource group, which fixes nothing.
+    hit "Marketplace terms are already accepted on this subscription"
+    does "Terms are per subscription, not per deployment. Another deployment"
+    cont "(or an earlier preflight --accept-terms) already accepted them, and"
+    cont "Terraform will not create what already exists. Nothing is broken."
+    printf '\n'
+    who "You. Nothing here needs an admin."
+    do_ "Stop this deployment managing the terms. In terraform.tfvars:"
+    cmd "accept_marketplace_terms = false"
+    cont "then re-run the apply. Do NOT import the agreement instead: whichever"
+    cont "deployment owns it CANCELS the terms for the whole subscription when it"
+    cont "is destroyed, which breaks image swaps and scale-out for every other"
+    cont "deployment there. See docs/AZURE_MSSP_RUNBOOK.md, Step 9."
+elif has "needs to be imported into the State" || has "already exists"; then
     hit "A resource already exists from an earlier attempt"
     does "An earlier run created this and did not finish, so Terraform has no"
     cont "record of it — and the cloud will not create it twice. This is"

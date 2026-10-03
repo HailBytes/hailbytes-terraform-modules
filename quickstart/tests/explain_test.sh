@@ -126,6 +126,20 @@ has "leftovers: points at the sweep tool" "sweep-azure.sh list" "$o"
 has "leftovers: names the billing cost of bumping the name" "KEEP BILLING" "$o"
 has "leftovers: says it is not a permissions problem" "not a permissions problem" "$o"
 
+# --- Marketplace terms already accepted --------------------------------------
+# Built from the provider's own ImportAsExistsError format and the agreement's
+# resource ID shape (terraform-provider-azurerm marketplace_agreement_resource.go),
+# not pasted from a customer log: no deployment has hit it yet, because every
+# one so far was the first in its subscription.
+cat > "$WORK/terms_exist.log" <<'EOF'
+Error: A resource with the ID "/subscriptions/00000000-0000-0000-0000-000000000000/providers/Microsoft.MarketplaceOrdering/agreements/lcmcon1687976613543/offers/gophish-phishing-simulator/plans/standard-v2" already exists - to be managed via Terraform this resource needs to be imported into the State. Please see the resource documentation for "azurerm_marketplace_agreement" for more information.
+EOF
+o="$(bash "$EXPLAIN" "$WORK/terms_exist.log" 2>&1)"
+has   "terms exist: says it is per subscription"    "per subscription" "$o"
+has   "terms exist: names the variable to set"      "accept_marketplace_terms = false" "$o"
+has   "terms exist: warns against importing"        "CANCELS the terms" "$o"
+hasnt "terms exist: does not send them to delete a resource group" "sweep-azure.sh delete" "$o"
+
 # --- Postgres HA entitlement ------------------------------------------------
 cat > "$WORK/ha.log" <<'EOF'
 Error: creating Postgresql Flexible Server: Status: "MultiAzHaIsOfferRestricted" Multi-Zone HA is not supported in this region. Please choose a different region. azurerm
