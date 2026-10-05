@@ -352,6 +352,9 @@ jobs:
       - name: Failure-explainer tests (real error fixtures, no credentials)
         run: bash quickstart/tests/explain_test.sh
 
+      - name: AWS state-bootstrap and bucket-emptying tests (mocked aws, no credentials)
+        run: bash quickstart/tests/aws_helpers_test.sh
+
       - name: Cloud Shell tool availability
         # Both Cloud Shells ship terraform, git and their own CLI. If the
         # wizard grows a dependency on something else, this catches it before

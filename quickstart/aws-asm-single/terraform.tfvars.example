@@ -1,0 +1,15 @@
+# Copy to terraform.tfvars. One value is required.
+
+# REQUIRED: who may reach the admin console.
+allowed_cidrs = ["REPLACE.WITH.YOUR.IP/32"]
+
+# MSSPs: one deployment per client. Prefixes every resource and tags it
+# customer=<name>. Set it on the first apply only. See docs/AWS_MSSP_RUNBOOK.md.
+# customer = "acme"
+
+# Every vCPU meters $0.24/hour. The default is the module's, 8 vCPU per instance.
+# instance_type = "m6i.2xlarge"
+
+# Optional overrides:
+# region      = "us-east-1"
+# environment = "prod"

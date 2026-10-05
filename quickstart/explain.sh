@@ -239,7 +239,26 @@ fi
 # ===========================================================================
 # Leftovers from an earlier attempt
 # ===========================================================================
-if has "needs to be imported into the State" || has "already exists"; then
+if { has "needs to be imported into the State" || has "already exists"; } \
+   && { has "azurerm_marketplace_agreement" || has "Microsoft.MarketplaceOrdering/agreements"; }; then
+    # Not debris. Marketplace terms are accepted once per SUBSCRIPTION, and the
+    # provider refuses to create the agreement when they already are -- so the
+    # second deployment into a subscription (a second MSSP client, or anyone who
+    # ran preflight --accept-terms first) fails here. The generic advice below
+    # would send them to delete a resource group, which fixes nothing.
+    hit "Marketplace terms are already accepted on this subscription"
+    does "Terms are per subscription, not per deployment. Another deployment"
+    cont "(or an earlier preflight --accept-terms) already accepted them, and"
+    cont "Terraform will not create what already exists. Nothing is broken."
+    printf '\n'
+    who "You. Nothing here needs an admin."
+    do_ "Stop this deployment managing the terms. In terraform.tfvars:"
+    cmd "accept_marketplace_terms = false"
+    cont "then re-run the apply. Do NOT import the agreement instead: whichever"
+    cont "deployment owns it CANCELS the terms for the whole subscription when it"
+    cont "is destroyed, which breaks image swaps and scale-out for every other"
+    cont "deployment there. See docs/AZURE_MSSP_RUNBOOK.md, Step 9."
+elif has "needs to be imported into the State" || has "already exists"; then
     hit "A resource already exists from an earlier attempt"
     does "An earlier run created this and did not finish, so Terraform has no"
     cont "record of it — and the cloud will not create it twice. This is"
@@ -341,10 +360,10 @@ if has "AccountNameInvalid" || has "StorageAccountAlreadyTaken" \
     cont "this one already — most often your own earlier attempt."
     printf '\n'
     who "You. Change the name prefix and re-run."
-    do_ "Set a different name_prefix, then re-run the pre-flight, which tests"
-    cont "each generated name for availability before anything is built:"
-    if [ "$CLOUD" = "aws" ]; then cmd "./quickstart/preflight-aws.sh ha"
-    else cmd "./quickstart/preflight-azure.sh ha"; fi
+    do_ "In the quickstarts, set or change customer (or environment) in"
+    cont "terraform.tfvars, which changes every generated name, then re-run"
+    cont "the apply. Nothing checks these names in advance, so a clash only"
+    cont "shows here."
 fi
 
 # ===========================================================================
@@ -427,6 +446,59 @@ if has "VMExtensionProvisioningError" || has "RunCommandHandlerLinux" \
     printf '\n'
     cont "Azure's troubleshooting page for this extension:"
     cmd "https://aka.ms/RunCommandManagedLinux"
+fi
+
+# ===========================================================================
+# AWS teardown and rebuild
+#
+# The AWS modules protect data by default -- RDS and load-balancer deletion
+# protection, an Object-Locked backup bucket, a seven-day Secrets Manager
+# recovery window -- so terraform destroy and a same-name rebuild each stop
+# with an error that is correct but not self-explanatory.
+# ===========================================================================
+if has "Cannot delete protected DB Instance" \
+   || has "deletion protection is enabled"; then
+    hit "Deletion protection is on, which is what stopped the destroy"
+    does "The database or load balancer is protected on purpose, and the"
+    cont "destroy stopped partway. Nothing is broken; nothing was lost."
+    printf '\n'
+    who "You."
+    do_ "Turn protection off in its own apply, then destroy again:"
+    cmd "terraform apply -var deletion_protection=false"
+    cont "That also turns off the database's final snapshot, so take the"
+    cont "export first if you have not: docs/AWS_MSSP_RUNBOOK.md, Step 10."
+fi
+
+if has "BucketNotEmpty"; then
+    hit "A bucket still holds objects, so it cannot be deleted"
+    does "The backup bucket (Object Lock) and the access-log bucket are not"
+    cont "force-destroyed, by design. Every object version has to go first."
+    printf '\n'
+    who "You. Deleting from the backup bucket needs s3:BypassGovernanceRetention."
+    do_ "Empty it, then re-run the destroy:"
+    cmd "./quickstart/empty-bucket-aws.sh <bucket name from the error>"
+fi
+
+if has "already scheduled for deletion"; then
+    hit "A secret with this name is still in its recovery window"
+    does "Destroying a deployment schedules its secrets for deletion after"
+    cont "seven days. Re-creating the same names inside that window fails."
+    printf '\n'
+    who "You."
+    do_ "Delete the old secrets now (it cannot be undone), then re-apply:"
+    cmd "aws secretsmanager delete-secret --force-delete-without-recovery --secret-id <name from the error>"
+    cont "Or deploy under a different environment name instead."
+fi
+
+if has "AddressLimitExceeded" || has "VpcLimitExceeded"; then
+    hit "The region is out of Elastic IPs or VPCs"
+    does "Each quickstart builds its own VPC, and HA and autoscale use two"
+    cont "Elastic IPs for NAT. The default limit is five of each per region."
+    printf '\n'
+    who "Whoever can request AWS service quota increases."
+    do_ "Request an increase in Service Quotas, or deploy into another region."
+    cont "Check the headroom first with:"
+    cmd "./quickstart/preflight-aws.sh ha"
 fi
 
 # ===========================================================================

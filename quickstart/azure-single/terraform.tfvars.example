@@ -8,6 +8,12 @@ allowed_cidrs = ["203.0.113.10/32"]
 # Contents of your SSH public key, e.g. output of: cat ~/.ssh/id_ed25519.pub
 ssh_public_key = "ssh-ed25519 AAAAC3Nz... you@example.com"
 
+# MSSPs: one deployment per client. Prefixes every resource, tags it
+# customer=<name>, and stops Terraform owning the subscription-wide Marketplace
+# terms (accept them once with ../preflight-azure.sh single --accept-terms).
+# Set it on the first apply only. See docs/AZURE_MSSP_RUNBOOK.md.
+# customer = "acme"
+
 # Optional overrides:
 # resource_group_name = "rg-hailbytes-sat-single"
 # location            = "northeurope"

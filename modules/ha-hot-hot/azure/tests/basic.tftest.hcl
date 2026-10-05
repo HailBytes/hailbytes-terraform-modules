@@ -154,3 +154,21 @@ run "redis_opted_in_is_reachable" {
     error_message = "The Redis access key must be stored in Key Vault for the VMs to read."
   }
 }
+
+# ASM nodes sharing one database need the same encryption and signing keys, so
+# the module mints one cluster key and hands every node its location
+# (hailbytes-asm#1734). SAT must see none of it: its payload staying
+# byte-identical is what keeps existing SAT deployments diff-free.
+run "asm_gets_a_cluster_key" {
+  command = apply
+
+  assert {
+    condition     = length(azurerm_key_vault_secret.asm_cluster_key) == 1
+    error_message = "an ASM deployment must create the cluster-key secret"
+  }
+
+  assert {
+    condition     = contains(keys(jsondecode(base64decode(azurerm_linux_virtual_machine.vm[0].custom_data)).hailbytes), "asm_cluster_key_secret_name")
+    error_message = "the ASM payload must carry asm_cluster_key_secret_name"
+  }
+}

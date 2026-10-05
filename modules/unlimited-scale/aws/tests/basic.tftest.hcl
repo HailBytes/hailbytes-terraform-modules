@@ -84,3 +84,49 @@ run "minimal_inputs_apply" {
     error_message = "redis_endpoint output must be non-empty when managed Redis is enabled (the default)"
   }
 }
+
+# ASM nodes sharing one database need the same encryption and signing keys, so
+# the module mints one cluster key and hands every node its location
+# (hailbytes-asm#1734). SAT must see none of it: its payload staying
+# byte-identical is what keeps existing SAT deployments diff-free.
+run "asm_gets_a_cluster_key" {
+  command = apply
+
+  assert {
+    condition     = length(aws_secretsmanager_secret.asm_cluster_key) == 1
+    error_message = "an ASM deployment must create the cluster-key secret"
+  }
+
+  assert {
+    condition     = contains(keys(jsondecode(base64decode(aws_launch_template.main.user_data)).hailbytes), "asm_cluster_key_secret_arn")
+    error_message = "the ASM payload must carry asm_cluster_key_secret_arn"
+  }
+
+  assert {
+    condition     = contains(keys(jsondecode(base64decode(aws_launch_template.main.user_data)).hailbytes), "admin_password_secret_arn")
+    error_message = "the ASM payload must carry admin_password_secret_arn"
+  }
+}
+
+run "sat_payload_is_unchanged" {
+  command = apply
+
+  variables {
+    product = "sat"
+  }
+
+  assert {
+    condition     = length(aws_secretsmanager_secret.asm_cluster_key) == 0
+    error_message = "a SAT deployment must not create the ASM cluster-key secret"
+  }
+
+  assert {
+    condition     = !contains(keys(jsondecode(base64decode(aws_launch_template.main.user_data)).hailbytes), "asm_cluster_key_secret_arn")
+    error_message = "the SAT payload must not change: asm_cluster_key_secret_arn is ASM-only"
+  }
+
+  assert {
+    condition     = !contains(keys(jsondecode(base64decode(aws_launch_template.main.user_data)).hailbytes), "admin_password_secret_arn")
+    error_message = "the SAT payload must not change: admin_password_secret_arn is ASM-only"
+  }
+}

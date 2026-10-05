@@ -6,6 +6,11 @@ is the fallback when the HA tier is not warranted or not yet available.
 Everything deploys into **your** subscription. No HailBytes access, no
 phone-home. Software billing runs through your Azure Marketplace subscription.
 
+Running this for an MSSP client, or for more than one organisation in a
+subscription? Follow [docs/AZURE_MSSP_RUNBOOK.md](../../docs/AZURE_MSSP_RUNBOOK.md).
+It covers the same steps for every tier, plus per-client naming, state and
+teardown.
+
 ## What you give up versus the HA tier
 
 Worth being explicit, because the difference is not subtle:
@@ -55,8 +60,8 @@ curl -fsSL https://raw.githubusercontent.com/hailbytes/hailbytes-terraform-modul
 It detects your egress IP for admin-UI allow-listing, generates an SSH key if
 you have none, writes `terraform.tfvars`, runs the preflight, then
 `terraform init && terraform apply`. You review and confirm the plan before
-anything is created. Override with `HB_RESOURCE_GROUP`, `HB_LOCATION`,
-`HB_ALLOWED_CIDR`, `HB_SSH_KEY_FILE`.
+anything is created. Override with `HB_CUSTOMER` (one deployment per client),
+`HB_RESOURCE_GROUP`, `HB_LOCATION`, `HB_ALLOWED_CIDR`, `HB_SSH_KEY_FILE`.
 
 ## Step 3 (option B): your own workstation
 
@@ -79,7 +84,7 @@ terraform output -raw console_url
 
 # Health endpoint. SAT's path is /api/health -- there is no /health, and
 # curling it returns 404, which looks like a failed deployment.
-curl -k "$(terraform output -raw console_url)/api/health"
+curl -k "$(terraform output -raw console_url)api/health"
 
 # Initial admin password, read from inside the VM
 eval "$(terraform output -raw initial_credentials_command)"
@@ -92,6 +97,17 @@ Change the admin password at first login, then delete the credentials file.
 There is no in-place upgrade path. The HA tier provisions a separate managed
 database, so moving means standing up `quickstart/azure-ha` and migrating data
 across. Plan for that rather than assuming a flag flip.
+
+## Tearing down
+
+```bash
+terraform plan -destroy -out destroy.tfplan   # read it: everything should be in one resource group
+terraform apply destroy.tfplan
+```
+
+[Runbook Step 10](../../docs/AZURE_MSSP_RUNBOOK.md#step-10-tear-it-down-with-terraform)
+covers exporting data first, lifting delete locks, keeping other deployments'
+Marketplace terms intact, and what deliberately survives.
 
 ## Production notes
 

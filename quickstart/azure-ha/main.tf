@@ -8,8 +8,8 @@
 #
 #   terraform init && terraform apply
 #
-# Deploying ASM instead? Change the module source below to
-# ../../modules/asm-azure-ha and update name_prefix.
+# Deploying ASM instead? Use ../azure-asm-ha, the same root for the ASM
+# listing.
 
 terraform {
   required_version = ">= 1.5.0"
@@ -67,9 +67,26 @@ provider "azurerm" {
 }
 
 variable "resource_group_name" {
-  description = "Resource group to create. All quickstart resources live here."
+  description = "Resource group to create. All quickstart resources live here. Leave null for rg-hailbytes-sat-prod, or rg-<customer>-sat-<environment> when customer is set."
   type        = string
-  default     = "rg-hailbytes-sat-prod"
+  default     = null
+}
+
+variable "customer" {
+  description = "Short client name when you run one deployment per client (MSSP). Prefixes every resource and the resource group, and tags everything customer=<name> for per-client cost reports. Leave null for a single-organisation deployment. Set it on the FIRST apply only: changing it later renames, and so replaces, every resource."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.customer == null || can(regex("^[a-z][a-z0-9-]{1,15}$", var.customer))
+    error_message = "customer must be 2-16 characters: lowercase letters, digits and hyphens, starting with a letter."
+  }
+}
+
+variable "accept_marketplace_terms" {
+  description = "Accept the Marketplace image terms from Terraform. Leave null: true for a single deployment, false when customer is set. Terms are per SUBSCRIPTION, and Terraform treats them as a resource it owns -- a second deployment in the same subscription fails with 'already exists', and destroying ANY deployment cancels the terms for every other one. With customer set, accept them once instead: ../preflight-azure.sh ha --accept-terms."
+  type        = bool
+  default     = null
 }
 
 variable "location" {
@@ -104,9 +121,37 @@ variable "environment" {
   default = "prod"
 }
 
+variable "enable_db_delete_lock" {
+  description = "CanNotDelete lock on the database. Blocks deletion by anyone, terraform destroy included: turn it on once the client is live, and off again in its own apply before a planned teardown."
+  type        = bool
+  default     = false
+}
+
+variable "enable_public_ip_delete_lock" {
+  description = "CanNotDelete lock on the public IPs this root creates. Azure has no undelete for a public IP. Same trade-off as enable_db_delete_lock: off in its own apply before a teardown."
+  type        = bool
+  default     = false
+}
+
+variable "key_vault_reader_principal_ids" {
+  description = "Entra object IDs (ideally one group) granted read on the Key Vault holding the database password and session keys. Whoever runs the apply gets access automatically; set this when that is a service principal, so your operators are not locked out of their own deployment."
+  type        = list(string)
+  default     = []
+}
+
+locals {
+  # Null customer reproduces the names this root has always used, so an
+  # existing deployment plans clean.
+  name_prefix         = var.customer == null ? "hailbytes-sat-${var.environment}" : "${var.customer}-sat-${var.environment}"
+  resource_group_name = coalesce(var.resource_group_name, var.customer == null ? "rg-hailbytes-sat-prod" : "rg-${var.customer}-sat-${var.environment}")
+  accept_terms        = var.accept_marketplace_terms != null ? var.accept_marketplace_terms : var.customer == null
+  tags                = var.customer == null ? {} : { customer = var.customer }
+}
+
 resource "azurerm_resource_group" "main" {
-  name     = var.resource_group_name
+  name     = local.resource_group_name
   location = var.location
+  tags     = local.tags
 }
 
 # Networking prerequisites: vnet, workload/LB subnets, subnet delegated
@@ -114,9 +159,10 @@ resource "azurerm_resource_group" "main" {
 module "network" {
   source = "../../modules/network/azure"
 
-  name_prefix         = "hailbytes-sat-${var.environment}"
+  name_prefix         = local.name_prefix
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
+  tags                = local.tags
 
   # The workload module associates its own NSG, and Azure allows one NSG per
   # subnet, so the network module must not attach its baseline set. The flag
@@ -129,6 +175,8 @@ module "hailbytes_sat" {
   source = "../../modules/sat-azure-ha"
 
   environment            = var.environment
+  name_prefix            = local.name_prefix
+  tags                   = local.tags
   resource_group_name    = azurerm_resource_group.main.name
   location               = azurerm_resource_group.main.location
   vm_subnet_id           = module.network.workload_subnet_id
@@ -139,6 +187,11 @@ module "hailbytes_sat" {
   phish_allowed_cidrs    = var.phish_allowed_cidrs
   admin_username         = var.admin_username
   ssh_public_key         = var.ssh_public_key
+
+  accept_marketplace_terms       = local.accept_terms
+  key_vault_reader_principal_ids = var.key_vault_reader_principal_ids
+  enable_db_delete_lock          = var.enable_db_delete_lock
+  enable_public_ip_delete_lock   = var.enable_public_ip_delete_lock
 
   # Key Vault names are GLOBALLY unique, the vault carries purge protection, and
   # a deleted name is reserved for 30 days with no force-purge. Derived from
@@ -153,6 +206,16 @@ module "hailbytes_sat" {
   # session keys and the disk encryption key. Set key_vault_name to the name you
   # already hold instead.
   key_vault_name_random_suffix = true
+}
+
+output "resource_group_name" {
+  description = "Where everything in this deployment lives. terraform destroy removes it; see docs/AZURE_MSSP_RUNBOOK.md, Step 9."
+  value       = azurerm_resource_group.main.name
+}
+
+output "console_url" {
+  description = "Admin UI, through the load balancer. Self-signed until Step 8 of docs/AZURE_MSSP_RUNBOOK.md, so expect a browser warning."
+  value       = "https://${module.hailbytes_sat.load_balancer_public_ip}/"
 }
 
 output "load_balancer_public_ip" {
@@ -171,4 +234,12 @@ output "postgres_fqdn" {
 output "key_vault_uri" {
   description = "The DB password is stored here under secret name 'hailbytes-db-password'."
   value       = module.hailbytes_sat.key_vault_uri
+}
+
+output "initial_credentials_command" {
+  description = "Prints the first-boot admin password. Both nodes share it through Key Vault, so there is one value."
+  value = join(" ", [
+    "az keyvault secret show --name hailbytes-admin-initial-password --query value -o tsv --vault-name",
+    regex("^https://([^.]+)\\.", module.hailbytes_sat.key_vault_uri)[0],
+  ])
 }

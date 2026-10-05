@@ -65,6 +65,8 @@ GovCloud (AWS) and Azure Government are out of scope for v1.
 - [docs/PATCHING_AND_MIGRATION.md](docs/PATCHING_AND_MIGRATION.md) — pre-patch backups, rolling-replace, auto-rollback (AWS)
 - [docs/AZURE_PATCHING_AND_MIGRATION.md](docs/AZURE_PATCHING_AND_MIGRATION.md) — the Azure procedure, incl. Postgres advisory-lock migration serialisation
 - [docs/AZURE_STATE_RECOVERY.md](docs/AZURE_STATE_RECOVERY.md) — lost-state recovery: rebuild vs import, the Key Vault secrets that make a no-rotation import possible, remote backend bootstrap
+- [docs/AZURE_MSSP_RUNBOOK.md](docs/AZURE_MSSP_RUNBOOK.md) — numbered per-client Azure deploy and `terraform destroy` teardown, SAT and ASM, all three tiers, and the lessons from the first customer deployments
+- [docs/AWS_MSSP_RUNBOOK.md](docs/AWS_MSSP_RUNBOOK.md) — the same for AWS, SAT and ASM: quickstart roots, S3 state, emptying the object-locked buckets before destroy
 - [docs/DEPLOY_FROM_GALLERY.md](docs/DEPLOY_FROM_GALLERY.md) — test-only: booting a self-built Compute Gallery image, and why such a deployment is not marketplace-metered
 - [docs/AZURE_POSTGRES_ZONE_REDUNDANT_HA.md](docs/AZURE_POSTGRES_ZONE_REDUNDANT_HA.md) — `MultiAzHaIsOfferRestricted`: filing the quota request, what Microsoft answers, adding the standby later in place
 - [docs/AZURE_HA_PARITY_AUDIT.md](docs/AZURE_HA_PARITY_AUDIT.md) — Azure-vs-AWS HA gap table with effort estimates
