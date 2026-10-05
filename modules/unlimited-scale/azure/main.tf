@@ -221,6 +221,72 @@ resource "azurerm_key_vault_secret" "db" {
   depends_on = [azurerm_role_assignment.kv_writer]
 }
 
+# The scale set's identity reads the secrets it is told about in custom_data
+# (the database password, and for ASM the cluster key and admin password).
+# Nothing granted it that, so an instance could be handed a secret name it had
+# no permission to read. One assignment covers every instance: they share the
+# scale set's system-assigned identity.
+resource "azurerm_role_assignment" "vmss_kv_secrets_user" {
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_linux_virtual_machine_scale_set.main.identity[0].principal_id
+}
+
+# ASM cluster key: one random value every ASM node in this deployment reads,
+# from which the image derives the keys that must be identical across nodes
+# sharing one database -- ASM_ENCRYPTION_KEY (Fernet, for the credentials
+# EncryptedCharField stores), the Django SECRET_KEY (session and token
+# signing), and Hatchet's shared secrets. Per-node random keys made each node
+# unable to read what the other wrote (hailbytes-asm#1734).
+#
+# ASM only. SAT gets its shared keys from the session-keys secret, and its
+# payload is left byte-identical so no SAT deployment sees a diff. Stable
+# across applies: regenerating it would orphan every encrypted credential.
+resource "random_id" "asm_cluster_key" {
+  count       = var.product == "asm" ? 1 : 0
+  byte_length = 64
+}
+
+resource "azurerm_key_vault_secret" "asm_cluster_key" {
+  count           = var.product == "asm" ? 1 : 0
+  name            = "hailbytes-asm-cluster-key"
+  value           = random_id.asm_cluster_key[0].hex
+  key_vault_id    = azurerm_key_vault.main.id
+  content_type    = "application/x-hailbytes-asm-cluster-key"
+  expiration_date = timeadd(timestamp(), "${var.db_secret_expiration_hours}h")
+
+  lifecycle {
+    ignore_changes = [expiration_date]
+  }
+
+  depends_on = [azurerm_role_assignment.kv_writer]
+}
+
+# Shared initial admin password, ASM only. Without it each scale-set instance
+# would mint its own, and which one works would depend on which instance
+# created the account. The HA tier passes the same thing to both products;
+# here it is ASM-only so the SAT payload stays unchanged.
+resource "random_password" "admin_initial" {
+  count   = var.product == "asm" ? 1 : 0
+  length  = 24
+  special = false # safe in an env file and a shell
+}
+
+resource "azurerm_key_vault_secret" "admin_initial_password" {
+  count           = var.product == "asm" ? 1 : 0
+  name            = "hailbytes-admin-initial-password"
+  value           = random_password.admin_initial[0].result
+  key_vault_id    = azurerm_key_vault.main.id
+  content_type    = "application/x-hailbytes-initial-admin-password"
+  expiration_date = timeadd(timestamp(), "${var.db_secret_expiration_hours}h")
+
+  lifecycle {
+    ignore_changes = [expiration_date]
+  }
+
+  depends_on = [azurerm_role_assignment.kv_writer]
+}
+
 # ----- NSG (allowed_cidrs ingress) -----
 #
 # Mirrors the ha-hot-hot/azure pattern: build an NSG with one allow-https
@@ -477,7 +543,7 @@ resource "azurerm_linux_virtual_machine_scale_set" "main" {
   }
 
   custom_data = base64encode(jsonencode({
-    hailbytes = {
+    hailbytes = merge({
       mode           = "scale-out"
       key_vault_uri  = azurerm_key_vault.main.vault_uri
       db_secret_name = azurerm_key_vault_secret.db.name
@@ -487,7 +553,15 @@ resource "azurerm_linux_virtual_machine_scale_set" "main" {
       redis_host     = local.effective_redis_host
       redis_port     = local.effective_redis_port
       redis_tls      = local.provision_managed_redis ? true : var.redis_endpoint_override_tls
-    }
+      },
+      # ASM only, so SAT's payload -- and therefore every SAT instance -- is unchanged.
+      var.product == "asm" ? {
+        db_name                     = azurerm_postgresql_flexible_server_database.main.name
+        db_user                     = azurerm_postgresql_flexible_server.primary.administrator_login
+        asm_cluster_key_secret_name = azurerm_key_vault_secret.asm_cluster_key[0].name
+        admin_password_secret_name  = azurerm_key_vault_secret.admin_initial_password[0].name
+      } : {},
+    )
   }))
 
   boot_diagnostics {}

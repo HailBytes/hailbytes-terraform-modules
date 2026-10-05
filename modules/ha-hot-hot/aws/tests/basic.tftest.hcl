@@ -81,3 +81,21 @@ run "minimal_inputs_apply" {
     error_message = "flow_log_group_name output must be non-empty when enable_flow_logs is true (the default)"
   }
 }
+
+# ASM nodes sharing one database need the same encryption and signing keys, so
+# the module mints one cluster key and hands every node its location
+# (hailbytes-asm#1734). SAT must see none of it: its payload staying
+# byte-identical is what keeps existing SAT deployments diff-free.
+run "asm_gets_a_cluster_key" {
+  command = apply
+
+  assert {
+    condition     = length(aws_secretsmanager_secret.asm_cluster_key) == 1
+    error_message = "an ASM deployment must create the cluster-key secret"
+  }
+
+  assert {
+    condition     = contains(keys(jsondecode(base64decode(aws_instance.vm[0].user_data)).hailbytes), "asm_cluster_key_secret_arn")
+    error_message = "the ASM payload must carry asm_cluster_key_secret_arn"
+  }
+}

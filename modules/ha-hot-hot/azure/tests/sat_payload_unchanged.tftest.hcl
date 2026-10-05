@@ -1,3 +1,7 @@
+# The SAT half of the ASM cluster-key check, in its own file because test runs
+# in one file share state, and the VMs ignore_changes on their startup data --
+# so after an ASM run the SAT run would still see the ASM payload.
+
 # Minimal-input apply against a mocked azurerm provider. Proves the HA tier
 # instantiates with only its required variables and that the load balancer,
 # VMs, database, Key Vault and Redis outputs are all populated.
@@ -77,98 +81,20 @@ variables {
   create_backup_storage_account = false
 }
 
-run "minimal_inputs_apply" {
+run "sat_payload_is_unchanged" {
   command = apply
-
-  assert {
-    condition     = output.load_balancer_public_ip != ""
-    error_message = "load_balancer_public_ip output must be non-empty"
-  }
-
-  assert {
-    condition     = length(output.vm_ids) == 2
-    error_message = "HA tier must stand up exactly two active/active VMs"
-  }
-
-  assert {
-    condition     = output.vm_nsg_id != ""
-    error_message = "vm_nsg_id must be non-empty when vm_subnet_id differs from lb_subnet_id (the fixture default)"
-  }
-
-  assert {
-    condition     = output.postgres_fqdn != ""
-    error_message = "postgres_fqdn output must be non-empty in flexible_server mode (the default)"
-  }
-
-  assert {
-    condition     = output.key_vault_uri != ""
-    error_message = "key_vault_uri output must be non-empty"
-  }
-
-  # The default no longer provisions a cache, so this output is empty. That is
-  # the assertion worth keeping: it proves the default composes without one.
-  assert {
-    condition     = output.redis_endpoint == ""
-    error_message = "redis_endpoint must be empty by default - enable_managed_redis defaults to false, and a non-empty endpoint means a cache got created without being asked for."
-  }
-
-  # Regression: the app VMs' managed identities had no Key Vault data-plane
-  # role, so custom_data pointed them at a vault they got 403 from and the
-  # deployment could not start. One assignment per VM.
-  assert {
-    condition     = length(azurerm_role_assignment.vm_kv_secrets_user) == 2
-    error_message = "Each app VM's managed identity must hold a Key Vault Secrets User assignment."
-  }
-
-  # The two Redis regressions below moved to redis_opted_in_is_reachable, since
-  # the default no longer provisions a cache. They are regressions worth
-  # keeping: both were real defects.
-  assert {
-    condition     = length(azurerm_private_endpoint.redis) == 0
-    error_message = "No cache by default means no private endpoint."
-  }
-}
-
-# The two Redis regressions that used to live in minimal_inputs_apply. Both
-# were real defects, so they keep their assertions -- just behind the opt-in
-# now that the cache is off by default.
-run "redis_opted_in_is_reachable" {
-  command = plan
 
   variables {
-    enable_managed_redis = true
-  }
-
-  # Regression: the cache is created with public_network_access_enabled = false
-  # and the Standard SKU cannot be VNet-injected, so without a private endpoint
-  # it is unreachable from the VMs by construction.
-  assert {
-    condition     = length(azurerm_private_endpoint.redis) == 1
-    error_message = "Managed Redis must be reachable over Private Link."
-  }
-
-  # Regression: Azure Cache for Redis always requires an access key; the VMs
-  # were given host and port but no credential.
-  assert {
-    condition     = length(azurerm_key_vault_secret.redis) == 1
-    error_message = "The Redis access key must be stored in Key Vault for the VMs to read."
-  }
-}
-
-# ASM nodes sharing one database need the same encryption and signing keys, so
-# the module mints one cluster key and hands every node its location
-# (hailbytes-asm#1734). SAT must see none of it: its payload staying
-# byte-identical is what keeps existing SAT deployments diff-free.
-run "asm_gets_a_cluster_key" {
-  command = apply
-
-  assert {
-    condition     = length(azurerm_key_vault_secret.asm_cluster_key) == 1
-    error_message = "an ASM deployment must create the cluster-key secret"
+    product = "sat"
   }
 
   assert {
-    condition     = contains(keys(jsondecode(base64decode(azurerm_linux_virtual_machine.vm[0].custom_data)).hailbytes), "asm_cluster_key_secret_name")
-    error_message = "the ASM payload must carry asm_cluster_key_secret_name"
+    condition     = length(azurerm_key_vault_secret.asm_cluster_key) == 0
+    error_message = "a SAT deployment must not create the ASM cluster-key secret"
+  }
+
+  assert {
+    condition     = !contains(keys(jsondecode(base64decode(azurerm_linux_virtual_machine.vm[0].custom_data)).hailbytes), "asm_cluster_key_secret_name")
+    error_message = "the SAT payload must not change: asm_cluster_key_secret_name is ASM-only"
   }
 }
