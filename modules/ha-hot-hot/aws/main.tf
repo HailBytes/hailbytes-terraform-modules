@@ -308,11 +308,11 @@ resource "aws_iam_role_policy" "secrets" {
     Statement = [{
       Effect = "Allow"
       Action = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
-      Resource = [
+      Resource = concat([
         aws_secretsmanager_secret.db.arn,
         aws_secretsmanager_secret.session_keys.arn,
         aws_secretsmanager_secret.admin_initial_password.arn,
-      ]
+      ], aws_secretsmanager_secret.asm_cluster_key[*].arn)
     }]
   })
 }
@@ -428,6 +428,36 @@ resource "aws_secretsmanager_secret" "admin_initial_password" {
 resource "aws_secretsmanager_secret_version" "admin_initial_password" {
   secret_id     = aws_secretsmanager_secret.admin_initial_password.id
   secret_string = random_password.admin_initial.result
+}
+
+# ASM cluster key: one random value every ASM node in this deployment reads,
+# from which the image derives the keys that must be identical across nodes
+# sharing one database -- ASM_ENCRYPTION_KEY (Fernet, for the credentials
+# EncryptedCharField stores), the Django SECRET_KEY (session and token
+# signing), and Hatchet's shared secrets. Per-node random keys made each node
+# unable to read what the other wrote (hailbytes-asm#1734).
+#
+# ASM only. SAT gets its shared keys from the session-keys secret, and its
+# payload is left byte-identical so no SAT deployment sees a diff. Stable
+# across applies: regenerating it would orphan every encrypted credential.
+resource "random_id" "asm_cluster_key" {
+  count       = var.product == "asm" ? 1 : 0
+  byte_length = 64
+}
+
+resource "aws_secretsmanager_secret" "asm_cluster_key" {
+  count                   = var.product == "asm" ? 1 : 0
+  name                    = "${local.name_prefix}-asm-cluster-key"
+  description             = "HailBytes ASM shared cluster key: the image derives its encryption, signing and Hatchet keys from it (hailbytes-asm#1734)"
+  kms_key_id              = var.enable_customer_managed_key ? aws_kms_key.main[0].arn : null
+  recovery_window_in_days = 7
+  tags                    = local.common_tags
+}
+
+resource "aws_secretsmanager_secret_version" "asm_cluster_key" {
+  count         = var.product == "asm" ? 1 : 0
+  secret_id     = aws_secretsmanager_secret.asm_cluster_key[0].id
+  secret_string = random_id.asm_cluster_key[0].hex
 }
 
 # ----- DB: RDS Multi-AZ mode (default) -----
@@ -849,7 +879,7 @@ resource "aws_instance" "vm" {
   # The image side was missing too -- its secret reader was Key-Vault-only, so
   # an ARN would not have been resolved even if passed.
   user_data = base64encode(jsonencode({
-    hailbytes = {
+    hailbytes = merge({
       mode          = "ha"
       db_mode       = var.db_mode
       db_secret_arn = aws_secretsmanager_secret.db.arn
@@ -864,7 +894,12 @@ resource "aws_instance" "vm" {
       redis_host                = local.effective_redis_host
       redis_port                = local.effective_redis_port
       redis_tls                 = local.provision_managed_redis ? true : var.redis_endpoint_override_tls
-    }
+      },
+      # ASM only, so SAT's payload -- and therefore every SAT instance -- is unchanged.
+      var.product == "asm" ? {
+        asm_cluster_key_secret_arn = aws_secretsmanager_secret.asm_cluster_key[0].arn
+      } : {},
+    )
   }))
 
   tags = merge(local.common_tags, {

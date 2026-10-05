@@ -12,6 +12,12 @@ ssh_public_key = "ssh-ed25519 AAAA...REPLACE user@host"
 # out of the landing pages unless they all sit inside that same range.
 # phish_allowed_cidrs = ["0.0.0.0/0"]
 
+# MSSPs: one deployment per client. Prefixes every resource, tags it
+# customer=<name>, and stops Terraform owning the subscription-wide Marketplace
+# terms (accept them once with ../preflight-azure.sh ha --accept-terms).
+# Set it on the first apply only. See docs/AZURE_MSSP_RUNBOOK.md.
+# customer = "acme"
+
 # Optional overrides:
 # resource_group_name = "rg-hailbytes-sat-prod"
 # location            = "northeurope"

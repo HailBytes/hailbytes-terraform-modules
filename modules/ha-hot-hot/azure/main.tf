@@ -442,6 +442,37 @@ resource "azurerm_key_vault_secret" "session_keys" {
   depends_on = [azurerm_role_assignment.kv_secret_writer]
 }
 
+# ASM cluster key: one random value every ASM node in this deployment reads,
+# from which the image derives the keys that must be identical across nodes
+# sharing one database -- ASM_ENCRYPTION_KEY (Fernet, for the credentials
+# EncryptedCharField stores), the Django SECRET_KEY (session and token
+# signing), and Hatchet's shared secrets. Per-node random keys made each node
+# unable to read what the other wrote (hailbytes-asm#1734).
+#
+# ASM only. SAT gets its shared keys from the session-keys secret above, and
+# its payload is left byte-identical so no SAT deployment sees a diff. Stable
+# across applies: regenerating it would orphan every encrypted credential.
+resource "random_id" "asm_cluster_key" {
+  count       = var.product == "asm" ? 1 : 0
+  byte_length = 64
+}
+
+resource "azurerm_key_vault_secret" "asm_cluster_key" {
+  count        = var.product == "asm" ? 1 : 0
+  name         = "hailbytes-asm-cluster-key"
+  value        = random_id.asm_cluster_key[0].hex
+  key_vault_id = azurerm_key_vault.main.id
+
+  content_type    = "application/x-hailbytes-asm-cluster-key"
+  expiration_date = timeadd(timestamp(), "${var.db_secret_expiration_hours}h")
+
+  lifecycle {
+    ignore_changes = [expiration_date]
+  }
+
+  depends_on = [azurerm_role_assignment.kv_secret_writer]
+}
+
 resource "azurerm_key_vault_secret" "db" {
   name         = "hailbytes-db-password"
   value        = local.db_password
@@ -1020,7 +1051,7 @@ resource "azurerm_linux_virtual_machine" "vm" {
   # so shared hash/encryption keys alone make the default cookie store work
   # across nodes (hailbytes-sat#907); Redis is an optimisation.
   custom_data = base64encode(jsonencode({
-    hailbytes = {
+    hailbytes = merge({
       mode           = "ha"
       db_mode        = var.db_mode
       key_vault_uri  = azurerm_key_vault.main.vault_uri
@@ -1047,7 +1078,12 @@ resource "azurerm_linux_virtual_machine" "vm" {
       # Console origin for SSO/SAML callback URLs; bootstrap writes it to
       # HAILBYTES_SAT_ADMIN_PUBLIC_URL. Null when unset.
       admin_public_url = var.admin_public_url
-    }
+      },
+      # ASM only, so SAT's payload -- and therefore every SAT VM -- is unchanged.
+      var.product == "asm" ? {
+        asm_cluster_key_secret_name = azurerm_key_vault_secret.asm_cluster_key[0].name
+      } : {},
+    )
   }))
 
   # Both attributes force replacement, and `count` means a single apply would

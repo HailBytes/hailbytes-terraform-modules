@@ -10,8 +10,12 @@
 # Or, from a clone:
 #
 #   ./quickstart/preflight-aws.sh single      # single-VM tier
-#   ./quickstart/preflight-aws.sh ha          # HA hot-hot tier (2 instances + RDS + ElastiCache)
-#   ./quickstart/preflight-aws.sh autoscale   # unlimited-scale tier (ASG + RDS + ElastiCache)
+#   ./quickstart/preflight-aws.sh ha          # HA hot-hot tier (2 instances + RDS)
+#   ./quickstart/preflight-aws.sh autoscale --max-count 4   # ASG + RDS + ElastiCache; quota sized for the ceiling
+#
+# Add --instance-type <type> if you will set instance_type. The default checked
+# is what each quickstart deploys: m6i.2xlarge for single and HA, m6i.large for
+# autoscale (quickstart/aws-*-autoscale).
 #
 # WHY THIS EXISTS
 # AWS has no direct equivalent of Azure's subscription-scoped resource
@@ -45,13 +49,49 @@ set -uo pipefail
 
 TIER="${1:-ha}"
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
+INSTANCE_TYPE="${HB_INSTANCE_TYPE:-}"
+# Autoscale only: the most instances the group may reach. Quota has to cover the
+# ceiling: a scale-out that hits the limit fails in the group's activity
+# history while the campaign it was for runs short. Matches the quickstart's
+# asg_max_size default.
+MAX_COUNT="${HB_MAX_COUNT:-4}"
 
 case "$TIER" in
     single|ha|autoscale) ;;
     *)
-        echo "usage: $0 {single|ha|autoscale}" >&2
+        echo "usage: $0 {single|ha|autoscale} [--instance-type TYPE] [--max-count N]" >&2
         exit 2
         ;;
+esac
+shift $(( $# > 0 ? 1 : 0 ))
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --instance-type)
+            [ $# -ge 2 ] || { echo "--instance-type needs a type, e.g. --instance-type m6i.xlarge" >&2; exit 2; }
+            INSTANCE_TYPE="$2"; shift ;;
+        --instance-type=*) INSTANCE_TYPE="${1#--instance-type=}" ;;
+        --max-count)
+            [ $# -ge 2 ] || { echo "--max-count needs a number, e.g. --max-count 4" >&2; exit 2; }
+            MAX_COUNT="$2"; shift ;;
+        --max-count=*) MAX_COUNT="${1#--max-count=}" ;;
+        *) echo "unknown argument: $1" >&2; exit 2 ;;
+    esac
+    shift
+done
+case "$MAX_COUNT" in
+    ''|*[!0-9]*|0) echo "--max-count must be a whole number of 1 or more: ${MAX_COUNT}" >&2; exit 2 ;;
+esac
+if [ -z "$INSTANCE_TYPE" ]; then
+    if [ "$TIER" = autoscale ]; then INSTANCE_TYPE="m6i.large"; else INSTANCE_TYPE="m6i.2xlarge"; fi
+fi
+# vCPUs from the size, which is how EC2 names them across families:
+# large = 2, xlarge = 4, Nxlarge = 4N. .metal varies by family, so it is
+# reported as unknown rather than guessed.
+case "${INSTANCE_TYPE#*.}" in
+    large)       INSTANCE_VCPUS=2 ;;
+    xlarge)      INSTANCE_VCPUS=4 ;;
+    *[0-9]xlarge) n="${INSTANCE_TYPE#*.}"; n="${n%xlarge}"; INSTANCE_VCPUS=$(( n * 4 )) ;;
+    *)           INSTANCE_VCPUS="" ;;
 esac
 
 # Marketplace product codes for the two listings. Keep in sync with
@@ -185,12 +225,18 @@ for product in sat asm; do
              --query 'reverse(sort_by(Images,&CreationDate))[0].ImageId' \
              --output text 2>/dev/null || true)"
     if [ -n "$ami" ] && [ "$ami" != "None" ]; then
-        printf '  %-4s %s\n' "$product" "AMI visible in ${REGION} (${ami})"
+        printf '  %-4s %s\n' "$product" "published in ${REGION} (${ami})"
     else
-        printf '  %-4s %s\n' "$product" "no AMI visible -- not yet subscribed, or not available in ${REGION}"
-        printf '       subscribe: %s\n' "${LISTING[$product]}"
+        printf '  %-4s %s\n' "$product" "no AMI visible in ${REGION} -- not available here, or the read was refused"
     fi
+    printf '       subscribe: %s\n' "${LISTING[$product]}"
 done
+echo
+echo "A visible AMI means the product is published in this region. It does NOT"
+echo "prove this account is subscribed: Marketplace AMIs are visible to every"
+echo "account, and a missing subscription only shows at launch, as OptInRequired"
+echo "partway through the apply. Confirm on the listing page (it says you are"
+echo "subscribed) or under AWS Marketplace > Manage subscriptions."
 echo
 echo "Unlike Azure, AWS Marketplace subscription has no CLI equivalent of"
 echo "az vm image terms accept. Subscribing is a console action (the"
@@ -205,21 +251,23 @@ echo "--------------------------------------------------------------"
 quota="$(aws service-quotas get-service-quota --region "$REGION" \
            --service-code ec2 --quota-code L-1216C47A \
            --query 'Quota.Value' --output text 2>/dev/null || true)"
-# The module default application-node size, and its vCPU count. Keep in sync
-# with the instance_type defaults in modules/*/aws/variables.tf -- comparing
-# against a size Terraform will not ask for is worse than not comparing.
-INSTANCE_TYPE="m6i.2xlarge"
-INSTANCE_VCPUS=8
+# INSTANCE_TYPE and INSTANCE_VCPUS were set from --instance-type (or the
+# quickstart default for the tier) above.
 case "$TIER" in
     ha)        node_count=2 ;;
-    autoscale) node_count=2 ;;   # asg_desired_capacity default; max_size is the real ceiling
+    autoscale) node_count="$MAX_COUNT" ;;   # the ceiling, not the floor
     *)         node_count=1 ;;
 esac
-needed=$(( node_count * INSTANCE_VCPUS ))
-
-echo "The ${TIER} tier builds ${node_count} application instance(s) at"
-echo "${INSTANCE_TYPE} (${INSTANCE_VCPUS} vCPUs each) by default, so it needs"
-echo "${needed} vCPUs of Standard on-demand quota here."
+if [ -n "$INSTANCE_VCPUS" ]; then
+    needed=$(( node_count * INSTANCE_VCPUS ))
+    echo "The ${TIER} tier builds ${node_count} application instance(s) at"
+    echo "${INSTANCE_TYPE} (${INSTANCE_VCPUS} vCPUs each), so it needs ${needed} vCPUs"
+    echo "of Standard on-demand quota here."
+else
+    needed=0
+    echo "Cannot derive a vCPU count from ${INSTANCE_TYPE}; check its size against"
+    echo "the limit below by hand (${node_count} instance(s))."
+fi
 echo
 
 if [ -n "$quota" ] && [ "$quota" != "None" ]; then
@@ -250,12 +298,43 @@ if [ "$TIER" = ha ]; then
     echo "The RDS instance and the ElastiCache replication group draw their own"
     echo "quotas, separate from this one."
 elif [ "$TIER" = autoscale ]; then
-    echo "The figure above is the ASG's DESIRED capacity. Its ceiling is whatever"
-    echo "you set asg_max_size to, so size the quota against max_size x"
-    echo "${INSTANCE_VCPUS} vCPUs, not against ${needed}."
+    echo "That is the scale-out ceiling (--max-count ${MAX_COUNT}, the quickstart's"
+    echo "asg_max_size). Pass the value you will actually set."
 fi
 echo "New accounts sometimes start with a default of a few dozen vCPUs; request"
 echo "an increase via the Service Quotas console if you expect to be close to it."
+echo
+
+# ---------- 4b. Elastic IPs and VPCs (per deployment) ----------
+#
+# Each quickstart builds its own VPC, and the HA and autoscale ones a NAT
+# gateway per Availability Zone -- two Elastic IPs. Both default limits are 5
+# per region, so an MSSP putting several clients in one region runs out at the
+# third HA client, as AddressLimitExceeded partway through the apply. Unlike the
+# vCPU limit, usage is readable here, so this reports real headroom.
+echo "--------------------------------------------------------------"
+echo " Elastic IPs and VPCs in ${REGION}"
+echo "--------------------------------------------------------------"
+if [ "$TIER" = single ]; then need_eip=0; else need_eip=2; fi
+need_vpc=1
+headroom() {  # headroom <label> <service-code> <quota-code> <used> <needed>
+    local label="$1" service="$2" code="$3" used="$4" need="$5" limit
+    limit="$(aws service-quotas get-service-quota --region "$REGION" \
+               --service-code "$service" --quota-code "$code" --query 'Quota.Value' --output text 2>/dev/null || true)"
+    limit="${limit%%.*}"
+    case "${used}:${limit}" in
+        *[!0-9:]*|:*|*:) echo "  ${label}: could not read the limit or the usage; this deployment needs ${need}."; return ;;
+    esac
+    echo "  ${label}: ${used} used of ${limit} -- this deployment needs ${need}."
+    if [ $(( limit - used )) -lt "$need" ]; then
+        echo "    NOT ENOUGH. Request an increase in Service Quotas before deploying,"
+        echo "    or deploy this client into another region."
+    fi
+}
+eips_used="$(aws ec2 describe-addresses --region "$REGION" --query 'length(Addresses)' --output text 2>/dev/null || true)"
+vpcs_used="$(aws ec2 describe-vpcs --region "$REGION" --query 'length(Vpcs)' --output text 2>/dev/null || true)"
+headroom "Elastic IPs" ec2 L-0263D0A3 "$eips_used" "$need_eip"
+headroom "VPCs       " vpc L-F678F1CE "$vpcs_used" "$need_vpc"
 echo
 
 # ---------- 5. Permissions the deploying identity needs ----------

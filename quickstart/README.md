@@ -77,10 +77,37 @@ on what the customer already runs:
 
 ## Manual
 
-If you would rather read the Terraform first, [`azure-ha/`](azure-ha) is a
-complete root config for the Azure HA tier — networking included — that you can
-copy, edit and apply. Per-tier module documentation lives under
-[`../modules/`](../modules).
+If you would rather read the Terraform first, there is a complete root config
+for every product, cloud and tier — networking included — that you can copy,
+edit and apply:
+
+| | Single VM | HA hot-hot | Autoscale |
+|---|---|---|---|
+| SAT on Azure | [`azure-single`](azure-single) | [`azure-ha`](azure-ha) | [`azure-autoscale`](azure-autoscale) |
+| ASM on Azure | [`azure-asm-single`](azure-asm-single) | [`azure-asm-ha`](azure-asm-ha) | [`azure-asm-autoscale`](azure-asm-autoscale) |
+| SAT on AWS | [`aws-sat-single`](aws-sat-single) | [`aws-sat-ha`](aws-sat-ha) | [`aws-sat-autoscale`](aws-sat-autoscale) |
+| ASM on AWS | [`aws-asm-single`](aws-asm-single) | [`aws-asm-ha`](aws-asm-ha) | [`aws-asm-autoscale`](aws-asm-autoscale) |
+
+Use these rather than the wizard: on both clouds the wizard's output still needs
+the network inputs (and on AWS the certificate) filled in by hand. Per-tier
+module documentation lives under [`../modules/`](../modules).
+
+## One deployment per client (MSSPs)
+
+[`../docs/AZURE_MSSP_RUNBOOK.md`](../docs/AZURE_MSSP_RUNBOOK.md) and
+[`../docs/AWS_MSSP_RUNBOOK.md`](../docs/AWS_MSSP_RUNBOOK.md) are the
+step-by-step, from an empty subscription or account to a live console and back
+to nothing with `terraform destroy`. On AWS the same `customer` input names and
+tags everything; there are no Marketplace terms in Terraform to worry about,
+and [`bootstrap-state-aws.sh`](bootstrap-state-aws.sh) and
+[`empty-bucket-aws.sh`](empty-bucket-aws.sh) cover state and teardown.
+
+On Azure, set `customer` in each client's `terraform.tfvars` (or `HB_CUSTOMER`
+for the Cloud Shell scripts). That gives
+the client its own resource names, a `customer=<name>` tag on everything, and
+leaves the subscription-wide Marketplace terms to `preflight-azure.sh
+--accept-terms`. Otherwise the second client's apply fails on terms the first
+already accepted, and destroying either one cancels them for both.
 
 ## Cleaning up after test deploys
 

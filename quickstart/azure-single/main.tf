@@ -66,9 +66,26 @@ provider "azurerm" {
 }
 
 variable "resource_group_name" {
-  description = "Resource group to create. All quickstart resources live here."
+  description = "Resource group to create. All quickstart resources live here. Leave null for rg-hailbytes-sat-single, or rg-<customer>-sat-<environment> when customer is set."
   type        = string
-  default     = "rg-hailbytes-sat-single"
+  default     = null
+}
+
+variable "customer" {
+  description = "Short client name when you run one deployment per client (MSSP). Prefixes every resource and the resource group, and tags everything customer=<name> for per-client cost reports. Leave null for a single-organisation deployment. Set it on the FIRST apply only: changing it later renames, and so replaces, every resource."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.customer == null || can(regex("^[a-z][a-z0-9-]{1,15}$", var.customer))
+    error_message = "customer must be 2-16 characters: lowercase letters, digits and hyphens, starting with a letter."
+  }
+}
+
+variable "accept_marketplace_terms" {
+  description = "Accept the Marketplace image terms from Terraform. Leave null: true for a single deployment, false when customer is set. Terms are per SUBSCRIPTION, and Terraform treats them as a resource it owns -- a second deployment in the same subscription fails with 'already exists', and destroying ANY deployment cancels the terms for every other one. With customer set, accept them once instead: ../preflight-azure.sh single --accept-terms."
+  type        = bool
+  default     = null
 }
 
 variable "location" {
@@ -97,9 +114,19 @@ variable "environment" {
   default = "prod"
 }
 
+locals {
+  # Null customer reproduces the names this root has always used, so an
+  # existing deployment plans clean.
+  name_prefix         = var.customer == null ? "hailbytes-sat-${var.environment}" : "${var.customer}-sat-${var.environment}"
+  resource_group_name = coalesce(var.resource_group_name, var.customer == null ? "rg-hailbytes-sat-single" : "rg-${var.customer}-sat-${var.environment}")
+  accept_terms        = var.accept_marketplace_terms != null ? var.accept_marketplace_terms : var.customer == null
+  tags                = var.customer == null ? {} : { customer = var.customer }
+}
+
 resource "azurerm_resource_group" "main" {
-  name     = var.resource_group_name
+  name     = local.resource_group_name
   location = var.location
+  tags     = local.tags
 }
 
 # The single-VM module needs exactly one subnet and brings no networking of its
@@ -110,9 +137,10 @@ resource "azurerm_resource_group" "main" {
 module "network" {
   source = "../../modules/network/azure"
 
-  name_prefix         = "hailbytes-sat-${var.environment}"
+  name_prefix         = local.name_prefix
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
+  tags                = local.tags
 
   # The workload module associates its own NSG, and Azure allows one NSG per
   # subnet, so the network module must not attach its baseline set. The flag
@@ -125,17 +153,26 @@ module "hailbytes_sat" {
   source = "../../modules/sat-azure-single"
 
   environment         = var.environment
+  name_prefix         = local.name_prefix
+  tags                = local.tags
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
   subnet_id           = module.network.workload_subnet_id
   allowed_cidrs       = var.allowed_cidrs
   admin_username      = var.admin_username
   ssh_public_key      = var.ssh_public_key
+
+  accept_marketplace_terms = local.accept_terms
+}
+
+output "resource_group_name" {
+  description = "Where everything in this deployment lives. terraform destroy removes it; see docs/AZURE_MSSP_RUNBOOK.md, Step 9."
+  value       = azurerm_resource_group.main.name
 }
 
 output "console_url" {
-  description = "Admin UI. The certificate is self-signed on first boot, so expect a browser warning."
-  value       = module.hailbytes_sat.console_url
+  description = "Admin UI. The certificate is self-signed on first boot, so expect a browser warning. (The module's own console_url output is the Azure portal page for the VM.)"
+  value       = "https://${module.hailbytes_sat.public_ip_address}:3333/"
 }
 
 output "public_ip_address" {

@@ -93,6 +93,24 @@ variable "environment" {
   default = "prod"
 }
 
+variable "enable_db_delete_lock" {
+  description = "CanNotDelete lock on the database. Blocks deletion by anyone, terraform destroy included: turn it on once the client is live, and off again in its own apply before a planned teardown."
+  type        = bool
+  default     = false
+}
+
+variable "enable_public_ip_delete_lock" {
+  description = "CanNotDelete lock on the public IPs this root creates. Azure has no undelete for a public IP. Same trade-off as enable_db_delete_lock: off in its own apply before a teardown."
+  type        = bool
+  default     = false
+}
+
+variable "accept_marketplace_terms" {
+  description = "Accept the Marketplace image terms from Terraform. Terms are per SUBSCRIPTION, and Terraform treats them as a resource it owns: a second deployment in the same subscription fails with 'already exists', and destroying ANY deployment cancels the terms for every other one. Set false when the subscription carries, or will carry, more than one HailBytes deployment, and accept the terms once with ../preflight-azure.sh ha --accept-terms."
+  type        = bool
+  default     = true
+}
+
 variable "allowed_cidrs" {
   description = "CIDRs allowed to reach the admin console. IPv4 only -- the load balancer frontend is v4, so an IPv6 entry would pass CIDR validation and create an NSG rule that can never carry traffic. When enable_application_gateway = true the gateway's own subnet is appended automatically; see the locals block."
   type        = list(string)
@@ -275,6 +293,9 @@ module "hailbytes_sat" {
   marketplace_image_version = var.marketplace_image_version
 
   key_vault_reader_principal_ids = var.key_vault_reader_principal_ids
+  accept_marketplace_terms       = var.accept_marketplace_terms
+  enable_db_delete_lock          = var.enable_db_delete_lock
+  enable_public_ip_delete_lock   = var.enable_public_ip_delete_lock
 
   # Key Vault names are GLOBALLY unique, the vault carries purge protection, and
   # a deleted name is reserved for 30 days with no force-purge. Derived from

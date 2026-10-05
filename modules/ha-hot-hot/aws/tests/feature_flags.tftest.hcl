@@ -82,7 +82,9 @@ run "no_managed_redis_by_default" {
   # The shared secret is what replaces it, so its absence would mean this
   # default is unsafe rather than merely cheaper.
   assert {
-    condition     = length(aws_secretsmanager_secret.session_keys) > 0 || can(aws_secretsmanager_secret.session_keys.arn)
+    # name, not arn: the arn is unknown under command = plan, which made this
+    # assertion error out rather than evaluate.
+    condition     = endswith(aws_secretsmanager_secret.session_keys.name, "-session-keys")
     error_message = "Turning Redis off is only safe because a shared session-keys secret exists for every node to read. If that secret is gone, cross-node logins break and this default must be reverted."
   }
 }
