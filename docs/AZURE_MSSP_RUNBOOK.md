@@ -46,9 +46,12 @@ its console on 3333; ASM has no phishing surface and its console on 443.
 
 ### Decision 3. Which tier?
 
-> **(ASM) single VM only, for now.** The current ASM image ignores the shared
-> database and secrets the HA and autoscale tiers pass it, so each node keeps
-> its own data. HailBytes/hailbytes-asm#1734 tracks the fix. SAT is unaffected.
+> **(ASM) HA and autoscale need an ASM image with cluster mode.** ASM images
+> built from HailBytes/hailbytes-asm#1734 onward join the shared database and
+> secrets these tiers create. Older images ignore them and each node keeps
+> its own data, so use single VM for ASM until the Marketplace listing
+> carries the new image. Check with `/api/ready`: every node must report the
+> same `database_id`. SAT is unaffected.
 
 | Tier | SAT quickstart | ASM quickstart | Application nodes | Database | Use when |
 |---|---|---|---|---|---|

@@ -53,6 +53,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **ASM on the HA and autoscale tiers: a shared cluster key, so the nodes can form one deployment.** `ha-hot-hot` and `unlimited-scale`, on both clouds, now create a 64-byte `asm-cluster-key` secret when `product = "asm"` and pass its name (Azure) or ARN (AWS) in the node payload as `asm_cluster_key_secret_name` / `asm_cluster_key_secret_arn`. ASM images with cluster mode (HailBytes/hailbytes-asm#1734) derive their encryption key, Django secret and Hatchet cookie secrets from it, so every node agrees. The autoscale tier also gains the initial admin password secret the HA tier already had, plus `db_name` / `db_user` in the Azure payload. SAT payloads are unchanged; each module's tests assert that.
+
 - **A complete quickstart root for every product, cloud and tier.** `quickstart/azure-asm-{single,ha,autoscale}` and `quickstart/aws-{sat,asm}-{single,ha,autoscale}` join the SAT-on-Azure roots. Every root builds its own network, takes the same optional `customer` input (per-client names and a `customer=<name>` tag on everything), and outputs `console_url` and `initial_credentials_command`, so first login is the same command everywhere.
   - **AWS roots** need only `allowed_cidrs`.
     - HA and autoscale generate a self-signed certificate and import it into ACM unless `acm_certificate_arn` is set, so a first deploy needs no domain.
@@ -138,6 +140,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
   `quickstart/tests/explain_test.sh` (42 assertions) uses real error text rather than paraphrases — the tool matches provider strings, so a paraphrased fixture tests the paraphrase. It also asserts that **nothing is invented**: every script path, module variable and marketplace identifier the tool emits is checked against this repository. Advice that does not work costs a round trip *and* the reader's confidence in everything else printed. Neuter-checked by pointing the tool at a nonexistent script and a non-existent variable; both fail the suite.
 
 ### Fixed
+
+- **`unlimited-scale/azure`: the scale set could not read its own Key Vault.** The VMSS identity had no role on the vault, so a node could not fetch the database password the payload pointed it at. That affected SAT too. It now gets `Key Vault Secrets User`.
 
 - **The Azure single-VM quickstart's `console_url` pointed at the Azure portal, not the console.** It passed through the module output of the same name, which is the portal page for the VM, so the README's health check curled the portal. It is now `https://<ip>:3333/` for SAT and `https://<ip>/` for ASM.
 

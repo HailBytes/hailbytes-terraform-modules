@@ -1,10 +1,13 @@
 # Quickstart: HailBytes ASM on AWS, autoscale tier
 
-> **Known gap: use the single-VM tier for ASM for now.** The current ASM image
-> does not read the database and shared-secret settings this tier passes it,
-> so each node runs its own local database and the managed database goes
-> unused: two separate deployments behind one address. Tracked in
-> HailBytes/hailbytes-asm#1734, whose HA smoke check now fails on exactly this.
+> **Needs an ASM image with cluster mode.** This tier gives every node one
+> managed database and a shared `asm-cluster-key` secret. ASM images built
+> from HailBytes/hailbytes-asm#1734 onward read them and join one cluster
+> (one database, one admin account, shared Hatchet). Older images ignore
+> them and each node becomes a separate deployment behind one address, so
+> until the Marketplace listing carries that image, use the single-VM tier.
+> After deploying, `curl -s https://<address>/api/ready` a few times: every
+> response should report the same `database_id`.
 
 An Auto Scaling group behind an Application Load Balancer, RDS PostgreSQL, ElastiCache for shared sessions, and the VPC around them. One shared instance for many clients, or one very large client. Every running instance meters, so `asg_max_size` caps the software bill.
 
