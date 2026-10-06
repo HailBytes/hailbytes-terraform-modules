@@ -145,6 +145,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+- **`network/azure`: every apply after the first planned to remove the Postgres subnet's `Microsoft.Storage` service endpoint.** Azure adds that endpoint when the first Flexible Server is provisioned into the delegated subnet; it carries WAL uploads to Azure Storage, and Microsoft documents that removing it may disrupt the server's connectivity. The module never declared it, so a live HA upgrade plan showed `service_endpoints = [- "Microsoft.Storage"]` on the database subnet. It is now declared, which makes that plan clean and is a no-op for a subnet that already has it. Covered by `tests/postgres_storage_service_endpoint.tftest.hcl`.
+
 - **`unlimited-scale/azure`: the scale set could not read its own Key Vault.** The VMSS identity had no role on the vault, so a node could not fetch the database password the payload pointed it at. That affected SAT too. It now gets `Key Vault Secrets User`.
 
 - **The Azure single-VM quickstart's `console_url` pointed at the Azure portal, not the console.** It passed through the module output of the same name, which is the portal page for the VM, so the README's health check curled the portal. It is now `https://<ip>:3333/` for SAT and `https://<ip>/` for ASM.

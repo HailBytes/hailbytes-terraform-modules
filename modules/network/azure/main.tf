@@ -122,6 +122,14 @@ resource "azurerm_subnet" "db" {
   virtual_network_name = azurerm_virtual_network.main.name
   address_prefixes     = [var.db_subnet_prefix]
 
+  # Azure adds this endpoint itself when the first Flexible Server is
+  # provisioned into the subnet; it is the server's route to the Azure Storage
+  # accounts it uploads WAL to, and Microsoft documents that removing it "may
+  # disrupt connectivity". Leaving it undeclared made every later apply plan to
+  # strip it from a live database subnet. Declared, the plan is clean before
+  # and after the first server exists.
+  service_endpoints = ["Microsoft.Storage"]
+
   delegation {
     name = "postgres-flex"
 
