@@ -129,6 +129,17 @@ locals {
 
   plan = local.marketplace_plans[var.product]
 
+  # The shared backend certificate's CN, which App Gateway matches against the
+  # backend host. hailbytes-sat-admin is what the image's own certificate uses.
+  backend_cert_cn = coalesce(var.appgw_backend_host_header, "hailbytes-sat-admin")
+
+  # Trusted roots for an Https backend hop: the certificate pinned off a VM,
+  # the shared one, or both while the VMs move from one to the other.
+  appgw_trusted_roots = var.appgw_backend_protocol != "Https" ? {} : merge(
+    var.appgw_backend_root_cert_pem != null ? { "backend-root" = var.appgw_backend_root_cert_pem } : {},
+    var.shared_backend_certificate ? { "backend-shared" = azurerm_key_vault_certificate.backend[0].certificate_data_base64 } : {},
+  )
+
   common_tags = merge(
     {
       product     = "hailbytes-${var.product}"
@@ -355,6 +366,80 @@ resource "azurerm_role_assignment" "kv_secret_writer" {
   scope                = azurerm_key_vault.main.id
   role_definition_name = "Key Vault Secrets Officer"
   principal_id         = data.azurerm_client_config.current.object_id
+}
+
+# ----- Shared backend TLS certificate (opt-in) -----
+#
+# The image makes its own self-signed certificate at first boot (CN
+# hailbytes-sat-admin, 365 days). App Gateway v2 pins a self-signed backend by
+# uploading the certificate itself as a trusted root, so with one certificate
+# per VM it can trust only the one it was given: a replaced VM is untrusted
+# (502 on 2026-10-13), and the trust lapses when that certificate expires.
+#
+# One certificate in Key Vault fixes all three: every VM, and every
+# replacement, fetches the same one at boot, and the gateway trusts it. Key
+# Vault generates the key, so it never enters Terraform state. The VMs read it
+# through the certificate's backing secret, which the shared VM identity can
+# already read (Key Vault Secrets User).
+#
+# It does NOT auto-renew. A renewal re-keys in Key Vault, the gateway's trusted
+# root comes from this apply, and the VMs re-read the certificate only when
+# they restart, so an unattended renewal would split them. Expiry emails the
+# vault's certificate contacts instead; rotate by replacing this resource,
+# trusting old and new together while the VMs roll.
+resource "azurerm_role_assignment" "kv_certificates_officer" {
+  count                = var.shared_backend_certificate ? 1 : 0
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Certificates Officer"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
+
+resource "azurerm_key_vault_certificate" "backend" {
+  count        = var.shared_backend_certificate ? 1 : 0
+  name         = "hailbytes-backend-tls"
+  key_vault_id = azurerm_key_vault.main.id
+  tags         = local.common_tags
+
+  certificate_policy {
+    issuer_parameters {
+      name = "Self"
+    }
+
+    key_properties {
+      exportable = true # the VMs install the private key
+      key_type   = "RSA"
+      key_size   = 2048
+      reuse_key  = true
+    }
+
+    # PEM, so the VM splits key and certificate with openssl and no password.
+    secret_properties {
+      content_type = "application/x-pem-file"
+    }
+
+    x509_certificate_properties {
+      # Must equal the gateway's backend host: App Gateway v2 matches the CN.
+      subject            = "CN=${local.backend_cert_cn}"
+      validity_in_months = 60
+      key_usage          = ["digitalSignature", "keyEncipherment"]
+      extended_key_usage = ["1.3.6.1.5.5.7.3.1"] # serverAuth
+
+      subject_alternative_names {
+        dns_names = [local.backend_cert_cn]
+      }
+    }
+
+    lifetime_action {
+      action {
+        action_type = "EmailContacts"
+      }
+      trigger {
+        days_before_expiry = 60
+      }
+    }
+  }
+
+  depends_on = [azurerm_role_assignment.kv_certificates_officer]
 }
 
 # When the apply runs as a service principal, kv_secret_writer above grants the
@@ -1086,6 +1171,11 @@ resource "azurerm_linux_virtual_machine" "vm" {
       # ASM only, so SAT's payload -- and therefore every SAT VM -- is unchanged.
       var.product == "asm" ? {
         asm_cluster_key_secret_name = azurerm_key_vault_secret.asm_cluster_key[0].name
+      } : {},
+      # Opt-in, so the payload of a deployment that does not ask is unchanged.
+      # The certificate's backing secret has the certificate's name.
+      var.shared_backend_certificate ? {
+        backend_cert_secret_name = azurerm_key_vault_certificate.backend[0].name
       } : {},
     )
   }))
@@ -2154,16 +2244,14 @@ resource "azurerm_application_gateway" "main" {
     host_name                           = var.appgw_backend_host_header
     probe_name                          = "backend-health"
 
-    trusted_root_certificate_names = (
-      var.appgw_backend_protocol == "Https" && var.appgw_backend_root_cert_pem != null
-    ) ? ["backend-root"] : []
+    trusted_root_certificate_names = keys(local.appgw_trusted_roots)
   }
 
   dynamic "trusted_root_certificate" {
-    for_each = var.appgw_backend_protocol == "Https" && var.appgw_backend_root_cert_pem != null ? [1] : []
+    for_each = local.appgw_trusted_roots
     content {
-      name = "backend-root"
-      data = var.appgw_backend_root_cert_pem
+      name = trusted_root_certificate.key
+      data = trusted_root_certificate.value
     }
   }
 
@@ -2253,20 +2341,22 @@ resource "azurerm_application_gateway" "main" {
     # out during a patch window.
     precondition {
       condition = var.appgw_backend_protocol != "Https" || (
-        var.appgw_backend_root_cert_pem != null && var.appgw_backend_host_header != null
+        length(local.appgw_trusted_roots) > 0 && var.appgw_backend_host_header != null
       )
       error_message = <<-EOM
-        appgw_backend_protocol = "Https" needs BOTH appgw_backend_root_cert_pem
-        and appgw_backend_host_header. Application Gateway v2 validates the
-        backend certificate against an uploaded trusted root and checks that the
-        backend host matches the certificate's CN; without both it marks the
-        pool unhealthy and serves 502.
+        appgw_backend_protocol = "Https" needs a trusted root (either
+        shared_backend_certificate = true or appgw_backend_root_cert_pem) AND
+        appgw_backend_host_header. Application Gateway v2 validates the backend
+        certificate against an uploaded trusted root and checks that the backend
+        host matches the certificate's CN; without both it marks the pool
+        unhealthy and serves 502.
 
-        The marketplace image generates a self-signed certificate on first boot
-        with CN "hailbytes-sat-admin", so either:
-          * set appgw_backend_root_cert_pem to that certificate (it is its own
-            root) and appgw_backend_host_header = "hailbytes-sat-admin"; or
-          * set appgw_backend_protocol = "Http" to terminate TLS at the gateway
+        Set appgw_backend_host_header = "hailbytes-sat-admin", then either:
+          * shared_backend_certificate = true (needs a SAT image that reads it),
+            so every VM serves one certificate the gateway already trusts; or
+          * appgw_backend_root_cert_pem = the certificate off a VM, which the
+            image generates on first boot (it is its own root); or
+          * appgw_backend_protocol = "Http" to terminate TLS at the gateway
             and use the private VNet hop in clear.
       EOM
     }

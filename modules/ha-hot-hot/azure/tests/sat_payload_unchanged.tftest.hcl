@@ -100,4 +100,9 @@ run "sat_payload_is_unchanged" {
     condition     = !contains(keys(jsondecode(base64decode(azurerm_linux_virtual_machine.vm[0].custom_data)).hailbytes), "asm_cluster_key_secret_name")
     error_message = "the SAT payload must not change: asm_cluster_key_secret_name is ASM-only"
   }
+
+  assert {
+    condition     = !contains(keys(jsondecode(base64decode(azurerm_linux_virtual_machine.vm[0].custom_data)).hailbytes), "backend_cert_secret_name")
+    error_message = "the SAT payload must not change by default: backend_cert_secret_name is opt-in (shared_backend_certificate)"
+  }
 }

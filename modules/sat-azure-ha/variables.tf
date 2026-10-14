@@ -589,9 +589,15 @@ variable "appgw_backend_port" {
 }
 
 variable "appgw_backend_root_cert_pem" {
-  description = "PEM-encoded root certificate of the backend server certificate, uploaded as an App Gateway trusted root. Required when appgw_backend_protocol = \"Https\"."
+  description = "PEM-encoded root certificate of the backend server certificate, uploaded as an App Gateway trusted root. Required when appgw_backend_protocol = \"Https\", unless shared_backend_certificate is on."
   type        = string
   default     = null
+}
+
+variable "shared_backend_certificate" {
+  description = "Give every SAT VM one backend TLS certificate from the deployment's Key Vault, trusted by App Gateway, so a replaced VM stays trusted and the trust does not lapse after the image's 365-day self-signed certificate expires. Requires a SAT image whose bootstrap reads backend_cert_secret_name; an older image keeps its own certificate and the gateway rejects it. appgw_backend_root_cert_pem stays trusted alongside, so existing VMs stay reachable until replaced."
+  type        = bool
+  default     = false
 }
 
 variable "enable_diagnostics" {

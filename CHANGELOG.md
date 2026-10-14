@@ -4,6 +4,14 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- **`ha-hot-hot/azure`, `sat-azure-ha`: `shared_backend_certificate` (default `false`). One backend TLS certificate for every app VM, from Key Vault, trusted by App Gateway.** Each VM used to make its own self-signed certificate at first boot (CN `hailbytes-sat-admin`, 365 days), and App Gateway v2 pins a self-signed backend by trusting the certificate itself, so `appgw_backend_root_cert_pem` could only ever trust the one VM it was read from. That meant three failures: the second VM was never trusted, a VM replaced by the rolling upgrade was untrusted until someone re-uploaded its certificate (a 502 on a customer deployment on 2026-10-13), and the trust lapses when the certificate expires a year after first boot.
+
+  With it on, the module creates `azurerm_key_vault_certificate.backend` (`hailbytes-backend-tls`, CN = `appgw_backend_host_header`, default `hailbytes-sat-admin`, PEM, 5 years). Key Vault generates the key, so it never enters Terraform state. The deployer gets `Key Vault Certificates Officer` to create it, the certificate's name travels in the VM payload as `backend_cert_secret_name`, and the gateway trusts it as `backend-shared`. It does **not** auto-renew: a renewal re-keys in Key Vault while the gateway still trusts the old certificate and the VMs keep serving it until they restart. Expiry emails the vault's certificate contacts.
+
+  **Needs a SAT image whose bootstrap reads `backend_cert_secret_name`.** An older image ignores it and keeps its own certificate, which the gateway then does not trust. **Switching on a running deployment:** keep `appgw_backend_root_cert_pem` set, because the gateway trusts both while the VMs roll, since custom_data is in `ignore_changes` and only a replaced VM gets the new payload. Then replace both VMs (`./go.sh upgrade` in the deployment bundles), then drop `appgw_backend_root_cert_pem`. With it on, `appgw_backend_protocol = "Https"` no longer needs `appgw_backend_root_cert_pem` at all. ASM images do not support it, so `asm-azure-ha` does not expose it.
+
 ### Fixed
 
 - **`ha-hot-hot/azure` (`sat-azure-ha`, `asm-azure-ha`): a VM replaced by the rolling upgrade booted with no Key Vault access.** Each app VM used its own system-assigned identity, and its `Key Vault Secrets User` grant could only be created after the VM existed, because it needs the VM's principal id. `terraform apply -replace=...vm[N]` creates the VM with a NEW principal, so the replacement's first boot asked Key Vault for the database password with an identity that had no grant yet, and the grant made a moment later takes minutes to propagate. The image does not start the app without that password.

@@ -221,3 +221,50 @@ run "the_https_hop_names_a_trusted_root_that_exists" {
     error_message = "backend_http_settings.trusted_root_certificate_names must name the trusted_root_certificate block, or the gateway serves 502 on a self-signed backend."
   }
 }
+
+# Turning it on for a running deployment: the VMs still serve the certificate
+# that was pinned off them until each is replaced, so the gateway must trust
+# both, or switching on is a 502 until the rollout finishes.
+run "switching_on_trusts_old_and_new_together" {
+  command = plan
+
+  variables {
+    enable_application_gateway  = true
+    appgw_tls_pfx_base64        = "TU9DSw=="
+    appgw_tls_pfx_password      = "mock"
+    appgw_backend_protocol      = "Https"
+    appgw_backend_port          = 443
+    appgw_backend_host_header   = "hailbytes-sat-admin"
+    appgw_backend_root_cert_pem = "-----BEGIN CERTIFICATE-----\nTU9DSw==\n-----END CERTIFICATE-----"
+    shared_backend_certificate  = true
+  }
+
+  assert {
+    condition = (
+      length(azurerm_application_gateway.main[0].trusted_root_certificate) == 2 &&
+      toset(one(azurerm_application_gateway.main[0].backend_http_settings).trusted_root_certificate_names) == toset(["backend-root", "backend-shared"])
+    )
+    error_message = "While VMs move to the shared certificate, the gateway must trust the pinned one and the shared one."
+  }
+}
+
+# Once every VM is on a supporting image, the shared certificate alone is a
+# complete Https backend: no certificate has to be read off a VM.
+run "the_shared_certificate_alone_satisfies_https" {
+  command = plan
+
+  variables {
+    enable_application_gateway = true
+    appgw_tls_pfx_base64       = "TU9DSw=="
+    appgw_tls_pfx_password     = "mock"
+    appgw_backend_protocol     = "Https"
+    appgw_backend_port         = 443
+    appgw_backend_host_header  = "hailbytes-sat-admin"
+    shared_backend_certificate = true
+  }
+
+  assert {
+    condition     = toset(one(azurerm_application_gateway.main[0].backend_http_settings).trusted_root_certificate_names) == toset(["backend-shared"])
+    error_message = "With no pinned certificate, the gateway must trust exactly the shared one."
+  }
+}

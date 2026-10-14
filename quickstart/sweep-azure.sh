@@ -237,6 +237,7 @@ emit_role_assignments() {
                 "Key Vault Secrets User|vm")             addr="${MODULE_ADDR}.azurerm_role_assignment.vm_kv_secrets_user[${idx}]" ;;
                 "Storage Blob Data Contributor|vm")      addr="${MODULE_ADDR}.azurerm_role_assignment.vm_backup_writer[${idx}]" ;;
                 "Key Vault Crypto Officer|")             addr="${MODULE_ADDR}.azurerm_role_assignment.kv_crypto_officer[0]" ;;
+                "Key Vault Certificates Officer|")       addr="${MODULE_ADDR}.azurerm_role_assignment.kv_certificates_officer[0]" ;;
                 "Key Vault Secrets User|")
                     addr="${MODULE_ADDR}.azurerm_role_assignment.kv_secret_readers[\"${p}\"]"
                     note_line "principal ${p} is not a VM identity. If it is the DB VM this is azurerm_role_assignment.db_vm_kv_reader[0]; if it came from key_vault_reader_principal_ids the address above is right." ;;
@@ -767,6 +768,9 @@ cmd_imports() {
                 hailbytes-session-keys)            addr="${M}.azurerm_key_vault_secret.session_keys" ;;
                 hailbytes-admin-initial-password)  addr="${M}.azurerm_key_vault_secret.admin_initial_password" ;;
                 hailbytes-redis-access-key)        addr="${M}.azurerm_key_vault_secret.redis[0]" ;;
+                # The shared backend certificate's backing secret: Key Vault
+                # manages it, and it imports with the certificate below.
+                hailbytes-backend-tls)             continue ;;
                 *) warn "unrecognised secret '${child}' -- no module address for it"; continue ;;
             esac
             id="$(az_ keyvault secret show --vault-name "$name" -n "$child" --query id -o tsv)"
@@ -776,7 +780,16 @@ cmd_imports() {
             case "$child" in
                 *-disk-key) id="$(az_ keyvault key show --vault-name "$name" -n "$child" --query key.kid -o tsv)"
                             [ -n "$id" ] && emit "${M}.azurerm_key_vault_key.disk[0]" "$id" ;;
+                hailbytes-backend-tls) ;;  # the certificate's backing key, as above
                 *) warn "unrecognised key '${child}' -- no module address for it" ;;
+            esac
+        done
+        for child in $(az_ keyvault certificate list --vault-name "$name" --query "[].name" -o tsv); do
+            case "$child" in
+                hailbytes-backend-tls)
+                    id="$(az_ keyvault certificate show --vault-name "$name" -n "$child" --query id -o tsv)"
+                    [ -n "$id" ] && emit "${M}.azurerm_key_vault_certificate.backend[0]" "$id" ;;
+                *) warn "unrecognised certificate '${child}' -- no module address for it" ;;
             esac
         done
         emit_random_imports "$name"
