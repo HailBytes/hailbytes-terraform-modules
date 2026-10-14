@@ -369,6 +369,21 @@ run "management_access_installs_on_every_vm" {
     condition     = length(azurerm_virtual_machine_extension.aad_ssh_login) == 2
     error_message = "Break-glass access is useless on only one of two VMs."
   }
+
+  # AADSSHLoginForLinux needs a system-assigned identity, and IMDS prefers that
+  # one when a token request names none -- which is how published images ask.
+  # So these VMs keep it, AND keep its per-VM grants, or an upgrade that turns
+  # on management access would cut the running image off from Key Vault.
+  assert {
+    condition = alltrue([for vm in azurerm_linux_virtual_machine.vm :
+    one(vm.identity).type == "SystemAssigned, UserAssigned"])
+    error_message = "Management access needs a system-assigned identity alongside the shared one."
+  }
+
+  assert {
+    condition     = length(azurerm_role_assignment.vm_kv_secrets_user) == 2
+    error_message = "With a system-assigned identity present, each VM still needs its own Key Vault grant until the image names the shared identity."
+  }
 }
 
 # The admin allow-list and the phishing allow-list were one variable, which is a

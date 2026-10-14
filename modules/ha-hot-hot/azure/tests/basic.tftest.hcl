@@ -27,6 +27,9 @@ mock_provider "azurerm" {
   mock_resource "azurerm_linux_virtual_machine" {
     defaults = { id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.Compute/virtualMachines/mock-vm" }
   }
+  mock_resource "azurerm_user_assigned_identity" {
+    defaults = { id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.ManagedIdentity/userAssignedIdentities/mock-vm-id" }
+  }
   mock_resource "azurerm_managed_disk" {
     defaults = { id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.Compute/disks/mock-disk" }
   }
@@ -114,10 +117,10 @@ run "minimal_inputs_apply" {
 
   # Regression: the app VMs' managed identities had no Key Vault data-plane
   # role, so custom_data pointed them at a vault they got 403 from and the
-  # deployment could not start. One assignment per VM.
+  # deployment could not start. The grant is on the shared identity.
   assert {
-    condition     = length(azurerm_role_assignment.vm_kv_secrets_user) == 2
-    error_message = "Each app VM's managed identity must hold a Key Vault Secrets User assignment."
+    condition     = azurerm_role_assignment.vm_identity_kv_secrets_user.role_definition_name == "Key Vault Secrets User"
+    error_message = "The app VMs' identity must hold a Key Vault Secrets User assignment."
   }
 
   # The two Redis regressions below moved to redis_opted_in_is_reachable, since
