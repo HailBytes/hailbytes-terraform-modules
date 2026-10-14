@@ -89,6 +89,7 @@ az() {
         *"keyvault secret show"*)       printf '%b' "${MOCK_KV_SECRET_ID-}" ;;
         *"keyvault key list"*)          printf '%b' "${MOCK_KV_KEYS-}" ;;
         *"keyvault key show"*)          printf '%b' "${MOCK_KV_KEY_ID-}" ;;
+        *"identity list"*"principalId"*) printf '%b' "${MOCK_SHARED_PRINCIPAL-}" ;;
         *"identity list"*)              printf '%b' "${MOCK_IDENTITIES-}" ;;
         *"storage container list"*)     printf '%b' "${MOCK_CONTAINERS-}" ;;
         *"role assignment list"*)       printf '%b' "${MOCK_ROLE_ASSIGNMENTS-}" ;;
@@ -294,6 +295,19 @@ o="$(MOCK_KV_IDS='/subscriptions/S/resourceGroups/RG/providers/Microsoft.KeyVaul
      MOCK_ROLE_ASSIGNMENTS='Key Vault Secrets User\tguid-9\tsomeone-else\n' \
      bash "$SWEEP" imports hbtest-rg-01 2>&1)"
 has  "an unplaceable principal is flagged, not guessed" "is not a VM identity" "$o"
+
+# The app VMs' shared identity (2026-10-13): one address per role, no index,
+# and the identity itself is imported rather than warned about.
+o="$(MOCK_KV_IDS='/subscriptions/S/resourceGroups/RG/providers/Microsoft.KeyVault/vaults/hb-kv\n' \
+     MOCK_STORAGE_IDS='/subscriptions/S/resourceGroups/RG/providers/Microsoft.Storage/storageAccounts/hbbackup\n' \
+     MOCK_IDENTITIES='hb-vm-id\n' MOCK_SHARED_PRINCIPAL='p-shared\n' \
+     MOCK_ROLE_ASSIGNMENTS='Key Vault Secrets User\tguid-2\tp-shared\nStorage Blob Data Contributor\tguid-3\tp-shared\n' \
+     bash "$SWEEP" imports hbtest-rg-01 2>&1)"
+has   "the shared VM identity is imported"       "azurerm_user_assigned_identity.vm'" "$o"
+has   "its Key Vault grant has one address"      "azurerm_role_assignment.vm_identity_kv_secrets_user'" "$o"
+has   "its backup grant has one address"         "azurerm_role_assignment.vm_identity_backup_writer[0]" "$o"
+hasnt "neither is filed under a VM index"        "vm_kv_secrets_user[" "$o"
+hasnt "the identity is not called unrecognised"  "unrecognised managed identity 'hb-vm-id'" "$o"
 
 o="$(MOCK_VNETS='hb-vnet\n' MOCK_SUBNETS='hb-workload\n' \
      MOCK_SUBNET_NSG='/subscriptions/S/../nsg\n' bash "$SWEEP" imports hbtest-rg-01 2>&1)"
