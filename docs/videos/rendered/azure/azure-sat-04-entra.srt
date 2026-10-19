@@ -1,0 +1,51 @@
+1
+00:00:00,000 --> 00:00:17,722
+With SAT running, we connect it to Entra ID in four places: who can read the deployment's secrets, who can open a shell on the VMs, who can sign in to the console, and how users are provisioned.
+
+2
+00:00:17,722 --> 00:00:34,139
+First, secrets. Key vault reader principal IDs takes Entra object IDs, ideally of a single group. If you set it in chapter two it is already done. If not, the maintenance script grants it now.
+
+3
+00:00:39,549 --> 00:00:52,488
+A grant made this way is out of band. Add the same ID to the variable as well, so it survives if the vault is ever replaced.
+
+4
+00:00:53,988 --> 00:01:14,319
+Second, shell access. Set enable management access, and give your operators group the Virtual Machine Administrator Login role. One thing to know: the VMs have no public IP. az ssh vm handles the sign-in, but you still need a network path into the vnet.
+
+5
+00:01:28,602 --> 00:01:40,671
+For a one-off command without any network path, az vm run-command reaches the VM through Azure itself. That is how the initial credentials command works.
+
+6
+00:01:42,171 --> 00:02:03,806
+Third, single sign-on. Behind the load balancer, SAT has to be told the address your users browse to. Without it, the sign-in callback points at the VM's own listen address, and Entra refuses it with AADSTS 900971 or 500112. Set admin public URL before the first apply.
+
+7
+00:02:07,576 --> 00:02:16,167
+We set both in chapter three, before the first apply, so there is nothing to replace now.
+
+8
+00:02:16,167 --> 00:02:29,966
+Register the app in Entra with exactly that address plus slash sso slash callback slash microsoft, character for character.
+
+9
+00:02:29,966 --> 00:02:39,861
+Copy the secret's value now, and put its expiry date in a calendar. When it lapses, every single sign-on fails.
+
+10
+00:02:41,361 --> 00:03:01,692
+In the SAT console, open Settings, SSO, and add a Microsoft Entra ID provider with the client ID, the secret value and your tenant ID. Set your allowed domains. Then decide who can sign in in Entra itself, by requiring assignment to the app.
+
+11
+00:03:01,692 --> 00:03:19,442
+Test from a private window at the public URL, not the IP address, and sign in a few times so both nodes are exercised. Keep the local admin account, with two-factor, as your way back in.
+
+12
+00:03:19,442 --> 00:03:38,033
+Last, provisioning. Generate a SCIM token in SAT, then point the app's provisioning in Entra at slash scim slash v2 with that token. Unlike sign-in, Entra connects to SAT directly here, so your admin allow-list has to let it in.
+
+13
+00:03:38,033 --> 00:03:47,494
+That is SAT connected to Entra ID. The last chapter covers taking a deployment down without touching anyone else's.

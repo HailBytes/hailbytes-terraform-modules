@@ -1,0 +1,43 @@
+1
+00:00:00,000 --> 00:00:11,635
+Tearing down is the step that can hurt other deployments if it is done carelessly. Here is the order that keeps everyone else safe.
+
+2
+00:00:11,635 --> 00:00:25,009
+Work from the client's own directory, signed in to the same subscription. Destroy deletes the database, so export first, with an admin API key from the SAT console.
+
+3
+00:00:26,509 --> 00:00:39,448
+If you turned on the delete locks for production, lift them in their own apply first. A lock makes destroy fail partway and leaves a half-deleted stack.
+
+4
+00:00:40,948 --> 00:00:50,204
+Now write the destroy plan and read it. Everything listed should be inside this client's resource group.
+
+5
+00:00:50,204 --> 00:01:06,621
+Look for a marketplace agreement in particular. With customer set there is none. If there is one, an older deployment owns the terms, and destroying it would cancel them for every deployment in the subscription.
+
+6
+00:01:08,121 --> 00:01:20,190
+If the agreement is there, remove it from state, then write the destroy plan again. The terms stay accepted. This deployment simply stops claiming them.
+
+7
+00:01:20,190 --> 00:01:28,782
+Then destroy. If it stops partway, run the same command again: destroy picks up where it stopped.
+
+8
+00:01:30,282 --> 00:01:39,308
+Confirm nothing is left billing. The resource group should be gone, and nothing should match this client's prefix.
+
+9
+00:01:39,308 --> 00:01:55,290
+The script is careful to say a filter that matches nothing is not the same as an all-clear. Here the only group left is the shared state account, which is exactly what should remain.
+
+10
+00:01:56,790 --> 00:02:17,556
+A few things survive on purpose. The vault's name is reserved for thirty days, but a rebuild draws a new one. The Marketplace terms stay, because others depend on them. And the state account stays: delete only this client's state file when you are sure.
+
+11
+00:02:17,556 --> 00:02:33,104
+That completes the series. Everything here is written down step by step in the Azure MSSP runbook in the repository, and explain dot s h turns any failed log into the next step.

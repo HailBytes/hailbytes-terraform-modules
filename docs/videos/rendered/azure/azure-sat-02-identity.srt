@@ -1,0 +1,43 @@
+1
+00:00:00,000 --> 00:00:12,939
+The identity that runs the deployment needs two different sets of rights: a one-time set for the subscription, and a smaller set for every deployment after that.
+
+2
+00:00:12,939 --> 00:00:28,487
+Registering resource providers and accepting the Marketplace terms both write at subscription scope. An Owner does it once, with the preflight from chapter one. Nobody has to keep holding Owner for this afterwards.
+
+3
+00:00:28,487 --> 00:00:49,252
+For every deployment, Contributor creates the resources. But the modules also create role assignments, so each VM can read its database password from Key Vault, and Contributor cannot do that. Add User Access Administrator. Without it, the apply fails late, after the VMs already exist.
+
+4
+00:00:49,252 --> 00:01:01,322
+Here is a service principal with exactly that pair. Many teams prefer this to a person's account: the deployment keeps working when people change roles.
+
+5
+00:01:01,322 --> 00:01:09,100
+Store the password in your secrets manager now. Azure shows it once.
+
+6
+00:01:10,600 --> 00:01:28,597
+To run as the service principal, sign in with it and export four variables. Terraform reads them directly. Nothing is written to disk, and HailBytes never sees them.
+
+7
+00:01:28,597 --> 00:01:39,797
+Read the secret with read dash s rather than typing it on the command line, so it stays out of your shell history.
+
+8
+00:01:41,297 --> 00:02:02,932
+One consequence is easy to miss. Whoever runs the apply is granted the deployment's Key Vault, and nobody else is. Run it as a service principal and, at three in the morning, your operators have to borrow its credentials. Grant an Entra group at deploy time instead.
+
+9
+00:02:02,932 --> 00:02:13,262
+Use a group, not named people, so membership can change without a redeploy. This is the object ID the variable takes.
+
+10
+00:02:13,262 --> 00:02:19,679
+Note it down. It goes into terraform dot tfvars in chapter three.
+
+11
+00:02:21,179 --> 00:02:39,336
+So: an Owner once, for the providers and the terms. Contributor and User Access Administrator for every deployment. And if a service principal deploys, an operators group in key vault reader principal IDs. Next, chapter three: the deployment itself.

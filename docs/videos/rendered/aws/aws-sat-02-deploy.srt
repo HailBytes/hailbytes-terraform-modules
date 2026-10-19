@@ -1,0 +1,51 @@
+1
+00:00:00,000 --> 00:00:12,939
+Now the deployment itself: the HA tier, with two instances across two Availability Zones, a load balancer in front, and RDS PostgreSQL behind them, from AWS CloudShell.
+
+2
+00:00:12,939 --> 00:00:27,680
+Give each client its own working directory, then move Terraform state into S3. State left in CloudShell also holds generated passwords, and should not live there.
+
+3
+00:00:27,680 --> 00:00:38,010
+The first client in an account and region creates the bucket. Every later client reuses it, and only the key changes.
+
+4
+00:00:39,510 --> 00:00:51,145
+Now the settings. Set customer on the very first apply: it prefixes every name and tags every resource, and changing it later replaces everything.
+
+5
+00:00:51,145 --> 00:01:02,780
+Set phish allowed CIDRs separately. The simulation targets are not in your admin range, and without it the campaign sends but records no clicks.
+
+6
+00:01:02,780 --> 00:01:17,023
+Sizing: the default is eight vCPUs per instance, so sixteen metered across the pair. Every vCPU meters 24 cents an hour, so set instance type from the load you expect.
+
+7
+00:01:18,523 --> 00:01:30,593
+Initialise, write the plan to a file, and read it. Every name should start with acme dash sat, and nothing should be planned for destroy.
+
+8
+00:01:32,093 --> 00:01:42,858
+Apply the saved plan, keeping a log. The database is the long pole: a Multi-AZ RDS instance takes a while to create.
+
+9
+00:01:42,858 --> 00:01:53,189
+The instance launch is the moment a missing Marketplace subscription would fail with OptInRequired, which is why chapter one comes first.
+
+10
+00:01:54,689 --> 00:02:12,845
+If the apply stops, don't re-run it blindly and don't change names to get past it. Run explain dot s h on the log. It names the cause and the fix, and re-running the same apply afterwards is safe.
+
+11
+00:02:12,845 --> 00:02:27,523
+Now check it is serving. Allow a few minutes after the apply for the instances to finish booting. Then print the first-boot admin password: both instances share it through Secrets Manager.
+
+12
+00:02:29,023 --> 00:02:44,136
+Browse to the console URL. Until you add your own certificate in chapter three, it is self-signed, so expect a browser warning. Sign in as admin, and change the password straight away.
+
+13
+00:02:44,136 --> 00:02:56,206
+SAT is running. Next we put it on your own hostname with a trusted certificate, and give your operators access without sharing the deploying identity.

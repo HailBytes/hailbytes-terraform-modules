@@ -1,0 +1,35 @@
+1
+00:00:00,000 --> 00:00:13,809
+In this chapter we put SAT on your own hostname with a certificate browsers trust, and give your operators what they need without sharing the identity that deployed it.
+
+2
+00:00:13,809 --> 00:00:31,096
+The console lives at the load balancer's DNS name. A load balancer has no fixed IP address, so point your hostname at it with a CNAME, or an alias record if the zone is in Route 53.
+
+3
+00:00:31,096 --> 00:00:43,899
+Then request a certificate for that hostname from ACM, with DNS validation.
+
+4
+00:00:43,899 --> 00:00:50,751
+Create that CNAME in your DNS, then wait for ACM to see it.
+
+5
+00:00:52,251 --> 00:01:02,611
+Hand the certificate to Terraform and apply. The listener moves to it, and the self-signed certificate the quickstart generated is removed.
+
+6
+00:01:04,111 --> 00:01:20,963
+For operators, grant read on this client's secrets in Secrets Manager rather than sharing the deploying identity. For a shell, the instances are set up for Session Manager, so there is no SSH port to open.
+
+7
+00:01:36,081 --> 00:01:47,281
+An instance takes a few minutes after boot to register with Session Manager. If it is not ready yet, wait and try again.
+
+8
+00:01:48,781 --> 00:02:10,851
+One more thing before the first campaign. Simulations only land if the target's mail filtering lets them through. Third-party filtering gateways often accept an allow-list request only from their own customer, so raise it in week one. It is the failure where everything deploys correctly and nothing arrives.
+
+9
+00:02:10,851 --> 00:02:18,913
+The last chapter takes a deployment back to nothing, safely.

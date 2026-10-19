@@ -1,0 +1,39 @@
+1
+00:00:00,000 --> 00:00:14,678
+HailBytes SAT runs from a paid AWS Marketplace AMI. Before Terraform can launch it, the account has to be subscribed, and a few account-level things checked. This chapter does both, once.
+
+2
+00:00:14,678 --> 00:00:34,303
+Subscribing is a console action. Open the listing signed in to the deploying account, choose Continue to Subscribe, then Accept Terms, and wait for the confirmation. There is no command-line equivalent, and Terraform cannot do it for you.
+
+3
+00:00:34,303 --> 00:00:52,025
+If you skip it, nothing complains at plan time. The apply builds the network and the database, then the first instance launch fails with OptInRequired. And seeing the AMI proves nothing: Marketplace AMIs are visible to every account.
+
+4
+00:00:52,025 --> 00:01:08,442
+Open CloudShell in the region you will deploy to. The S3 state locking we use in chapter two needs Terraform 1.10 or newer; if CloudShell has none, install it into your home directory, which persists.
+
+5
+00:01:08,442 --> 00:01:18,773
+First, the service-linked roles that the database, cache and load balancer services need. Creating one is account-wide, one-time, and costs nothing.
+
+6
+00:01:21,468 --> 00:01:32,233
+Here the preflight confirms the AMI is published in this region, and says plainly that this is not proof of a subscription.
+
+7
+00:01:35,103 --> 00:01:51,086
+Then quota. The HA tier uses two Elastic IPs, one NAT gateway per zone, and the default limit is five per region. So a third client in the same region needs an increase first.
+
+8
+00:01:51,086 --> 00:02:00,981
+Read the output, not just the exit code. A NOT ENOUGH here still ends normally, and fails the apply later.
+
+9
+00:02:02,481 --> 00:02:19,768
+One more thing the preflight prints: the deploying identity needs some IAM permissions, because every tier creates its own least-privilege role for the instances. A role that can only create EC2 and RDS resources fails partway through.
+
+10
+00:02:19,768 --> 00:02:27,490
+The account is ready. In chapter two we deploy HailBytes SAT with the quickstart root.

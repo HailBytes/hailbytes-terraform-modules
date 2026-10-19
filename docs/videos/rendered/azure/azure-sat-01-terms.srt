@@ -1,0 +1,47 @@
+1
+00:00:00,000 --> 00:00:14,678
+HailBytes SAT runs from a paid Azure Marketplace image. Before any script can deploy it, the subscription has to accept that image's terms. This chapter does that once, the right way.
+
+2
+00:00:14,678 --> 00:00:34,928
+In the portal this is called programmatic deployment: the Get started link on the offer, then Enable for your subscription. It is exactly the same switch as az vm image terms accept. It belongs to the subscription, and each product has its own.
+
+3
+00:00:34,928 --> 00:00:53,085
+The modules can accept the terms themselves, but then one deployment's state owns a subscription-wide setting. The next deployment fails with already exists, and destroying the first cancels the terms for everyone. So we accept them once, outside Terraform.
+
+4
+00:00:53,085 --> 00:01:07,763
+The preflight script does it as an explicit, auditable step. It also registers the resource providers the stack needs and checks the region before you spend any time on an apply.
+
+5
+00:01:07,763 --> 00:01:20,267
+The modules switch off Terraform's own provider registration on purpose, so this is the step that does it. Registering a provider creates nothing and costs nothing.
+
+6
+00:01:20,267 --> 00:01:32,772
+Here are the terms, accepted for this subscription. That is the same as the portal's Enable switch, and it now covers every deployment in this subscription.
+
+7
+00:01:34,272 --> 00:01:43,733
+Then the regional checks. Each of these would otherwise fail an apply after the network and database already exist.
+
+8
+00:01:43,733 --> 00:02:00,150
+Read the output, not just the exit code. The script reports rather than fails, so a WARNING, a NOT ENOUGH, or no Active image all still end normally, and each one fails the apply later.
+
+9
+00:02:01,650 --> 00:02:16,328
+SAT and ASM are separate offers with separate terms. If this subscription will run both, run the preflight again with dash dash product asm. Once per subscription, not once per client.
+
+10
+00:02:16,328 --> 00:02:24,050
+You can confirm it at any time. This reads the same switch the portal shows.
+
+11
+00:02:25,550 --> 00:02:41,112
+Accepting legal terms needs the right role, which is often not the person deploying. If the portal says you don't have permission, an Owner does it once. Chapter two covers who needs what.
+
+12
+00:02:41,112 --> 00:02:53,182
+Next, the identity that runs the deployment: what it needs once, what it needs every time, and how to run it as a service principal.
