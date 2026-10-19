@@ -175,6 +175,8 @@ steps:
           phish_allowed_cidrs = ["0.0.0.0/0"]            # who may reach the landing pages
           ssh_public_key      = "ssh-ed25519 AAAAC3Nza...demo admin@example.com"
           key_vault_reader_principal_ids = ["11111111-1111-1111-1111-111111111111"]  # an Entra group
+          enable_management_access = true                    # Entra SSH, chapter 4
+          admin_public_url         = "https://sat.example.com"  # SSO callbacks, chapter 4
       - say: >-
           Customer prefixes every resource, tags it for cost reporting, and switches off
           Terraform's own acceptance of the Marketplace terms, which you did once in chapter one.
@@ -185,7 +187,11 @@ steps:
       - pause: 1
       - say: >-
           If a service principal runs the apply, name an Entra group in key vault reader principal IDs,
-          or no person can read the database password. Chapter four covers this.
+          or no person can read the database password.
+      - pause: 1
+      - say: >-
+          And set the two Entra settings from chapter four now. Admin public URL in particular is read
+          when a VM boots, so setting it later means replacing the VMs.
 
   - type: terminal
     session:

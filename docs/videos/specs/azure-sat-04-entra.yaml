@@ -1,0 +1,152 @@
+# Chapter 4 of the Azure SAT series. Narration and on-screen text: ../azure/SCRIPT.md.
+# The long-form version is hailbytes-sat docs/ENTRA_ID_SSO.md.
+id: azure-sat-04-entra
+cloud: azure
+product: sat
+chapter: 4
+title: "Entra ID: operator access, SSO and SCIM"
+steps:
+  - type: title
+    eyebrow: Chapter 4 of 5
+    headline: "Entra ID: operator access, single sign-on and SCIM"
+    sub: Your staff sign in with the accounts they already have, and nobody shares a credential.
+    narration: >-
+      With SAT running, we connect it to Entra ID in four places: who can read the deployment's
+      secrets, who can open a shell on the VMs, who can sign in to the console, and how users
+      are provisioned.
+
+  - type: card
+    eyebrow: 1. Secrets
+    headline: An operators group can read the Key Vault
+    bullets:
+      - "`key_vault_reader_principal_ids` takes Entra object IDs: give it one group"
+      - "Set before the first apply, it is in place from day one"
+      - "Already deployed? `keyvault-maintenance.sh grant` adds it now"
+    narration: >-
+      First, secrets. Key vault reader principal IDs takes Entra object IDs, ideally of a single
+      group. If you set it in chapter two it is already done. If not, the maintenance script
+      grants it now.
+
+  - type: terminal
+    session:
+      - cmd: ../keyvault-maintenance.sh grant --vault acmesatprodkv-x7k2qa --principal 11111111-1111-1111-1111-111111111111
+      - out: |
+          Granted Key Vault Secrets User on acmesatprodkv-x7k2qa to 11111111-1111-1111-1111-111111111111.
+
+          This is an out-of-band grant. Terraform does not know about it, and
+          a later apply will not remove it but will not recreate it either if
+          the vault is replaced. Add the id to key_vault_reader_principal_ids
+          so it survives.
+      - say: >-
+          A grant made this way is out of band. Add the same ID to the variable as well, so it
+          survives if the vault is ever replaced.
+
+  - type: card
+    eyebrow: 2. Shell access
+    headline: Entra SSH instead of shared keys
+    bullets:
+      - "`enable_management_access = true` installs Entra SSH login on each VM"
+      - "Give the operators group Virtual Machine Administrator Login on the resource group"
+      - "The VMs have no public IP: `az ssh vm` signs you in, it doesn't route you there"
+      - "Connect from a network that reaches the vnet: VPN, peering or a jump host"
+    narration: >-
+      Second, shell access. Set enable management access, and give your operators group the Virtual
+      Machine Administrator Login role. One thing to know: the VMs have no public IP. az ssh vm
+      handles the sign-in, but you still need a network path into the vnet.
+
+  - type: terminal
+    session:
+      - cmd: RG=$(terraform output -raw resource_group_name)
+      - cmd: az role assignment create --assignee 11111111-1111-1111-1111-111111111111 --role "Virtual Machine Administrator Login" --scope $(az group show -n $RG --query id -o tsv) --query roleDefinitionName -o tsv
+      - out: |
+          Virtual Machine Administrator Login
+      - cmd: az ssh vm -g $RG -n acme-sat-prod-vm-1 --prefer-private-ip
+      - out: |
+          {d}  ...{/}
+          {g}admin@example.com@acme-sat-prod-vm-1{/}:~$ sudo systemctl is-active hailbytes-sat
+          active
+      - say: >-
+          For a one-off command without any network path, az vm run-command reaches the VM through
+          Azure itself. That is how the initial credentials command works.
+
+  - type: card
+    eyebrow: 3. Single sign-on
+    headline: Tell SAT its public URL first
+    bullets:
+      - "SSO callbacks are built from `admin_public_url`, e.g. `https://sat.example.com`"
+      - "Unset, SAT falls back to `https://0.0.0.0:3333`, which Entra cannot redirect to"
+      - "That is `AADSTS900971` or `AADSTS500112`"
+      - "Set it before the first apply. On a running pair it applies as each VM is replaced"
+    narration: >-
+      Third, single sign-on. Behind the load balancer, SAT has to be told the address your users
+      browse to. Without it, the sign-in callback points at the VM's own listen address, and Entra
+      refuses it with AADSTS 900971 or 500112. Set admin public URL before the first apply.
+
+  - type: terminal
+    session:
+      - cmd: grep -E 'admin_public_url|enable_management_access' terraform.tfvars
+      - out: |
+          enable_management_access = true
+          admin_public_url         = "https://sat.example.com"
+      - say: >-
+          We set both in chapter three, before the first apply, so there is nothing to replace now.
+      - say: >-
+          Register the app in Entra with exactly that address plus slash sso slash callback slash
+          microsoft, character for character.
+      - cmd: az ad app create --display-name "HailBytes SAT" --sign-in-audience AzureADMyOrg --web-redirect-uris "https://sat.example.com/sso/callback/microsoft" --query appId -o tsv
+      - out: |
+          33333333-3333-3333-3333-333333333333
+      - cmd: az ad app credential reset --id 33333333-3333-3333-3333-333333333333 --display-name sat-sso --years 1 --append --query password -o tsv
+      - out: |
+          ****************************************
+      - say: >-
+          Copy the secret's value now, and put its expiry date in a calendar. When it lapses, every
+          single sign-on fails.
+
+  - type: card
+    eyebrow: In the SAT console
+    headline: "Settings, SSO/OIDC, Add SSO Provider"
+    bullets:
+      - "Provider: Microsoft Entra ID. Client ID, secret value, and your tenant ID (not `common`)"
+      - "Allowed Domains: your email domain. Always set it"
+      - "Just-in-time provisioning on, default role User. Promote admins one by one"
+      - "In Entra, set Assignment required and assign the group that should sign in"
+    narration: >-
+      In the SAT console, open Settings, SSO, and add a Microsoft Entra ID provider with the client
+      ID, the secret value and your tenant ID. Set your allowed domains. Then decide who can sign in
+      in Entra itself, by requiring assignment to the app.
+
+  - type: card
+    eyebrow: Keep a way back in
+    headline: "Test from the public URL, and keep a break-glass admin"
+    bullets:
+      - "Sign in from a private window at `https://sat.example.com`, never the IP"
+      - "On the HA pair, sign in several times: each callback can land on either node"
+      - "Keep the local `admin` account, with a strong password and two-factor, for when Entra is unreachable"
+    narration: >-
+      Test from a private window at the public URL, not the IP address, and sign in a few times so
+      both nodes are exercised. Keep the local admin account, with two-factor, as your way back in.
+
+  - type: card
+    eyebrow: 4. Provisioning
+    headline: SCIM keeps SAT's users in step with Entra
+    bullets:
+      - "SAT: Settings, SCIM: generate the token"
+      - "Entra: Enterprise applications, HailBytes SAT, Provisioning, Automatic"
+      - "Tenant URL `https://sat.example.com/scim/v2` and the token, then Test Connection"
+      - "Entra connects inbound from Microsoft's network: `allowed_cidrs` must let it reach the console"
+    narration: >-
+      Last, provisioning. Generate a SCIM token in SAT, then point the app's provisioning in Entra
+      at slash scim slash v2 with that token. Unlike sign-in, Entra connects to SAT directly here,
+      so your admin allow-list has to let it in.
+
+  - type: card
+    eyebrow: Next
+    headline: "Chapter 5: Tear down cleanly"
+    bullets:
+      - "Export first, then lift the locks"
+      - "Read the destroy plan for the Marketplace agreement"
+      - "Check nothing is left billing"
+    narration: >-
+      That is SAT connected to Entra ID. The last chapter covers taking a deployment down without
+      touching anyone else's.

@@ -1,0 +1,101 @@
+# Chapter 4 of the AWS SAT series. Narration and on-screen text: ../aws/SCRIPT.md.
+# Follows docs/AWS_MSSP_RUNBOOK.md, Step 10.
+id: aws-sat-04-teardown
+cloud: aws
+product: sat
+chapter: 4
+title: Tear down cleanly
+steps:
+  - type: title
+    eyebrow: Chapter 4 of 4
+    headline: Tear down cleanly
+    sub: Take one deployment back to nothing, without touching any other client in the account.
+    narration: >-
+      Tearing down on AWS has one step that cannot be undone, so the order matters. Here it is.
+
+  - type: terminal
+    session:
+      - say: >-
+          Work from the client's own directory, in the same account. Export first. Once deletion protection
+          is off, destroy takes no final database snapshot, so this export is the only copy you will have.
+      - cmd: cd ~/hailbytes/acme/quickstart/aws-sat-ha && URL=$(terraform output -raw console_url)
+      - cmd: 'curl -kf -H "Authorization: Bearer $SAT_API_KEY" "${URL}api/instance/export" -o acme-export.tar.gz'
+      - out: |
+          {d}100 41.2M  100 41.2M    0     0  9634k      0  0:00:04  0:00:04 --:--:-- 9641k{/}
+
+  - type: terminal
+    session:
+      - say: >-
+          Lift deletion protection in its own apply. The modules tie the final snapshot to it, so this also
+          turns the final snapshot off.
+      - cmd: terraform apply -var deletion_protection=false
+      - out: |
+          {d}  ...{/}
+          {g}{b}Apply complete! Resources: 0 added, 2 changed, 0 destroyed.{/}
+
+  - type: terminal
+    session:
+      - say: >-
+          The backup bucket is Object-Locked by design, and destroy will not empty it. This script empties it,
+          after checking it is a HailBytes bucket and making you type its name.
+      - cmd: ../empty-bucket-aws.sh "$(terraform output -raw backup_bucket_name)" --region "$AWS_REGION"
+      - out: |
+          Bucket   acme-sat-prod-backup-123456789012  (hailbytes-sat, us-east-1)
+          Holds    46 object version(s) and delete marker(s), all of which will be deleted.
+          This cannot be undone.
+      - ask: "Type the bucket name to continue: "
+      - input: acme-sat-prod-backup-123456789012
+      - out: |
+          Empty. terraform destroy can now remove acme-sat-prod-backup-123456789012.
+      - say: >-
+          Deleting from an Object-Locked bucket needs s3 BypassGovernanceRetention. On the autoscale tier, empty
+          the load balancer's access-log bucket the same way.
+
+  - type: terminal
+    session:
+      - say: >-
+          Write the destroy plan, read it, and destroy. Everything listed should start with acme dash sat.
+          If it stops partway, run the last command again.
+      - cmd: terraform plan -destroy -out destroy.tfplan
+      - cmd: terraform apply destroy.tfplan 2>&1 | tee destroy.log
+      - out: |
+          module.hailbytes_sat.aws_instance.vm[0]: Destroying...
+          {d}  ...{/}
+          module.hailbytes_sat.aws_db_instance.main: Destruction complete after 7m03s
+          {d}  ...{/}
+          {g}{b}Apply complete! Resources: 0 added, 0 changed, 84 destroyed.{/}
+
+  - type: terminal
+    session:
+      - say: >-
+          Then confirm nothing tagged for this client is left. Expect nothing beyond keys and secrets still
+          in their deletion windows. The tagging API can lag by a few minutes.
+      - cmd: aws resourcegroupstaggingapi get-resources --region "$AWS_REGION" --tag-filters "Key=customer,Values=acme" --query 'ResourceTagMappingList[].ResourceARN'
+      - out: |
+          [
+              "arn:aws:secretsmanager:us-east-1:123456789012:secret:acme-sat-prod-db-password-Gh1Jk2"
+          ]
+
+  - type: card
+    eyebrow: What deliberately survives
+    headline: Four things stay, on purpose
+    bullets:
+      - "Secrets Manager secrets, for a 7-day recovery window. Rebuilding the same client inside it fails"
+      - "KMS keys, pending deletion for 30 days. Aliases are freed at once"
+      - "The state bucket: delete only this client's key, once they are not coming back"
+      - "The Marketplace subscription: other deployments depend on it"
+    narration: >-
+      Some things survive on purpose. Secrets wait seven days before deletion, so rebuilding the same client
+      inside that window fails until you force-delete them. Keys wait thirty days. The state bucket and the
+      subscription stay, because other clients depend on them.
+
+  - type: card
+    eyebrow: Series complete
+    headline: From subscription to teardown
+    bullets:
+      - "Runbook: `docs/AWS_MSSP_RUNBOOK.md`"
+      - "When an apply fails: `quickstart/explain.sh <log>`"
+      - "support@hailbytes.com"
+    narration: >-
+      That completes the series. Every step is written down in the AWS MSSP runbook in the repository, and
+      explain dot s h turns any failed log into the next step.

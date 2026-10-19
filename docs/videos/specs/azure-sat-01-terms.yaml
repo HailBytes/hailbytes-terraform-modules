@@ -92,7 +92,7 @@ steps:
             accepted
       - say: >-
           Here are the terms, accepted for this subscription. That is the same as the portal's
-          Enable switch, and it is now recorded against your identity in the Activity Log.
+          Enable switch, and it now covers every deployment in this subscription.
 
   - type: terminal
     session:
