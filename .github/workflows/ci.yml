@@ -655,7 +655,10 @@ jobs:
           #     CLAUDE.md and docs/DEPLOY_FROM_GALLERY.md). It is deliberately
           #     NOT exposed on asm-azure-ha, so it must not be a forwarding
           #     requirement. sat-azure-ha still forwards it.
-          hidden_in_wrapper="^(product|source_image_id)$"
+          #   shared_backend_certificate -- the installing bootstrap is in the
+          #     SAT image only; an ASM image would ignore it and the gateway
+          #     would reject the VM. Exposed on sat-azure-ha, not asm-azure-ha.
+          hidden_in_wrapper="^(product|source_image_id|shared_backend_certificate)$"
 
           fail=0
           for wrapper in "${!wrappers[@]}"; do

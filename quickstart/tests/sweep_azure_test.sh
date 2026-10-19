@@ -89,6 +89,8 @@ az() {
         *"keyvault secret show"*)       printf '%b' "${MOCK_KV_SECRET_ID-}" ;;
         *"keyvault key list"*)          printf '%b' "${MOCK_KV_KEYS-}" ;;
         *"keyvault key show"*)          printf '%b' "${MOCK_KV_KEY_ID-}" ;;
+        *"keyvault certificate list"*)  printf '%b' "${MOCK_KV_CERTS-}" ;;
+        *"keyvault certificate show"*)  printf '%b' "${MOCK_KV_CERT_ID-}" ;;
         *"identity list"*"principalId"*) printf '%b' "${MOCK_SHARED_PRINCIPAL-}" ;;
         *"identity list"*)              printf '%b' "${MOCK_IDENTITIES-}" ;;
         *"storage container list"*)     printf '%b' "${MOCK_CONTAINERS-}" ;;
@@ -308,6 +310,20 @@ has   "its Key Vault grant has one address"      "azurerm_role_assignment.vm_ide
 has   "its backup grant has one address"         "azurerm_role_assignment.vm_identity_backup_writer[0]" "$o"
 hasnt "neither is filed under a VM index"        "vm_kv_secrets_user[" "$o"
 hasnt "the identity is not called unrecognised"  "unrecognised managed identity 'hb-vm-id'" "$o"
+
+# The opt-in shared backend certificate: the certificate imports under its own
+# address, and its Key Vault-managed backing secret and key are not "unrecognised".
+o="$(MOCK_KV='hb-kv\n' MOCK_KV_SECRETS='hailbytes-backend-tls\n' MOCK_KV_KEYS='hailbytes-backend-tls\n' \
+     MOCK_KV_CERTS='hailbytes-backend-tls\n' \
+     MOCK_KV_CERT_ID='https://hb-kv.vault.azure.net/certificates/hailbytes-backend-tls/v1\n' \
+     MOCK_KV_IDS='/subscriptions/S/resourceGroups/RG/providers/Microsoft.KeyVault/vaults/hb-kv\n' \
+     MOCK_ROLE_ASSIGNMENTS='Key Vault Certificates Officer\tguid-4\tdeployer\n' \
+     bash "$SWEEP" imports hbtest-rg-01 2>&1)"
+has   "the shared certificate imports"           "azurerm_key_vault_certificate.backend[0]" "$o"
+has   "by its certificate id"                    "https://hb-kv.vault.azure.net/certificates/hailbytes-backend-tls/v1" "$o"
+has   "the deployer's certificate role maps"     "azurerm_role_assignment.kv_certificates_officer[0]" "$o"
+hasnt "its backing secret is not unrecognised"   "unrecognised secret 'hailbytes-backend-tls'" "$o"
+hasnt "nor its backing key"                      "unrecognised key 'hailbytes-backend-tls'" "$o"
 
 o="$(MOCK_VNETS='hb-vnet\n' MOCK_SUBNETS='hb-workload\n' \
      MOCK_SUBNET_NSG='/subscriptions/S/../nsg\n' bash "$SWEEP" imports hbtest-rg-01 2>&1)"

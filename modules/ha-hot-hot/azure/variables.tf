@@ -748,6 +748,12 @@ variable "appgw_backend_root_cert_pem" {
   default     = null
 }
 
+variable "shared_backend_certificate" {
+  description = "Give every app VM ONE backend TLS certificate, created in the deployment's Key Vault, and have App Gateway trust it. Without it each VM makes its own self-signed certificate at first boot, valid 365 days, so the gateway can trust only the one appgw_backend_root_cert_pem was read from, a replaced VM is untrusted until someone re-uploads its certificate, and the trust lapses when it expires. With it, a replacement fetches the same certificate and stays trusted. REQUIRES a SAT image whose bootstrap reads backend_cert_secret_name from the payload; an older image ignores it, keeps its own certificate, and the gateway rejects it. Turning it on keeps trusting appgw_backend_root_cert_pem too, so existing VMs stay reachable until they are replaced; drop that input once every VM is on a supporting image. Not supported by ASM images."
+  type        = bool
+  default     = false
+}
+
 variable "waf_policy_id" {
   description = "Optional ID of an azurerm_web_application_firewall_policy to attach to the App Gateway. HailBytes does not bundle a managed ruleset; most enterprises bring their own."
   type        = string
