@@ -135,7 +135,9 @@ owns them, and two things follow. The next client's apply fails with
 `already exists`. And destroying the first client **cancels the terms for every
 other deployment in the subscription**, which breaks their image swaps and
 scale-out. Setting `customer` (Step 5) switches Terraform's acceptance off for
-exactly this reason.
+exactly this reason. [AZURE_PROGRAMMATIC_DEPLOYMENT.md](AZURE_PROGRAMMATIC_DEPLOYMENT.md)
+has the portal, CLI and pipeline variants, and moving an existing deployment
+off Terraform-owned terms.
 
 **Check before moving on:** read the preflight output, not just its exit code.
 It reports rather than fails, so a `WARNING` (a zone missing for the size), a

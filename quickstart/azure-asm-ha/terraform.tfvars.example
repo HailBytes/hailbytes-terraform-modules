@@ -19,3 +19,6 @@ ssh_public_key = "ssh-ed25519 AAAA...REPLACE user@host"
 # location            = "northeurope"
 # admin_username      = "hbadmin"
 # environment         = "prod"
+
+# Entra ID SSH (az ssh vm) for operators holding 'Virtual Machine Administrator Login'.
+# enable_management_access = true

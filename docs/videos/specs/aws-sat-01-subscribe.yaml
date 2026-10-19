@@ -1,0 +1,159 @@
+# Chapter 1 of the AWS SAT series. Narration and on-screen text: ../aws/SCRIPT.md.
+# Terminal output is SAMPLE OUTPUT reconstructed from quickstart/preflight-aws.sh.
+# Two of that script's paragraphs compare it with another cloud; they are
+# elided here ("...") because AWS Marketplace media must not name it.
+id: aws-sat-01-subscribe
+cloud: aws
+product: sat
+chapter: 1
+title: Subscribe and run the preflight
+steps:
+  - type: title
+    eyebrow: Chapter 1 of 4
+    headline: Subscribe and run the preflight
+    sub: The one-time account prep every HailBytes deployment on AWS depends on.
+    narration: >-
+      HailBytes SAT runs from a paid AWS Marketplace AMI. Before Terraform can launch it, the account
+      has to be subscribed, and a few account-level things checked. This chapter does both, once.
+
+  - type: card
+    eyebrow: Step one is in the console
+    headline: Subscribe on the listing page
+    bullets:
+      - "Open the HailBytes SAT listing while signed in to the account you will deploy into"
+      - "Continue to Subscribe, then Accept Terms. Wait until it says you are subscribed"
+      - "There is no CLI for this, and Terraform cannot do it for you"
+      - "Running ASM too? It is a separate listing with its own subscription"
+    narration: >-
+      Subscribing is a console action. Open the listing signed in to the deploying account, choose
+      Continue to Subscribe, then Accept Terms, and wait for the confirmation. There is no command-line
+      equivalent, and Terraform cannot do it for you.
+
+  - type: card
+    eyebrow: Why it matters
+    headline: A missing subscription fails late
+    bullets:
+      - "The apply builds the network and the database first"
+      - "Then the first instance launch fails: `OptInRequired`"
+      - "A visible AMI does not prove you are subscribed: Marketplace AMIs are visible to everyone"
+      - "Check the listing page, or AWS Marketplace, Manage subscriptions"
+    narration: >-
+      If you skip it, nothing complains at plan time. The apply builds the network and the database,
+      then the first instance launch fails with OptInRequired. And seeing the AMI proves nothing:
+      Marketplace AMIs are visible to every account.
+
+  - type: terminal
+    session:
+      - say: >-
+          Open CloudShell in the region you will deploy to. The S3 state locking we use in chapter two
+          needs Terraform 1.10 or newer; if CloudShell has none, install it into your home directory, which persists.
+      - cmd: aws sts get-caller-identity --query Account --output text
+      - out: |
+          123456789012
+      - cmd: terraform version | head -1
+      - out: |
+          Terraform v1.13.3
+      - cmd: git clone --depth 1 https://github.com/HailBytes/hailbytes-terraform-modules ~/hailbytes-terraform-modules
+      - cmd: ~/hailbytes-terraform-modules/quickstart/preflight-aws.sh ha
+      - out: |
+          ==============================================================
+           HailBytes -- AWS preflight (ha tier, us-east-1)
+          ==============================================================
+
+          Account : 123456789012
+          Identity: arn:aws:iam::123456789012:user/admin
+          Region  : us-east-1
+
+          --------------------------------------------------------------
+           Service-linked roles
+          --------------------------------------------------------------
+            rds.amazonaws.com              already exists (AWSServiceRoleForRDS)
+            elasticache.amazonaws.com      does not exist yet
+            elasticloadbalancing.amazonaws.com already exists (AWSServiceRoleForElasticLoadBalancing)
+
+          Creating 1 service-linked role(s). This is a one-time,
+          account-scoped, non-billable change.
+
+            creating elasticache.amazonaws.com      done
+      - say: >-
+          First, the service-linked roles that the database, cache and load balancer services need.
+          Creating one is account-wide, one-time, and costs nothing.
+
+  - type: terminal
+    session:
+      - out: |
+          --------------------------------------------------------------
+           Marketplace subscription
+          --------------------------------------------------------------
+          Checking both listings, since this script does not know which product
+          you intend to deploy:
+
+            sat  published in us-east-1 (ami-0123456789abcdef0)
+                 subscribe: https://aws.amazon.com/marketplace/pp/prodview-yyk6iton3ghu4
+            asm  published in us-east-1 (ami-0fedcba9876543210)
+                 subscribe: https://aws.amazon.com/marketplace/pp/prodview-66d5bswmbtfhs
+
+          A visible AMI means the product is published in this region. It does NOT
+          prove this account is subscribed: Marketplace AMIs are visible to every
+          account, and a missing subscription only shows at launch, as OptInRequired
+          partway through the apply. Confirm on the listing page (it says you are
+          subscribed) or under AWS Marketplace > Manage subscriptions.
+          {d}  ...{/}
+      - say: >-
+          Here the preflight confirms the AMI is published in this region, and says plainly that this is
+          not proof of a subscription.
+
+  - type: terminal
+    session:
+      - out: |
+          --------------------------------------------------------------
+           EC2 vCPU quota (informational)
+          --------------------------------------------------------------
+          The ha tier builds 2 application instance(s) at
+          m6i.2xlarge (8 vCPUs each), so it needs 16 vCPUs
+          of Standard on-demand quota here.
+
+          Running On-Demand Standard (A/C/D/H/I/M/R/T/Z) instance vCPU limit in
+          us-east-1: 64.0
+            At or above the 16 vCPUs this tier needs. Note this is the
+            LIMIT, not the headroom: other running instances count against it
+            and Service Quotas does not report current consumption.
+
+          --------------------------------------------------------------
+           Elastic IPs and VPCs in us-east-1
+          --------------------------------------------------------------
+            Elastic IPs: 3 used of 5 -- this deployment needs 2.
+            VPCs       : 1 used of 5 -- this deployment needs 1.
+          {d}  ...{/}
+          ==============================================================
+           Preflight complete for the ha tier.
+          ==============================================================
+      - say: >-
+          Then quota. The HA tier uses two Elastic IPs, one NAT gateway per zone, and the default limit is
+          five per region. So a third client in the same region needs an increase first.
+      - pause: 1
+      - say: >-
+          Read the output, not just the exit code. A NOT ENOUGH here still ends normally, and fails the apply later.
+
+  - type: card
+    eyebrow: The deploying identity
+    headline: More than create-the-resources
+    bullets:
+      - "Each tier creates its own least-privilege IAM role and instance profile"
+      - "So the deployer needs `iam:CreateRole`, `iam:PutRolePolicy`, `iam:CreateInstanceProfile`, `iam:PassRole`"
+      - "Plus EC2, EBS, KMS, Secrets Manager, CloudWatch Logs, SNS, and for HA: RDS, ElastiCache, load balancing"
+      - "Missing ones surface late, after some resources exist. The preflight lists them"
+    narration: >-
+      One more thing the preflight prints: the deploying identity needs some IAM permissions, because
+      every tier creates its own least-privilege role for the instances. A role that can only create
+      EC2 and RDS resources fails partway through.
+
+  - type: card
+    eyebrow: Next
+    headline: "Chapter 2: Deploy with the quickstart"
+    bullets:
+      - "Durable Terraform state in S3"
+      - "Settings, plan, apply"
+      - "First sign-in"
+    narration: >-
+      The account is ready. In chapter two we deploy HailBytes SAT with the quickstart root.

@@ -139,6 +139,18 @@ variable "key_vault_reader_principal_ids" {
   default     = []
 }
 
+variable "enable_management_access" {
+  description = "Install AADSSHLoginForLinux on each app VM, so operators holding 'Virtual Machine Administrator Login' (or User Login) can `az ssh vm` with their Entra ID account. It provides authentication, not a network path: the VMs have no public IP, so connect from a network that reaches the vnet."
+  type        = bool
+  default     = false
+}
+
+variable "admin_public_url" {
+  description = "Origin users reach the console on, e.g. https://sat.example.com (no path). SSO callbacks are built from it; register <origin>/sso/callback/microsoft in Entra ID. Delivered at boot, so on a running deployment it takes effect on each VM's next replacement (docs/AZURE_PATCHING_AND_MIGRATION.md)."
+  type        = string
+  default     = null
+}
+
 locals {
   # Null customer reproduces the names this root has always used, so an
   # existing deployment plans clean.
@@ -192,6 +204,8 @@ module "hailbytes_sat" {
   key_vault_reader_principal_ids = var.key_vault_reader_principal_ids
   enable_db_delete_lock          = var.enable_db_delete_lock
   enable_public_ip_delete_lock   = var.enable_public_ip_delete_lock
+  enable_management_access       = var.enable_management_access
+  admin_public_url               = var.admin_public_url
 
   # Key Vault names are GLOBALLY unique, the vault carries purge protection, and
   # a deleted name is reserved for 30 days with no force-purge. Derived from

@@ -894,8 +894,13 @@ run_plan_and_apply() {
   note "  so expect a browser warning on the first visit."
   say ""
   note "Next steps:"
-  note "  • Retrieve the initial admin password from the VM's serial console output,"
-  note "    or from ~/hailbytes-sat-initial-credentials.txt on the instance."
+  if [ "$PRODUCT" = asm ]; then
+    note "  • Read the initial admin password on the instance with:"
+    note "      sudo grep DJANGO_SUPERUSER_PASSWORD /opt/hailbytes-asm/.env"
+  else
+    note "  • Read the initial admin password on the instance with:"
+    note "      sudo cat /opt/hailbytes-sat/hailbytes-sat-initial-credentials.txt"
+  fi
   note "  • Read docs/AZURE_PATCHING_AND_MIGRATION.md (or docs/PATCHING_AND_MIGRATION.md"
   note "    on AWS) before your first image update."
 }

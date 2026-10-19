@@ -415,7 +415,7 @@ The procurement-grade test for "no data loss from patching", and the DR runbook.
 1. Provision a fresh stack — same product, same tier. Pin the image version you
    want, not `"latest"`.
 
-   > No `v1.0.0` tag exists yet ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)); pin to a commit SHA instead of `?ref=v1.0.0`.
+   > No release tag exists yet ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)), so the snippets on this page pin a commit SHA. Move the pin forward deliberately; an unpinned or `?ref=main` source changes under you on the next `terraform init -upgrade`.
 
    ```hcl
    module "hailbytes_sat_restore" {

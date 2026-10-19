@@ -1,0 +1,330 @@
+# Chapter 3 of the Azure SAT series. Narration and on-screen text: ../azure/SCRIPT.md.
+# Terminal output is SAMPLE OUTPUT reconstructed from the scripts' own echo
+# statements, with the shared placeholders (README.md, "Placeholders"). Plan
+# and apply counts and timings are illustrative; the timings match what real
+# deployments took.
+id: azure-sat-03-deploy
+cloud: azure
+product: sat
+chapter: 3
+title: Deploy HailBytes SAT on Azure
+steps:
+  - type: title
+    eyebrow: Chapter 3 of 5
+    headline: Deploy HailBytes SAT on Azure
+    sub: From an empty subscription to a running high-availability pair, in Azure Cloud Shell.
+    narration: >-
+      In this chapter we deploy HailBytes SAT on the high-availability tier: two
+      application VMs across two zones, a managed PostgreSQL database, and a load
+      balancer in front.
+
+  - type: card
+    eyebrow: Before you start
+    headline: Two things from earlier chapters
+    bullets:
+      - "Chapter 1: Marketplace terms accepted once, by `preflight-azure.sh --accept-terms`"
+      - "Chapter 2: an identity with Owner, or Contributor plus User Access Administrator"
+      - "Azure Cloud Shell (Bash) already has `az`, `terraform` and `git`"
+      - "Allow 30 to 45 minutes. Most of it is the database."
+    narration: >-
+      You need two things from the earlier chapters: the Marketplace terms accepted
+      for this subscription, and an identity that can create role assignments.
+      Open Azure Cloud Shell in Bash. It already has everything we need.
+
+  - type: terminal
+    session:
+      - say: >-
+          First, price the shape. The guided wizard asks what you want, and before
+          every choice that changes the bill it prints a COST IMPACT block with real figures.
+      - cmd: bash <(curl -fsSL https://raw.githubusercontent.com/HailBytes/hailbytes-terraform-modules/main/quickstart/deploy.sh)
+      - out: |
+
+          {b}HailBytes guided deployment{/}
+          {d}Deploys HailBytes SAT or ASM into your own cloud account from the published{/}
+          {d}Marketplace image, using the open-source Terraform modules in github.com/HailBytes/hailbytes-terraform-modules.{/}
+          {d}Nothing is created until you confirm a plan.{/}
+
+          {g}✓{/} Detected azure Cloud Shell
+
+          {b}Prerequisites{/}
+          {g}✓{/} terraform 1.9.8
+          {g}✓{/} Azure subscription: HailBytes Demo (00000000-0000-0000-0000-000000000000)
+
+          {b}Which product are you deploying?{/}
+            {c}1){/} HailBytes SAT — phishing simulation and security awareness training
+            {c}2){/} HailBytes ASM — attack surface management
+      - ask: "Choice [1-2]: "
+      - input: "1"
+      - out: |
+
+          {b}Which deployment shape?{/}
+            {c}1){/} Single VM — one instance, local database. Dev, PoC, small org.
+            {c}2){/} HA hot-hot — two instances across zones, managed database, shared cache.
+            {c}3){/} Unlimited scale — autoscaling instance group, managed database + read replicas.
+      - ask: "Choice [1-3]: "
+      - input: "2"
+      - out: |
+
+          {y}┌─ COST IMPACT ─────────────────────────────────────────────{/}
+          {y}│{/} HA is roughly 2.8x the all-in cost of a single VM.
+          {y}│{/}   It is not 2x: HA adds a zone-redundant database (billed at 2x compute
+          {y}│{/}   AND 2x storage for the standby), a shared cache, and a load balancer.
+          {y}│{/}
+          {y}│{/}   At 2-vCPU instances in North Europe that is about $1,432/month all-in
+          {y}│{/}   against $514 for a single VM. See AZURE_COST_SHAPES.md for the
+          {y}│{/}   line-by-line breakdown and the levers that reduce it.
+          {y}└───────────────────────────────────────────────────────────{/}
+      - say: >-
+          High availability is roughly 2.8 times the all-in cost of a single VM, not
+          twice, because the zone-redundant database bills its standby at full price.
+      - ask: "{c}Understood — continue with HA?{/} [y/N]: "
+      - input: "y"
+      - pause: 1
+      - clear: true
+      - out: |
+          {b}How many vCPUs per application node?{/}
+            {c}1){/} Pilot - 2 vCPU. THE DEFAULT. Evaluation, demos and small rosters
+            {c}2){/} Departmental - 4 vCPU. Steady multi-team use
+            {c}3){/} Organisational - 8 vCPU. The published purchasable rung
+            {c}4){/} Larger - 16 vCPU
+      - ask: "Choice [1-4]: "
+      - input: "1"
+      - out: |
+          {g}✓{/} Each application node will be Standard_D2s_v3 (2 vCPU).
+          {d}Changing this later REPLACES the VM. On the HA pair that is a rolling{/}
+          {d}replacement one node at a time; on a single VM it is downtime. Pick the{/}
+          {d}size you expect to run at, not the smallest one that starts.{/}
+
+          {y}┌─ COST IMPACT ─────────────────────────────────────────────{/}
+          {y}│{/} The HailBytes software meters per vCPU-hour, across every node.
+          {y}│{/}   2 node(s) x 2 vCPU = 4 metered vCPUs, roughly
+          {y}│{/}   $701/month for the software alone,
+          {y}│{/}   before any cloud infrastructure charges.
+          {y}└───────────────────────────────────────────────────────────{/}
+      - say: >-
+          The software meters per vCPU-hour across every node. Two nodes at two vCPUs
+          is four metered vCPUs. Pick the size you expect to run at: changing it later replaces the VM.
+      - ask: "{c}Keep Standard_D2s_v3?{/} [y/N]: "
+      - input: "y"
+      - pause: 1
+      - out: |
+          {d}  ...{/}
+          {d}You must also supply the network inputs (vm_subnet_id, lb_subnet_id,{/}
+          {d}db_delegated_subnet_id, private_dns_zone_id). quickstart/azure-ha shows a{/}
+          {d}root config that creates them with modules/network/azure.{/}
+      - ask: "{c}Run terraform init and plan now?{/} [y/N]: "
+      - input: "n"
+      - out: |
+          {g}✓{/} Configuration written to /home/admin/hailbytes-deploy. Run terraform there when ready.
+
+  - type: card
+    eyebrow: Which path
+    headline: The wizard prices it. The quickstart root builds it.
+    bullets:
+      - "The wizard writes a module config for a network you already have: add your subnet IDs, then plan"
+      - "From an empty subscription, deploy `quickstart/azure-ha`: it builds the network too"
+      - "One working directory per client. Never share one."
+    narration: >-
+      The wizard writes a config for a network you already have, so it still needs your
+      subnet IDs. From an empty subscription, use the complete root in quickstart slash
+      azure-ha, which builds the network as well. That is what we do next.
+
+  - type: terminal
+    session:
+      - say: >-
+          Give this client its own working directory, then put Terraform state in Azure
+          Storage. State left in Cloud Shell's home directory can vanish with the session.
+      - cmd: export CUSTOMER=acme
+      - cmd: git clone --depth 1 https://github.com/HailBytes/hailbytes-terraform-modules ~/hailbytes/$CUSTOMER
+      - out: |
+          Cloning into '/home/admin/hailbytes/acme'...
+      - cmd: cd ~/hailbytes/$CUSTOMER/quickstart/azure-ha
+      - cmd: ../bootstrap-state-azure.sh --out . --location northeurope --key "clients/$CUSTOMER/sat-ha.tfstate"
+      - out: |
+
+          Terraform state bootstrap
+                  subscription  HailBytes Demo
+                  group         tfstate-rg (northeurope)
+                  account       hbtfstate1018k3v9qa
+                  container     tfstate
+                  state blob    clients/acme/sat-ha.tfstate
+
+            ok    created resource group tfstate-rg
+            ok    created storage account hbtfstate1018k3v9qa
+            ok    blob versioning enabled
+            ok    granted Storage Blob Data Contributor to admin@example.com
+            ok    created container tfstate
+            ok    delete lock applied to tfstate-rg
+            ok    wrote ./backend.tf
+      - say: >-
+          The first client creates a locked-down state account. Note its name: every later
+          client in this subscription reuses it with dash dash account, and only the key changes.
+      - pause: 1
+
+  - type: terminal
+    session:
+      - say: >-
+          Now the settings. Copy the example and fill it in. Set customer on the very first
+          apply, because changing it later replaces everything.
+      - cmd: cp terraform.tfvars.example terraform.tfvars && nano terraform.tfvars
+      - cmd: cat terraform.tfvars
+      - out: |
+          customer            = "acme"
+          location            = "northeurope"
+          allowed_cidrs       = ["203.0.113.10/32"]      # who may reach the ADMIN console
+          phish_allowed_cidrs = ["0.0.0.0/0"]            # who may reach the landing pages
+          ssh_public_key      = "ssh-ed25519 AAAAC3Nza...demo admin@example.com"
+          key_vault_reader_principal_ids = ["11111111-1111-1111-1111-111111111111"]  # an Entra group
+          enable_management_access = true                    # Entra SSH, chapter 4
+          admin_public_url         = "https://sat.example.com"  # SSO callbacks, chapter 4
+      - say: >-
+          Customer prefixes every resource, tags it for cost reporting, and switches off
+          Terraform's own acceptance of the Marketplace terms, which you did once in chapter one.
+      - pause: 1
+      - say: >-
+          Set phish allowed CIDRs separately. The simulation targets are not in your admin range,
+          and without it the campaign sends but records no clicks.
+      - pause: 1
+      - say: >-
+          If a service principal runs the apply, name an Entra group in key vault reader principal IDs,
+          or no person can read the database password.
+      - pause: 1
+      - say: >-
+          And set the two Entra settings from chapter four now. Admin public URL in particular is read
+          when a VM boots, so setting it later means replacing the VMs.
+
+  - type: terminal
+    session:
+      - say: >-
+          Initialise, then write the plan to a file and read it before you apply it.
+      - cmd: terraform init
+      - out: |
+          Initializing the backend...
+          {g}Successfully configured the backend "azurerm"!{/} Terraform will automatically
+          use this backend unless the backend configuration changes.
+          Initializing modules...
+          Initializing provider plugins...
+          - Installing hashicorp/azurerm v4.48.0...
+          {g}Terraform has been successfully initialized!{/}
+      - cmd: terraform plan -out tfplan
+      - out: |
+          {d}  ...{/}
+            {g}+{/} resource "azurerm_resource_group" "main" {
+                {g}+{/} name     = "rg-acme-sat-prod"
+            {d}  ...{/}
+            # module.hailbytes_sat.azurerm_linux_virtual_machine.vm[0] will be created
+            # module.hailbytes_sat.azurerm_linux_virtual_machine.vm[1] will be created
+            # module.hailbytes_sat.azurerm_postgresql_flexible_server.main will be created
+            {d}  ...{/}
+
+          {b}Plan:{/} 58 to add, 0 to change, 0 to destroy.
+      - say: >-
+          Check three things. Everything is in rg acme sat prod. Nothing is planned for destroy.
+          And there is no marketplace agreement resource: the terms are not Terraform's to own.
+      - pause: 2
+
+  - type: terminal
+    session:
+      - say: >-
+          Apply the saved plan, keeping a log. Every name is fixed now, so there are no more prompts.
+      - cmd: terraform apply tfplan 2>&1 | tee apply.log
+      - out: |
+          module.network.azurerm_virtual_network.main: Creating...
+          azurerm_resource_group.main: Creation complete after 2s
+          module.hailbytes_sat.azurerm_key_vault.main: Creating...
+          module.network.azurerm_virtual_network.main: Creation complete after 7s
+          module.hailbytes_sat.azurerm_public_ip.lb: Creation complete after 4s
+          module.hailbytes_sat.azurerm_key_vault.main: Creation complete after 3m12s
+          module.hailbytes_sat.azurerm_postgresql_flexible_server.main: Creating...
+          module.hailbytes_sat.azurerm_postgresql_flexible_server.main: Still creating... [5m0s elapsed]
+          module.hailbytes_sat.azurerm_postgresql_flexible_server.main: Still creating... [10m0s elapsed]
+      - say: >-
+          The database is the long pole. On its own it is up about 12 minutes in, and that is
+          when the VMs are created: where a quota problem would surface, which is why preflight checked it.
+      - pause: 1
+      - out: |
+          module.hailbytes_sat.azurerm_postgresql_flexible_server.main: Still creating... [15m0s elapsed]
+          module.hailbytes_sat.azurerm_postgresql_flexible_server.main: Still creating... [20m0s elapsed]
+          module.hailbytes_sat.azurerm_postgresql_flexible_server.main: Creation complete after 23m48s
+      - say: >-
+          The zone-redundant standby adds another 10 to 20 minutes to the database.
+          Allow 30 to 45 minutes end to end.
+      - out: |
+          module.hailbytes_sat.azurerm_linux_virtual_machine.vm[0]: Creating...
+          module.hailbytes_sat.azurerm_linux_virtual_machine.vm[1]: Creating...
+          module.hailbytes_sat.azurerm_linux_virtual_machine.vm[0]: Creation complete after 1m51s
+          module.hailbytes_sat.azurerm_linux_virtual_machine.vm[1]: Creation complete after 2m04s
+          {d}  ...{/}
+
+          {g}{b}Apply complete! Resources: 58 added, 0 changed, 0 destroyed.{/}
+
+          Outputs:
+
+          console_url = "https://198.51.100.24/"
+          initial_credentials_command = <<EOT
+          az keyvault secret show --name hailbytes-admin-initial-password --query value -o tsv --vault-name acmesatprodkv-x7k2qa
+          EOT
+          load_balancer_public_ip = "198.51.100.24"
+          resource_group_name = "rg-acme-sat-prod"
+
+  - type: card
+    eyebrow: If the apply stops
+    headline: Read the log before you re-run anything
+    bullets:
+      - "`../explain.sh apply.log` names the cause, who can fix it, and the exact command"
+      - "Where an admin is needed it prints a paragraph you can forward as is"
+      - "Re-running the same apply after the fix is safe: Terraform picks up where it stopped"
+      - "Don't rename things to get past an error"
+    narration: >-
+      If the apply stops, don't re-run it blindly and don't change names to get past it.
+      Run explain dot s h on the log. It names the cause, who can fix it, and the exact
+      command. After the fix, re-running the same apply is safe.
+
+  - type: card
+    eyebrow: High availability
+    headline: Don't call it HA until the standby exists
+    bullets:
+      - "Some regions grant zone-redundant PostgreSQL per subscription, only where there is capacity"
+      - "Refused, the database comes up without its standby: `MultiAzHaIsOfferRestricted`"
+      - "Every plan and apply then warns `database_has_a_standby` until it is added"
+      - "File the quota request early; the standby can be added in place later"
+    narration: >-
+      One thing to watch on high availability. If Azure won't grant a zone-redundant
+      database in this region, the database comes up without its standby, and every plan
+      warns you. It works, but a zone outage takes the database with it. File the quota request early.
+
+  - type: terminal
+    session:
+      - say: >-
+          Now check it is serving. The health endpoint should answer 200, then print the
+          first-boot admin password. Both nodes share it through Key Vault.
+      - cmd: URL=$(terraform output -raw console_url)
+      - cmd: curl -sk -o /dev/null -w '%{http_code}\n' "${URL}api/health"
+      - out: |
+          200
+      - cmd: eval "$(terraform output -raw initial_credentials_command)"
+      - out: |
+          ****************
+
+  - type: card
+    eyebrow: First sign-in
+    headline: Sign in once, then change the password
+    bullets:
+      - "Browse to the console URL. The certificate is self-signed until you add your own"
+      - "Sign in as `admin` with the password you just printed"
+      - "Change it at once. The first-boot password is history after that"
+    narration: >-
+      Browse to the console URL. The certificate is self-signed until you put your own in
+      front, so expect a browser warning. Sign in as admin with that password, and change
+      it straight away.
+
+  - type: card
+    eyebrow: Next
+    headline: "Chapter 4: Entra ID"
+    bullets:
+      - "Operator access to the Key Vault and to the VMs"
+      - "Single sign-on for the SAT console"
+      - "SCIM provisioning from Entra ID"
+    narration: >-
+      SAT is running. In chapter four we connect it to Entra ID: operator access, single
+      sign-on, and SCIM provisioning.

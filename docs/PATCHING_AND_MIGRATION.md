@@ -116,11 +116,11 @@ also happens to be the disaster-recovery runbook.
 
 1. Provision a fresh SAT stack via Terraform — same product, same tier:
 
-   > No `v1.0.0` tag exists yet ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)); pin to a commit SHA instead of `?ref=v1.0.0` until a tagged release ships.
+   > No release tag exists yet ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)), so the snippets on this page pin a commit SHA. Move the pin forward deliberately; an unpinned or `?ref=main` source changes under you on the next `terraform init -upgrade`.
 
    ```hcl
    module "hailbytes_sat_restore" {
-     source = "github.com/hailbytes/hailbytes-terraform-modules//modules/sat-aws-ha?ref=v1.0.0"
+     source = "github.com/hailbytes/hailbytes-terraform-modules//modules/sat-aws-ha?ref=1294d40c09b88ac48365d85d4baacedba58391ed"
 
      vpc_id              = var.vpc_id
      public_subnet_ids   = var.public_subnets

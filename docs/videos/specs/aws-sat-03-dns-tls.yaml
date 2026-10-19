@@ -1,0 +1,113 @@
+# Chapter 3 of the AWS SAT series. Narration and on-screen text: ../aws/SCRIPT.md.
+# Follows docs/AWS_MSSP_RUNBOOK.md, Steps 8-9.
+id: aws-sat-03-dns-tls
+cloud: aws
+product: sat
+chapter: 3
+title: DNS, a certificate and operator access
+steps:
+  - type: title
+    eyebrow: Chapter 3 of 4
+    headline: DNS, a certificate and operator access
+    sub: Your hostname, a trusted certificate, and access for your operators without sharing credentials.
+    narration: >-
+      In this chapter we put SAT on your own hostname with a certificate browsers trust, and give your
+      operators what they need without sharing the identity that deployed it.
+
+  - type: card
+    eyebrow: DNS
+    headline: Point your hostname at the load balancer
+    bullets:
+      - "The console is the load balancer's DNS name: `terraform output -raw console_url`"
+      - "A load balancer has no fixed IP, so use a CNAME, or a Route 53 alias record"
+      - "It does not change for the life of the deployment"
+    narration: >-
+      The console lives at the load balancer's DNS name. A load balancer has no fixed IP address, so point
+      your hostname at it with a CNAME, or an alias record if the zone is in Route 53.
+
+  - type: terminal
+    session:
+      - say: >-
+          Then request a certificate for that hostname from ACM, with DNS validation.
+      - cmd: ARN=$(aws acm request-certificate --region "$AWS_REGION" --domain-name sat.example.com --validation-method DNS --query CertificateArn --output text)
+      - cmd: aws acm describe-certificate --region "$AWS_REGION" --certificate-arn "$ARN" --query 'Certificate.DomainValidationOptions[0].ResourceRecord'
+      - out: |
+          {
+              "Name": "_3f1c2a9b8d7e6f5a4b3c2d1e0f9a8b7c.sat.example.com.",
+              "Type": "CNAME",
+              "Value": "_9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d.xlfgrmvvlj.acm-validations.aws."
+          }
+      - say: >-
+          Create that CNAME in your DNS, then wait for ACM to see it.
+      - cmd: aws acm wait certificate-validated --region "$AWS_REGION" --certificate-arn "$ARN"
+      - pause: 1.5
+
+  - type: terminal
+    session:
+      - say: >-
+          Hand the certificate to Terraform and apply. The listener moves to it, and the self-signed
+          certificate the quickstart generated is removed.
+      - cmd: echo "acm_certificate_arn = \"$ARN\"" >> terraform.tfvars
+      - cmd: terraform plan -out tfplan && terraform apply tfplan
+      - out: |
+          {d}  ...{/}
+          module.hailbytes_sat.aws_lb_listener.https: Modifying...
+          module.hailbytes_sat.aws_lb_listener.https: Modifications complete after 1s
+          aws_acm_certificate.self_signed[0]: Destroying...
+          {d}  ...{/}
+          {g}{b}Apply complete! Resources: 0 added, 1 changed, 3 destroyed.{/}
+      - cmd: curl -s -o /dev/null -w '%{http_code}\n' https://sat.example.com/api/health
+      - out: |
+          200
+
+  - type: card
+    eyebrow: Operator access
+    headline: Grant access. Don't share the deployer
+    bullets:
+      - "Secrets: the database password, session keys and first admin password are in Secrets Manager"
+      - "Grant your operators `secretsmanager:GetSecretValue` on `acme-sat-prod-*`"
+      - "Shell: each instance has the Session Manager agent policy. No SSH keys, no open port 22"
+      - "`aws ssm start-session --target <instance id>`"
+    narration: >-
+      For operators, grant read on this client's secrets in Secrets Manager rather than sharing the deploying
+      identity. For a shell, the instances are set up for Session Manager, so there is no SSH port to open.
+
+  - type: terminal
+    session:
+      - cmd: aws ec2 describe-instances --region "$AWS_REGION" --filters Name=tag:customer,Values=acme Name=instance-state-name,Values=running --query 'Reservations[].Instances[].InstanceId' --output text
+      - out: |
+          i-0a1b2c3d4e5f60718	i-0f1e2d3c4b5a69788
+      - cmd: aws ssm start-session --region "$AWS_REGION" --target i-0a1b2c3d4e5f60718
+      - out: |
+
+          Starting session with SessionId: admin-0123456789abcdef0
+      - ask: "$ "
+      - input: sudo systemctl is-active hailbytes-sat
+      - out: |
+          active
+      - say: >-
+          An instance takes a few minutes after boot to register with Session Manager. If it is not ready
+          yet, wait and try again.
+
+  - type: card
+    eyebrow: Before the first campaign
+    headline: Make sure simulations can arrive
+    bullets:
+      - "Simulations land only if the target organisation's mail filtering lets them"
+      - "`quickstart/allowlisting` scripts the most common allow-list"
+      - "`docs/DELIVERABILITY_CHECKLIST.md` covers the rest"
+      - "Third-party gateways often take an allow-list request only from their own customer: ask in week one"
+    narration: >-
+      One more thing before the first campaign. Simulations only land if the target's mail filtering lets
+      them through. Third-party filtering gateways often accept an allow-list request only from their own
+      customer, so raise it in week one. It is the failure where everything deploys correctly and nothing arrives.
+
+  - type: card
+    eyebrow: Next
+    headline: "Chapter 4: Tear down cleanly"
+    bullets:
+      - "Export, then lift deletion protection"
+      - "Empty the object-locked buckets"
+      - "Destroy, and check nothing is left billing"
+    narration: >-
+      The last chapter takes a deployment back to nothing, safely.

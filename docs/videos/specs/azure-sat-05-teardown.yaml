@@ -1,0 +1,127 @@
+# Chapter 5 of the Azure SAT series. Narration and on-screen text: ../azure/SCRIPT.md.
+# Follows docs/AZURE_MSSP_RUNBOOK.md, Step 10.
+id: azure-sat-05-teardown
+cloud: azure
+product: sat
+chapter: 5
+title: Tear down cleanly
+steps:
+  - type: title
+    eyebrow: Chapter 5 of 5
+    headline: Tear down cleanly
+    sub: Take one deployment back to nothing, without touching any other deployment in the subscription.
+    narration: >-
+      Tearing down is the step that can hurt other deployments if it is done carelessly. Here is
+      the order that keeps everyone else safe.
+
+  - type: terminal
+    session:
+      - say: >-
+          Work from the client's own directory, signed in to the same subscription. Destroy deletes the
+          database, so export first, with an admin API key from the SAT console.
+      - cmd: cd ~/hailbytes/acme/quickstart/azure-ha
+      - cmd: RG=$(terraform output -raw resource_group_name); URL=$(terraform output -raw console_url)
+      - cmd: 'curl -kf -H "Authorization: Bearer $SAT_API_KEY" "${URL}api/instance/export" -o acme-export.tar.gz'
+      - out: |
+          {d}  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current{/}
+          {d}100 41.2M  100 41.2M    0     0  9634k      0  0:00:04  0:00:04 --:--:-- 9641k{/}
+
+  - type: terminal
+    session:
+      - say: >-
+          If you turned on the delete locks for production, lift them in their own apply first.
+          A lock makes destroy fail partway and leaves a half-deleted stack.
+      - cmd: terraform apply -var enable_db_delete_lock=false -var enable_public_ip_delete_lock=false
+      - out: |
+          {d}  ...{/}
+          {b}Apply complete!{/} Resources: 0 added, 0 changed, 2 destroyed.
+
+  - type: terminal
+    session:
+      - say: >-
+          Now write the destroy plan and read it. Everything listed should be inside this client's
+          resource group.
+      - cmd: terraform plan -destroy -out destroy.tfplan
+      - cmd: terraform show destroy.tfplan | grep -c 'will be destroyed'
+      - out: |
+          58
+      - cmd: terraform state list | grep azurerm_marketplace_agreement
+      - out: |
+          {d}(no output){/}
+      - say: >-
+          Look for a marketplace agreement in particular. With customer set there is none. If there is
+          one, an older deployment owns the terms, and destroying it would cancel them for every
+          deployment in the subscription.
+
+  - type: card
+    eyebrow: Only if the agreement is in state
+    headline: Release the terms before you destroy
+    bullets:
+      - "`terraform state rm '<the address it printed>'`"
+      - "Then write the destroy plan again"
+      - "The terms stay accepted on the subscription; this deployment just stops owning them"
+    narration: >-
+      If the agreement is there, remove it from state, then write the destroy plan again. The terms
+      stay accepted. This deployment simply stops claiming them.
+
+  - type: terminal
+    session:
+      - say: >-
+          Then destroy. If it stops partway, run the same command again: destroy picks up where it stopped.
+      - cmd: terraform apply destroy.tfplan 2>&1 | tee destroy.log
+      - out: |
+          module.hailbytes_sat.azurerm_linux_virtual_machine.vm[0]: Destroying...
+          module.hailbytes_sat.azurerm_linux_virtual_machine.vm[1]: Destroying...
+          {d}  ...{/}
+          module.hailbytes_sat.azurerm_postgresql_flexible_server.main: Destruction complete after 6m21s
+          {d}  ...{/}
+          azurerm_resource_group.main: Destruction complete after 1m12s
+
+          {g}{b}Apply complete! Resources: 0 added, 0 changed, 58 destroyed.{/}
+
+  - type: terminal
+    session:
+      - say: >-
+          Confirm nothing is left billing. The resource group should be gone, and nothing should match
+          this client's prefix.
+      - cmd: az group exists -n "$RG"
+      - out: |
+          false
+      - cmd: ../sweep-azure.sh list --prefix "acme-sat-"
+      - out: |
+          {d}  ...{/}
+          No group name contains 'acme-sat-'.
+
+          This is NOT an all-clear -- it means the filter matched nothing.
+          The 1 group(s) that do exist:
+            tfstate-rg
+
+          Re-run with a filter that matches, or with --all.
+      - say: >-
+          The script is careful to say a filter that matches nothing is not the same as an all-clear.
+          Here the only group left is the shared state account, which is exactly what should remain.
+
+  - type: card
+    eyebrow: What deliberately survives
+    headline: Four things stay, on purpose
+    bullets:
+      - "The Key Vault name, reserved for 30 days. A rebuild draws a fresh name, so it just works"
+      - "The Marketplace terms: other deployments depend on them"
+      - "The state account: delete only this client's state blob, once they are not coming back"
+      - "An IP you reserved yourself outside the deployment"
+    narration: >-
+      A few things survive on purpose. The vault's name is reserved for thirty days, but a rebuild
+      draws a new one. The Marketplace terms stay, because others depend on them. And the state
+      account stays: delete only this client's state file when you are sure.
+
+  - type: card
+    eyebrow: Series complete
+    headline: From terms to teardown
+    bullets:
+      - "Runbook: `docs/AZURE_MSSP_RUNBOOK.md`"
+      - "Terms: `docs/AZURE_PROGRAMMATIC_DEPLOYMENT.md`"
+      - "When an apply fails: `quickstart/explain.sh <log>`"
+      - "support@hailbytes.com"
+    narration: >-
+      That completes the series. Everything here is written down step by step in the Azure MSSP
+      runbook in the repository, and explain dot s h turns any failed log into the next step.
