@@ -29,6 +29,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Documentation
 
+- **The deploy videos are now committed:** the five Azure and four AWS SAT chapters, 2 to 5 minutes each and under 13 MB apiece, in [`docs/videos/rendered/`](docs/videos/rendered) with caption tracks and terminal recordings. [`docs/videos/README.md`](docs/videos/README.md) links each one.
 - **Every `?ref=v1.0.0` module source is now a commit SHA.** No `v1.0.0` tag exists ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)), so a snippet copied from any README failed `terraform init` with "reference not found". The notes explaining that are replaced by one saying why the pin is a SHA. Cutting a tag remains open in #48.
 - **The README no longer says each product module ships `examples/basic`.** Only the tier modules (`single-vm`, `ha-hot-hot`, `unlimited-scale`, per cloud) and `network` do. It now points at those and at the `quickstart/` roots.
 - **`docs/AZURE_PROGRAMMATIC_DEPLOYMENT.md`**: what the portal's "programmatic deployment" switch is, the three ways to accept the image terms, and why one owner (outside Terraform) is the rule. Linked from the Azure MSSP runbook, Step 2.

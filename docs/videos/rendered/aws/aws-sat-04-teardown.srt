@@ -1,0 +1,35 @@
+1
+00:00:00,000 --> 00:00:09,026
+Tearing down on AWS has one step that cannot be undone, so the order matters. Here it is.
+
+2
+00:00:09,026 --> 00:00:24,574
+Work from the client's own directory, in the same account. Export first. Once deletion protection is off, destroy takes no final database snapshot, so this export is the only copy you will have.
+
+3
+00:00:26,074 --> 00:00:37,274
+Lift deletion protection in its own apply. The modules tie the final snapshot to it, so this also turns the final snapshot off.
+
+4
+00:00:38,774 --> 00:00:53,017
+The backup bucket is Object-Locked by design, and destroy will not empty it. This script empties it, after checking it is a HailBytes bucket and making you type its name.
+
+5
+00:00:53,017 --> 00:01:03,348
+Deleting from an Object-Locked bucket needs s3 BypassGovernanceRetention. On the autoscale tier, empty the load balancer's access-log bucket the same way.
+
+6
+00:01:04,848 --> 00:01:16,917
+Write the destroy plan, read it, and destroy. Everything listed should start with acme dash sat. If it stops partway, run the last command again.
+
+7
+00:01:18,417 --> 00:01:32,226
+Then confirm nothing tagged for this client is left. Expect nothing beyond keys and secrets still in their deletion windows. The tagging API can lag by a few minutes.
+
+8
+00:01:33,726 --> 00:01:52,752
+Some things survive on purpose. Secrets wait seven days before deletion, so rebuilding the same client inside that window fails until you force-delete them. Keys wait thirty days. The state bucket and the subscription stay, because other clients depend on them.
+
+9
+00:01:52,752 --> 00:02:06,996
+That completes the series. Every step is written down in the AWS MSSP runbook in the repository, and explain dot s h turns any failed log into the next step.

@@ -1,0 +1,91 @@
+1
+00:00:00,000 --> 00:00:12,939
+In this chapter we deploy HailBytes SAT on the high-availability tier: two application VMs across two zones, a managed PostgreSQL database, and a load balancer in front.
+
+2
+00:00:12,939 --> 00:00:29,357
+You need two things from the earlier chapters: the Marketplace terms accepted for this subscription, and an identity that can create role assignments. Open Azure Cloud Shell in Bash. It already has everything we need.
+
+3
+00:00:29,357 --> 00:00:42,730
+First, price the shape. The guided wizard asks what you want, and before every choice that changes the bill it prints a COST IMPACT block with real figures.
+
+4
+00:00:42,730 --> 00:00:54,800
+High availability is roughly 2.8 times the all-in cost of a single VM, not twice, because the zone-redundant database bills its standby at full price.
+
+5
+00:00:54,800 --> 00:01:09,478
+The software meters per vCPU-hour across every node. Two nodes at two vCPUs is four metered vCPUs. Pick the size you expect to run at: changing it later replaces the VM.
+
+6
+00:01:10,978 --> 00:01:30,439
+The wizard writes a config for a network you already have, so it still needs your subnet IDs. From an empty subscription, use the complete root in quickstart slash azure-ha, which builds the network as well. That is what we do next.
+
+7
+00:01:30,439 --> 00:01:44,571
+Give this client its own working directory, then put Terraform state in Azure Storage. State left in Cloud Shell's home directory can vanish with the session.
+
+8
+00:01:44,571 --> 00:01:57,944
+The first client creates a locked-down state account. Note its name: every later client in this subscription reuses it with dash dash account, and only the key changes.
+
+9
+00:01:59,444 --> 00:02:10,644
+Now the settings. Copy the example and fill it in. Set customer on the very first apply, because changing it later replaces everything.
+
+10
+00:02:10,644 --> 00:02:23,149
+Customer prefixes every resource, tags it for cost reporting, and switches off Terraform's own acceptance of the Marketplace terms, which you did once in chapter one.
+
+11
+00:02:23,149 --> 00:02:34,784
+Set phish allowed CIDRs separately. The simulation targets are not in your admin range, and without it the campaign sends but records no clicks.
+
+12
+00:02:34,784 --> 00:02:46,853
+If a service principal runs the apply, name an Entra group in key vault reader principal IDs, or no person can read the database password.
+
+13
+00:02:46,853 --> 00:03:00,662
+And set the two Entra settings from chapter four now. Admin public URL in particular is read when a VM boots, so setting it later means replacing the VMs.
+
+14
+00:03:02,162 --> 00:03:09,884
+Initialise, then write the plan to a file and read it before you apply it.
+
+15
+00:03:09,884 --> 00:03:23,692
+Check three things. Everything is in rg acme sat prod. Nothing is planned for destroy. And there is no marketplace agreement resource: the terms are not Terraform's to own.
+
+16
+00:03:25,192 --> 00:03:34,218
+Apply the saved plan, keeping a log. Every name is fixed now, so there are no more prompts.
+
+17
+00:03:34,218 --> 00:03:51,071
+The database is the long pole. On its own it is up about 12 minutes in, and that is when the VMs are created: where a quota problem would surface, which is why preflight checked it.
+
+18
+00:03:51,071 --> 00:04:00,966
+The zone-redundant standby adds another 10 to 20 minutes to the database. Allow 30 to 45 minutes end to end.
+
+19
+00:04:02,466 --> 00:04:23,231
+If the apply stops, don't re-run it blindly and don't change names to get past it. Run explain dot s h on the log. It names the cause, who can fix it, and the exact command. After the fix, re-running the same apply is safe.
+
+20
+00:04:23,231 --> 00:04:43,997
+One thing to watch on high availability. If Azure won't grant a zone-redundant database in this region, the database comes up without its standby, and every plan warns you. It works, but a zone outage takes the database with it. File the quota request early.
+
+21
+00:04:43,997 --> 00:04:55,631
+Now check it is serving. The health endpoint should answer 200, then print the first-boot admin password. Both nodes share it through Key Vault.
+
+22
+00:04:57,131 --> 00:05:12,679
+Browse to the console URL. The certificate is self-signed until you put your own in front, so expect a browser warning. Sign in as admin with that password, and change it straight away.
+
+23
+00:05:12,679 --> 00:05:22,140
+SAT is running. In chapter four we connect it to Entra ID: operator access, single sign-on, and SCIM provisioning.

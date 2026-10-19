@@ -9,8 +9,21 @@ because each marketplace rejects media that names the other cloud.
 | Azure | 1 Marketplace terms and programmatic deployment · 2 The deploying identity · 3 Deploy · 4 Entra ID · 5 Tear down | [azure/SCRIPT.md](azure/SCRIPT.md) | [azure/ASM.md](azure/ASM.md) |
 | AWS | 1 Subscribe and run the preflight · 2 Deploy · 3 DNS, a certificate and operator access · 4 Tear down | [aws/SCRIPT.md](aws/SCRIPT.md) | [aws/ASM.md](aws/ASM.md) |
 
-The SAT chapters for both clouds have specs and render today. The ASM cuts are
-written up as the changes from SAT; their specs are copies with those edits.
+The SAT chapters for both clouds have specs and rendered videos. The ASM cuts
+are written up as the changes from SAT; their specs are copies with those edits.
+
+## Watch
+
+Captions are burned in. Each video has a matching `.srt` caption track and a
+`.cast` terminal recording beside it.
+
+| Azure (SAT) | Length | AWS (SAT) | Length |
+|---|---|---|---|
+| [1 Marketplace terms and programmatic deployment](rendered/azure/azure-sat-01-terms.mp4) | 2:53 | [1 Subscribe and run the preflight](rendered/aws/aws-sat-01-subscribe.mp4) | 2:27 |
+| [2 The deploying identity](rendered/azure/azure-sat-02-identity.mp4) | 2:39 | [2 Deploy](rendered/aws/aws-sat-02-deploy.mp4) | 2:56 |
+| [3 Deploy](rendered/azure/azure-sat-03-deploy.mp4) | 5:22 | [3 DNS, a certificate and operator access](rendered/aws/aws-sat-03-dns-tls.mp4) | 2:19 |
+| [4 Entra ID](rendered/azure/azure-sat-04-entra.mp4) | 3:47 | [4 Tear down](rendered/aws/aws-sat-04-teardown.mp4) | 2:07 |
+| [5 Tear down](rendered/azure/azure-sat-05-teardown.mp4) | 2:33 | | |
 
 ## Layout
 
@@ -21,6 +34,7 @@ docs/videos/
   render/assets/                             Inter (OFL) and the HailBytes mark
   azure/SCRIPT.md, aws/SCRIPT.md             generated from the specs; edit the specs
   azure/ASM.md, aws/ASM.md                   what the ASM cut changes
+  rendered/<cloud>/                          the committed videos (.mp4 + .srt + .cast)
   out/                                       render output (gitignored)
 ```
 
@@ -45,6 +59,11 @@ Each chapter renders in about two minutes. Per chapter you get:
   a voiced cut.
 - `<id>.cast`: the terminal steps as an asciinema recording, for an embeddable
   player or `agg` to GIF.
+
+**When you change a spec, re-render it and commit the result** into
+`rendered/<cloud>/` (`--out docs/videos/rendered/<cloud>`), so the committed
+video never contradicts its spec. Keep each video under 25 MB; at these
+settings a chapter is 4 to 12 MB.
 
 Add `--music <file>` for a quiet bed under the captions. A narrated cut of
 `azure-sat-03-deploy` (TTS voice, annotated screenshots) is produced from the
