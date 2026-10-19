@@ -21,11 +21,11 @@ Opinionated VPC scaffolding for HailBytes workload modules. Three-tier subnet la
 
 ## Usage
 
-> No `v1.0.0` tag exists yet ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)); pin to a commit SHA instead of `?ref=v1.0.0` until a tagged release ships.
+> No release tag exists yet ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)), so the snippets on this page pin a commit SHA. Move the pin forward deliberately; an unpinned or `?ref=main` source changes under you on the next `terraform init -upgrade`.
 
 ```hcl
 module "network" {
-  source = "github.com/hailbytes/hailbytes-terraform-modules//modules/network/aws?ref=v1.0.0"
+  source = "github.com/hailbytes/hailbytes-terraform-modules//modules/network/aws?ref=1294d40c09b88ac48365d85d4baacedba58391ed"
 
   name_prefix = "hailbytes-asm-prod"
   vpc_cidr    = "10.20.0.0/16"
@@ -33,7 +33,7 @@ module "network" {
 }
 
 module "hailbytes_asm_scale" {
-  source = "github.com/hailbytes/hailbytes-terraform-modules//modules/unlimited-scale/aws?ref=v1.0.0"
+  source = "github.com/hailbytes/hailbytes-terraform-modules//modules/unlimited-scale/aws?ref=1294d40c09b88ac48365d85d4baacedba58391ed"
 
   product             = "asm"
   vpc_id              = module.network.vpc_id

@@ -6,6 +6,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+- **`quickstart/deploy.sh` pointed at a credentials file that does not exist.** Its closing "Next steps" said the first-boot password was in `~/hailbytes-sat-initial-credentials.txt`, for either product. It now prints the real location per product: `/opt/hailbytes-sat/hailbytes-sat-initial-credentials.txt` for SAT, `DJANGO_SUPERUSER_PASSWORD` in `/opt/hailbytes-asm/.env` for ASM. These are the same paths the quickstart roots' `initial_credentials_command` reads.
+
 - **`ha-hot-hot/azure` (`sat-azure-ha`, `asm-azure-ha`): a VM replaced by the rolling upgrade booted with no Key Vault access.** Each app VM used its own system-assigned identity, and its `Key Vault Secrets User` grant could only be created after the VM existed, because it needs the VM's principal id. `terraform apply -replace=...vm[N]` creates the VM with a NEW principal, so the replacement's first boot asked Key Vault for the database password with an identity that had no grant yet, and the grant made a moment later takes minutes to propagate. The image does not start the app without that password.
 
   The app VMs now share one user-assigned identity, `azurerm_user_assigned_identity.vm` (`<prefix>-vm-id`), granted `Key Vault Secrets User` and, when a backup account is configured, `Storage Blob Data Contributor`, before any VM is created. A replacement inherits the identity with its grants already in place. This is the shape the AWS module already had, with one instance profile for every node.
@@ -17,6 +19,10 @@ All notable changes to this project are documented here. Format follows [Keep a 
   `quickstart/sweep-azure.sh imports` maps the new identity and its grants to their addresses.
 
 ### Documentation
+
+- **Every `?ref=v1.0.0` module source is now a commit SHA.** No `v1.0.0` tag exists ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)), so a snippet copied from any README failed `terraform init` with "reference not found". The notes explaining that are replaced by one saying why the pin is a SHA. Cutting a tag remains open in #48.
+- **The README no longer says each product module ships `examples/basic`.** Only the tier modules (`single-vm`, `ha-hot-hot`, `unlimited-scale`, per cloud) and `network` do. It now points at those and at the `quickstart/` roots.
+- **Customer deploy videos: chapter scripts and reproducible recording sources** in [`docs/videos/`](docs/videos), with separate Azure and AWS cuts that never name each other's cloud.
 
 - **Client identifiers removed from tests and examples.** A subscription ID, a customer resource-group name, an admin CIDR and a naming standard taken from a customer deployment are replaced with placeholders (`00000000-...`, `customer-net`, `203.0.113.0/24` from the documentation range, `examplephish`). Every assertion is unchanged in shape. The quickstart HA README also stops listing Redis and immutable backup storage as part of the default deployment; both have defaulted off since #98 and 336828d.
 

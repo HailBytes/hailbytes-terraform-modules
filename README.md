@@ -30,7 +30,7 @@ Prefer to read the Terraform yourself? [`quickstart/`](quickstart) has a complet
 | **SAT on AWS** | [`aws-sat-single`](quickstart/aws-sat-single) | [`aws-sat-ha`](quickstart/aws-sat-ha) | [`aws-sat-autoscale`](quickstart/aws-sat-autoscale) |
 | **ASM on AWS** | [`aws-asm-single`](quickstart/aws-asm-single) | [`aws-asm-ha`](quickstart/aws-asm-ha) | [`aws-asm-autoscale`](quickstart/aws-asm-autoscale) |
 
-Each workload module also ships an `examples/basic` config for teams composing into an existing landing zone.
+Composing into an existing landing zone instead? The product modules below take your own network IDs. Runnable `examples/basic` configs live with the tier modules they wrap ([`single-vm`](modules/single-vm), [`ha-hot-hot`](modules/ha-hot-hot), [`unlimited-scale`](modules/unlimited-scale), one per cloud); they set `product` themselves, which the product modules hardcode.
 
 **MSSPs deploying per client:** [`docs/AZURE_MSSP_RUNBOOK.md`](docs/AZURE_MSSP_RUNBOOK.md) and [`docs/AWS_MSSP_RUNBOOK.md`](docs/AWS_MSSP_RUNBOOK.md) walk one client from an empty subscription or account to a live console and back to nothing with `terraform destroy`, for either product and any of the three tiers.
 
@@ -115,13 +115,13 @@ Pick the module that matches your **product** × **cloud** × **tier**. Each mod
 
 ## Quick start
 
-> No `v1.0.0` tag has been cut on this repo yet (see [#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)). The `?ref=v1.0.0` pins below will fail `terraform init` with a "reference not found" error until a tag exists — pin to a commit SHA instead (e.g. `?ref=d0de3d5`) and update the pin once a tagged release ships.
+> No release tag exists yet ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)), so the snippets on this page pin a commit SHA. Move the pin forward deliberately; an unpinned or `?ref=main` source changes under you on the next `terraform init -upgrade`.
 
 ### ASM on AWS (single VM)
 
 ```hcl
 module "hailbytes_asm" {
-  source = "github.com/hailbytes/hailbytes-terraform-modules//modules/asm-aws-single?ref=v1.0.0"
+  source = "github.com/hailbytes/hailbytes-terraform-modules//modules/asm-aws-single?ref=1294d40c09b88ac48365d85d4baacedba58391ed"
 
   environment   = "prod"
   vpc_id        = "vpc-xxxxxxxx"
@@ -134,7 +134,7 @@ module "hailbytes_asm" {
 
 ```hcl
 module "hailbytes_sat" {
-  source = "github.com/hailbytes/hailbytes-terraform-modules//modules/sat-azure-autoscale?ref=v1.0.0"
+  source = "github.com/hailbytes/hailbytes-terraform-modules//modules/sat-azure-autoscale?ref=1294d40c09b88ac48365d85d4baacedba58391ed"
 
   environment            = "prod"
   resource_group_name    = "rg-hailbytes-prod"
@@ -153,7 +153,7 @@ module "hailbytes_sat" {
 }
 ```
 
-See each module's `examples/` directory for runnable configurations.
+For runnable configurations use the [`quickstart/`](quickstart) roots, or the `examples/basic` directory under each tier module (`modules/single-vm/<cloud>`, `modules/ha-hot-hot/<cloud>`, `modules/unlimited-scale/<cloud>`). The product modules themselves ship no `examples/` directory.
 
 ---
 

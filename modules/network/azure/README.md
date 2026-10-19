@@ -6,7 +6,7 @@ Opinionated virtual network scaffolding for HailBytes workload modules. Vnet + w
 
 ## Usage
 
-> No `v1.0.0` tag exists yet ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)); pin to a commit SHA instead of `?ref=v1.0.0` until a tagged release ships.
+> No release tag exists yet ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)), so the snippets on this page pin a commit SHA. Move the pin forward deliberately; an unpinned or `?ref=main` source changes under you on the next `terraform init -upgrade`.
 
 ```hcl
 resource "azurerm_resource_group" "main" {
@@ -15,7 +15,7 @@ resource "azurerm_resource_group" "main" {
 }
 
 module "network" {
-  source = "github.com/hailbytes/hailbytes-terraform-modules//modules/network/azure?ref=v1.0.0"
+  source = "github.com/hailbytes/hailbytes-terraform-modules//modules/network/azure?ref=1294d40c09b88ac48365d85d4baacedba58391ed"
 
   name_prefix         = "hailbytes-asm-prod"
   resource_group_name = azurerm_resource_group.main.name
@@ -23,7 +23,7 @@ module "network" {
 }
 
 module "hailbytes_asm_ha" {
-  source = "github.com/hailbytes/hailbytes-terraform-modules//modules/ha-hot-hot/azure?ref=v1.0.0"
+  source = "github.com/hailbytes/hailbytes-terraform-modules//modules/ha-hot-hot/azure?ref=1294d40c09b88ac48365d85d4baacedba58391ed"
 
   product                = "asm"
   resource_group_name    = azurerm_resource_group.main.name

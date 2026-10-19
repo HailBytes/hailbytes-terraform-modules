@@ -39,11 +39,11 @@ flowchart TB
 
 ## Usage
 
-> No `v1.0.0` tag exists yet ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)); pin to a commit SHA instead of `?ref=v1.0.0` until a tagged release ships.
+> No release tag exists yet ([#48](https://github.com/HailBytes/hailbytes-terraform-modules/issues/48)), so the snippets on this page pin a commit SHA. Move the pin forward deliberately; an unpinned or `?ref=main` source changes under you on the next `terraform init -upgrade`.
 
 ```hcl
 module "hailbytes_asm" {
-  source = "github.com/hailbytes/hailbytes-terraform-modules//modules/single-vm/azure?ref=v1.0.0"
+  source = "github.com/hailbytes/hailbytes-terraform-modules//modules/single-vm/azure?ref=1294d40c09b88ac48365d85d4baacedba58391ed"
 
   product             = "asm"
   environment         = "prod"
