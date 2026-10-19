@@ -195,19 +195,23 @@ EOF
 # RoleAssignmentExists, naming a GUID and not the grant. So they have to be
 # imported, and the GUID alone says nothing about which module resource made it.
 #
-# Role name narrows it; the principal finishes the job. VM managed identities
-# are resolvable to an index here, so those are emitted complete. Anything else
-# is printed WITH its principal and left for a human, because guessing an index
-# wrong adopts one grant under another's address and the mistake only surfaces
-# on a later apply.
+# Role name narrows it; the principal finishes the job. The app VMs' shared
+# identity (`<prefix>-vm-id`) has one address per role, and a VM's own
+# system-assigned identity -- still present with management access -- is
+# resolvable to an index, so both are emitted complete. Anything else is printed
+# WITH its principal and left for a human, because guessing an index wrong
+# adopts one grant under another's address and the mistake only surfaces on a
+# later apply.
 emit_role_assignments() {
-    local scope_id vm_principals=() name p role guid i idx
+    local scope_id vm_principals=() shared_principal name p role guid i idx kind
 
     for name in $(az_ vm list -g "$RG" --query "[].name" -o tsv | sort); do
         case "$name" in *-db-vm) continue ;; esac
         p="$(az_ vm show -g "$RG" -n "$name" --query "identity.principalId" -o tsv)"
         [ -n "$p" ] && vm_principals+=("$p")
     done
+    shared_principal="$(az_ identity list -g "$RG" \
+        --query "[?ends_with(name, '-vm-id')].principalId" -o tsv | head -1)"
 
     for scope_id in \
         $(az_ keyvault list -g "$RG" --query "[].id" -o tsv) \
@@ -216,14 +220,20 @@ emit_role_assignments() {
         # -o tsv with a multiselect LIST form: columns arrive in written order.
         while IFS=$'\t' read -r role guid p; do
             [ -n "$guid" ] || continue
-            idx=""
-            for i in "${!vm_principals[@]}"; do
-                # First match, then stop. Last-match-wins would place the grant
-                # under the highest matching index rather than the real one.
-                if [ "${vm_principals[$i]}" = "$p" ]; then idx="$i"; break; fi
-            done
-            case "${role}|${idx:+vm}" in
+            idx=""; kind=""
+            if [ -n "$shared_principal" ] && [ "$p" = "$shared_principal" ]; then
+                kind="shared"
+            else
+                for i in "${!vm_principals[@]}"; do
+                    # First match, then stop. Last-match-wins would place the grant
+                    # under the highest matching index rather than the real one.
+                    if [ "${vm_principals[$i]}" = "$p" ]; then idx="$i"; kind="vm"; break; fi
+                done
+            fi
+            case "${role}|${kind}" in
                 "Key Vault Secrets Officer|")            addr="${MODULE_ADDR}.azurerm_role_assignment.kv_secret_writer" ;;
+                "Key Vault Secrets User|shared")         addr="${MODULE_ADDR}.azurerm_role_assignment.vm_identity_kv_secrets_user" ;;
+                "Storage Blob Data Contributor|shared")  addr="${MODULE_ADDR}.azurerm_role_assignment.vm_identity_backup_writer[0]" ;;
                 "Key Vault Secrets User|vm")             addr="${MODULE_ADDR}.azurerm_role_assignment.vm_kv_secrets_user[${idx}]" ;;
                 "Storage Blob Data Contributor|vm")      addr="${MODULE_ADDR}.azurerm_role_assignment.vm_backup_writer[${idx}]" ;;
                 "Key Vault Crypto Officer|")             addr="${MODULE_ADDR}.azurerm_role_assignment.kv_crypto_officer[0]" ;;
@@ -775,6 +785,7 @@ cmd_imports() {
     for name in $(az_ identity list -g "$RG" --query "[].name" -o tsv); do
         case "$name" in
             *-cmk-id) emit "${M}.azurerm_user_assigned_identity.cmk[0]" "$(rid Microsoft.ManagedIdentity/userAssignedIdentities "$name")" ;;
+            *-vm-id)  emit "${M}.azurerm_user_assigned_identity.vm" "$(rid Microsoft.ManagedIdentity/userAssignedIdentities "$name")" ;;
             *) warn "unrecognised managed identity '${name}' -- no module address for it" ;;
         esac
     done

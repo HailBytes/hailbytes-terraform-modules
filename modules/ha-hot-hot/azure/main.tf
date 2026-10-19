@@ -988,8 +988,12 @@ resource "azurerm_linux_virtual_machine" "vm" {
     public_key = var.ssh_public_key
   }
 
+  # The shared identity below, not a per-VM system-assigned one: see
+  # azurerm_user_assigned_identity.vm. AADSSHLoginForLinux needs a
+  # system-assigned identity, so management access keeps one alongside.
   identity {
-    type = "SystemAssigned"
+    type         = var.enable_management_access ? "SystemAssigned, UserAssigned" : "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.vm.id]
   }
 
   os_disk {
@@ -1107,16 +1111,45 @@ resource "azurerm_linux_virtual_machine" "vm" {
     azurerm_linux_virtual_machine.db_vm,
     azurerm_redis_cache.main,
     azurerm_role_assignment.des_kv_crypto_user,
+    # The grant must exist before a VM boots: first boot reads the DB password
+    # from Key Vault, and the image does not start the app without it.
+    azurerm_role_assignment.vm_identity_kv_secrets_user,
   ]
 }
 
-# The app VMs' managed identities must be able to read the DB password (and
-# the Redis key) from Key Vault — custom_data points them at the vault, but
-# the vault is rbac_authorization_enabled so without this role assignment they
-# get 403 and the deployment cannot start. This is the Azure counterpart of
+# The app VMs' managed identity must be able to read the DB password (and the
+# Redis key) from Key Vault -- custom_data points them at the vault, but the
+# vault is rbac_authorization_enabled so without this role assignment they get
+# 403 and the deployment cannot start. This is the Azure counterpart of
 # aws_iam_role_policy.secrets in the AWS module.
+#
+# ONE user-assigned identity for every app VM, created and granted before them.
+# It used to be each VM's system-assigned identity, granted after the VM
+# existed because the grant needs its principal id. `-replace` -- the rolling
+# upgrade -- creates a VM with a NEW principal, so the replacement booted with
+# no Key Vault access at all, and the grant made a moment later then took
+# minutes to propagate. A shared identity survives the replacement with its
+# grant already in place, which is the same shape AWS has with one instance
+# profile for every node.
+resource "azurerm_user_assigned_identity" "vm" {
+  name                = "${local.name_prefix}-vm-id"
+  resource_group_name = var.resource_group_name
+  location            = var.location
+  tags                = local.common_tags
+}
+
+resource "azurerm_role_assignment" "vm_identity_kv_secrets_user" {
+  scope                = azurerm_key_vault.main.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_user_assigned_identity.vm.principal_id
+}
+
+# With management access on, the VMs also carry a system-assigned identity, and
+# IMDS hands out THAT one to a token request that names no identity -- which is
+# how every published image asks. Those deployments keep their per-VM grants
+# until the image names the shared identity; everyone else loses them.
 resource "azurerm_role_assignment" "vm_kv_secrets_user" {
-  count = local.vm_count
+  count = var.enable_management_access ? local.vm_count : 0
 
   scope                = azurerm_key_vault.main.id
   role_definition_name = "Key Vault Secrets User"
@@ -1765,8 +1798,17 @@ data "azurerm_storage_account" "existing_backup" {
   resource_group_name = var.resource_group_name
 }
 
+resource "azurerm_role_assignment" "vm_identity_backup_writer" {
+  count                = local.backup_storage_account_name == null ? 0 : 1
+  scope                = local.create_backup_storage ? azurerm_storage_account.backup[0].id : data.azurerm_storage_account.existing_backup[0].id
+  role_definition_name = "Storage Blob Data Contributor"
+  principal_id         = azurerm_user_assigned_identity.vm.principal_id
+}
+
+# Per-VM, for the same reason as vm_kv_secrets_user: only while management
+# access gives the VMs a system-assigned identity that IMDS prefers.
 resource "azurerm_role_assignment" "vm_backup_writer" {
-  count                = local.backup_storage_account_name == null ? 0 : local.vm_count
+  count                = local.backup_storage_account_name == null || !var.enable_management_access ? 0 : local.vm_count
   scope                = local.create_backup_storage ? azurerm_storage_account.backup[0].id : data.azurerm_storage_account.existing_backup[0].id
   role_definition_name = "Storage Blob Data Contributor"
   principal_id         = azurerm_linux_virtual_machine.vm[count.index].identity[0].principal_id

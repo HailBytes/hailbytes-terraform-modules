@@ -4,6 +4,18 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Fixed
+
+- **`ha-hot-hot/azure` (`sat-azure-ha`, `asm-azure-ha`): a VM replaced by the rolling upgrade booted with no Key Vault access.** Each app VM used its own system-assigned identity, and its `Key Vault Secrets User` grant could only be created after the VM existed, because it needs the VM's principal id. `terraform apply -replace=...vm[N]` creates the VM with a NEW principal, so the replacement's first boot asked Key Vault for the database password with an identity that had no grant yet, and the grant made a moment later takes minutes to propagate. The image does not start the app without that password.
+
+  The app VMs now share one user-assigned identity, `azurerm_user_assigned_identity.vm` (`<prefix>-vm-id`), granted `Key Vault Secrets User` and, when a backup account is configured, `Storage Blob Data Contributor`, before any VM is created. A replacement inherits the identity with its grants already in place. This is the shape the AWS module already had, with one instance profile for every node.
+
+  **What an existing deployment's plan shows on upgrade:** 1 identity and 1-2 role assignments to add, the app VMs updated in place (identity only; the provider does not shut the VM down for it), and the per-VM `vm_kv_secrets_user` / `vm_backup_writer` grants destroyed. Nothing is replaced. A running VM does not read Key Vault again until it reboots, by which time the new grant is in place.
+
+  **With `enable_management_access = true` the VMs keep their system-assigned identity, and its per-VM grants.** `AADSSHLoginForLinux` needs one, and IMDS hands out the system-assigned identity to a token request that names none, which is how every published image asks. Those deployments therefore still depend on the per-VM grant at first boot, so the race remains for them until the image requests the shared identity explicitly.
+
+  `quickstart/sweep-azure.sh imports` maps the new identity and its grants to their addresses.
+
 ### Documentation
 
 - **Client identifiers removed from tests and examples.** A subscription ID, a customer resource-group name, an admin CIDR and a naming standard taken from a customer deployment are replaced with placeholders (`00000000-...`, `customer-net`, `203.0.113.0/24` from the documentation range, `examplephish`). Every assertion is unchanged in shape. The quickstart HA README also stops listing Redis and immutable backup storage as part of the default deployment; both have defaulted off since #98 and 336828d.

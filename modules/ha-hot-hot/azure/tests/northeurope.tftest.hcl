@@ -86,13 +86,23 @@ run "every_vm_can_read_its_secrets" {
   command = plan
 
   assert {
-    condition     = length(azurerm_role_assignment.vm_kv_secrets_user) == 2
-    error_message = "Each VM's managed identity needs Key Vault Secrets User, or it gets 403 on the DB password and never boots."
+    condition     = azurerm_role_assignment.vm_identity_kv_secrets_user.role_definition_name == "Key Vault Secrets User"
+    error_message = "Secrets User is the least-privilege role that can read a secret value; Reader cannot."
+  }
+
+  # 2026-10-13: the grant was per VM, on a system-assigned identity, so a
+  # rolling `-replace` booted a VM whose new identity had no grant yet. Every
+  # app VM must carry ONE shared identity and nothing else, so a replacement
+  # boots with access already in place and IMDS cannot hand out another one.
+  assert {
+    condition = alltrue([for vm in azurerm_linux_virtual_machine.vm :
+    one(vm.identity).type == "UserAssigned"])
+    error_message = "App VMs must use only the shared user-assigned identity; a per-VM identity has no Key Vault access when a replacement first boots."
   }
 
   assert {
-    condition     = azurerm_role_assignment.vm_kv_secrets_user[0].role_definition_name == "Key Vault Secrets User"
-    error_message = "Secrets User is the least-privilege role that can read a secret value; Reader cannot."
+    condition     = length(azurerm_role_assignment.vm_kv_secrets_user) == 0
+    error_message = "Per-VM grants belong only to deployments with management access, whose VMs keep a system-assigned identity."
   }
 
   # No cache by default, so no access-key secret. When one IS provisioned the
@@ -136,8 +146,13 @@ run "the_backup_container_is_immutable_and_private" {
   }
 
   assert {
-    condition     = length(azurerm_role_assignment.vm_backup_writer) == 2
-    error_message = "Both VMs run the pre-patch backup, so both identities need write access to the container."
+    condition     = length(azurerm_role_assignment.vm_identity_backup_writer) == 1
+    error_message = "Both VMs run the pre-patch backup, so their shared identity needs write access to the container."
+  }
+
+  assert {
+    condition     = length(azurerm_role_assignment.vm_backup_writer) == 0
+    error_message = "Per-VM backup grants belong only to deployments with management access."
   }
 }
 
