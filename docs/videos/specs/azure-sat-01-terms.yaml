@@ -1,0 +1,174 @@
+# Chapter 1 of the Azure SAT series. Narration and on-screen text: ../azure/SCRIPT.md.
+# Terminal output is SAMPLE OUTPUT reconstructed from quickstart/preflight-azure.sh.
+id: azure-sat-01-terms
+cloud: azure
+product: sat
+chapter: 1
+title: Marketplace terms and programmatic deployment
+steps:
+  - type: title
+    eyebrow: Chapter 1 of 5
+    headline: Marketplace terms and programmatic deployment
+    sub: The one-time step that every HailBytes deployment on Azure depends on, and why Terraform should not own it.
+    narration: >-
+      HailBytes SAT runs from a paid Azure Marketplace image. Before any script can deploy
+      it, the subscription has to accept that image's terms. This chapter does that once,
+      the right way.
+
+  - type: card
+    eyebrow: What the portal calls it
+    headline: "\"Programmatic deployment\" is the same as accepting the image terms"
+    bullets:
+      - "Portal: the HailBytes offer, then Want to deploy programmatically? Get started, then Enable for your subscription"
+      - "CLI: `az vm image terms accept` for the same publisher, offer and plan"
+      - "Per subscription, and per product: SAT and ASM are separate offers"
+      - "It creates nothing and starts no charges on its own"
+    narration: >-
+      In the portal this is called programmatic deployment: the Get started link on the
+      offer, then Enable for your subscription. It is exactly the same switch as az vm image
+      terms accept. It belongs to the subscription, and each product has its own.
+
+  - type: card
+    eyebrow: Why not in Terraform
+    headline: Let Terraform own the terms and two things break
+    bullets:
+      - "The next deployment in the subscription fails: the agreement `already exists`"
+      - "Destroying the deployment that owns it cancels the terms for the whole subscription"
+      - "Every other deployment there loses image swaps and scale-out"
+      - "So: accept once, outside Terraform, and set `customer` in every deployment"
+    narration: >-
+      The modules can accept the terms themselves, but then one deployment's state owns a
+      subscription-wide setting. The next deployment fails with already exists, and destroying
+      the first cancels the terms for everyone. So we accept them once, outside Terraform.
+
+  - type: terminal
+    session:
+      - say: >-
+          The preflight script does it as an explicit, auditable step. It also registers the
+          resource providers the stack needs and checks the region before you spend any time on an apply.
+      - cmd: git clone --depth 1 https://github.com/HailBytes/hailbytes-terraform-modules ~/hailbytes-terraform-modules
+      - cmd: ~/hailbytes-terraform-modules/quickstart/preflight-azure.sh ha --product sat --location northeurope --accept-terms
+      - out: |
+          ==============================================================
+           HailBytes SAT — Azure preflight (ha tier)
+          ==============================================================
+
+          Subscription : HailBytes Demo
+            id         : 00000000-0000-0000-0000-000000000000
+            signed in  : admin@example.com
+
+          --------------------------------------------------------------
+           Resource providers
+          --------------------------------------------------------------
+            Microsoft.Compute                  Registered
+            Microsoft.Network                  Registered
+            Microsoft.Storage                  Registered
+            Microsoft.ManagedIdentity          NotRegistered
+            Microsoft.MarketplaceOrdering      NotRegistered
+            Microsoft.Insights                 Registered
+            Microsoft.OperationalInsights      NotRegistered
+            Microsoft.KeyVault                 Registered
+            Microsoft.DBforPostgreSQL          NotRegistered
+            Microsoft.Cache                    NotRegistered
+
+          Registering 5 provider(s). This is a one-time,
+          subscription-scoped, non-billable change and can take a few minutes.
+
+            registering Microsoft.ManagedIdentity      done
+            registering Microsoft.MarketplaceOrdering  done
+            registering Microsoft.OperationalInsights  done
+            registering Microsoft.DBforPostgreSQL      done
+            registering Microsoft.Cache                done
+      - say: >-
+          The modules switch off Terraform's own provider registration on purpose, so this is the
+          step that does it. Registering a provider creates nothing and costs nothing.
+      - out: |
+
+          --------------------------------------------------------------
+           Marketplace image terms
+          --------------------------------------------------------------
+          Offer: lcmcon1687976613543:gophish-phishing-simulator:standard-v2
+            terms not accepted; accepting now (--accept-terms was passed)
+            accepted
+      - say: >-
+          Here are the terms, accepted for this subscription. That is the same as the portal's
+          Enable switch, and it is now recorded against your identity in the Activity Log.
+
+  - type: terminal
+    session:
+      - say: >-
+          Then the regional checks. Each of these would otherwise fail an apply after the network
+          and database already exist.
+      - out: |
+          --------------------------------------------------------------
+           Marketplace image in northeurope
+          --------------------------------------------------------------
+            Active version(s): 1.2409.90
+            marketplace_image_version defaults to "latest", which resolves to
+            this. Pin it explicitly for a reproducible deployment.
+
+          --------------------------------------------------------------
+           Availability zones in northeurope
+          --------------------------------------------------------------
+            Standard_D2s_v3 is offered in zones: 1 2 3
+
+          --------------------------------------------------------------
+           Compute quota in northeurope
+          --------------------------------------------------------------
+          The ha tier builds 2 application VM(s) at Standard_D2s_v3
+          (2 vCPUs each), so it needs 4 vCPUs of
+          'standardDSv3Family' quota here.
+          The Flexible Server and the Redis cache draw their own quotas, separate
+          from this one.
+
+            standardDSv3Family: 0 used of 10 — 10 available.
+            Sufficient for the default sizing.
+          {d}  ...{/}
+          ==============================================================
+           Preflight complete for the ha tier in northeurope.
+          ==============================================================
+      - say: >-
+          Read the output, not just the exit code. The script reports rather than fails, so a
+          WARNING, a NOT ENOUGH, or no Active image all still end normally, and each one fails the apply later.
+      - pause: 1.5
+
+  - type: card
+    eyebrow: Running both products?
+    headline: Terms are per product. Run it once for each.
+    bullets:
+      - "`preflight-azure.sh ha --product sat --location <region> --accept-terms`"
+      - "`preflight-azure.sh ha --product asm --location <region> --accept-terms`"
+      - "Once per subscription. Not once per client or per deployment"
+    narration: >-
+      SAT and ASM are separate offers with separate terms. If this subscription will run both,
+      run the preflight again with dash dash product asm. Once per subscription, not once per client.
+
+  - type: terminal
+    session:
+      - say: >-
+          You can confirm it at any time. This reads the same switch the portal shows.
+      - cmd: az vm image terms show --publisher lcmcon1687976613543 --offer gophish-phishing-simulator --plan standard-v2 --query accepted
+      - out: |
+          true
+
+  - type: card
+    eyebrow: If you can't accept them
+    headline: Only some roles can. Forward the request.
+    bullets:
+      - "The portal says you don't have permissions to configure programmatic deployments: an Owner has to do it"
+      - "`explain.sh` prints a paragraph you can forward as is"
+      - "Already accepted and an apply says `already exists`? Set `accept_marketplace_terms = false`"
+    narration: >-
+      Accepting legal terms needs the right role, which is often not the person deploying. If the
+      portal says you don't have permission, an Owner does it once. Chapter two covers who needs what.
+
+  - type: card
+    eyebrow: Next
+    headline: "Chapter 2: The deploying identity"
+    bullets:
+      - "Owner once, for providers and terms"
+      - "Then Contributor plus User Access Administrator"
+      - "Running the apply as a service principal"
+    narration: >-
+      Next, the identity that runs the deployment: what it needs once, what it needs every time,
+      and how to run it as a service principal.

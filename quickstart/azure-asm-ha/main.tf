@@ -131,6 +131,12 @@ variable "key_vault_reader_principal_ids" {
   default     = []
 }
 
+variable "enable_management_access" {
+  description = "Install AADSSHLoginForLinux on each app VM, so operators holding 'Virtual Machine Administrator Login' (or User Login) can `az ssh vm` with their Entra ID account. It provides authentication, not a network path: the VMs have no public IP, so connect from a network that reaches the vnet."
+  type        = bool
+  default     = false
+}
+
 locals {
   # Null customer reproduces the names this root has always used, so an
   # existing deployment plans clean.
@@ -183,6 +189,7 @@ module "hailbytes_asm" {
   key_vault_reader_principal_ids = var.key_vault_reader_principal_ids
   enable_db_delete_lock          = var.enable_db_delete_lock
   enable_public_ip_delete_lock   = var.enable_public_ip_delete_lock
+  enable_management_access       = var.enable_management_access
 
   # Key Vault names are GLOBALLY unique, the vault carries purge protection, and
   # a deleted name is reserved for 30 days with no force-purge. Derived from
