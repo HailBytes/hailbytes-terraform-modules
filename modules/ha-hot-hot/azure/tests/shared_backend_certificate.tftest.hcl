@@ -53,14 +53,15 @@ mock_provider "azurerm" {
   mock_resource "azurerm_redis_cache" {
     defaults = { id = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-hailbytes-test/providers/Microsoft.Cache/redis/mock-redis" }
   }
-  # Key Vault validates tenant_id as a UUID; it comes from the client_config
-  # data source, which the mock provider would otherwise fill with a short token.
+  # The gateway's trusted root reads certificate_data_base64. Nothing reads the
+  # certificate's id, which is a Key Vault data-plane URL, not an ARM path.
   mock_resource "azurerm_key_vault_certificate" {
     defaults = {
-      id                      = "https://mock-kv.vault.azure.net/certificates/hailbytes-backend-tls/00000000000000000000000000000000"
       certificate_data_base64 = "TU9DSw=="
     }
   }
+  # Key Vault validates tenant_id as a UUID; it comes from the client_config
+  # data source, which the mock provider would otherwise fill with a short token.
   mock_data "azurerm_client_config" {
     defaults = {
       tenant_id       = "00000000-0000-0000-0000-000000000000"
