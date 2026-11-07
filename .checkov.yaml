@@ -105,5 +105,5 @@ skip-check:
   - CKV_AWS_290 # (B) IAM no write without constraints — our IAM policies that legitimately need wildcard write (ec2:CreateSnapshot, etc.) are documented inline and scoped by resource ARN where possible.
   - CKV_AWS_355 # (B) IAM no `*` in resource for restrictable actions — same root cause; some AWS actions (e.g. ec2:DescribeSnapshots) literally do not support resource-level restrictions, so `*` is the only valid value.
 
-  # ---------- (D) Region-portable modules ----------
-  - CKV_AWS_394 # (D) aws_availability_zones identity pinning — modules/network/aws must work in any region, so zone names/IDs can't be hardcoded; the result is already bounded by slice(..., 0, var.az_count) and filtered to state = "available".
+  # ---------- (F) Region-portable modules ----------
+  - CKV_AWS_394 # (F) aws_availability_zones identity pinning — modules/network/aws must work in any region, so zone names/IDs can't be hardcoded; the result is already bounded by slice(..., 0, var.az_count) and filtered to state = "available".
