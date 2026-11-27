@@ -1,12 +1,7 @@
 name: trivy-iac
 
 on:
-  pull_request:
-    paths:
-      - 'modules/**'
-      - '.github/workflows/trivy-iac.yml'
-  push:
-    branches: [main]
+  workflow_dispatch: 
 
 permissions:
   contents: read
