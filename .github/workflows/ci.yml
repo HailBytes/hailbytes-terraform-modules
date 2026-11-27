@@ -11,19 +11,7 @@ name: Terraform Modules — CI
 # HCL parses, formats, and validates.
 
 on:
-  pull_request:
-    paths:
-      - 'modules/**'
-      - 'quickstart/**'
-      - '.github/workflows/ci.yml'
-      - '.github/scripts/**'
-  push:
-    branches: [main]
-    paths:
-      - 'modules/**'
-      - 'quickstart/**'
-      - '.github/workflows/ci.yml'
-      - '.github/scripts/**'
+  workflow_dispatch: 
 
 permissions:
   contents: read
