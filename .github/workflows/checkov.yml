@@ -1,12 +1,7 @@
 name: checkov
 
 on:
-  pull_request:
-    paths:
-      - 'modules/**'
-      - '.github/workflows/checkov.yml'
-  push:
-    branches: [main]
+  workflow_dispatch: 
 
 permissions:
   contents: read
